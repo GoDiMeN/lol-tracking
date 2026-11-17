@@ -120,6 +120,11 @@ svg{display:block;max-width:100%;height:auto}
 .cal .leg{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:12.5px}
 .cal .leg b{font-weight:600}
 .cal .rot2{font-size:10.5px;font-family:var(--font-mono);color:var(--texto-3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px}
+.telas{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.telas figure{margin:0;display:flex;flex-direction:column;gap:6px;min-width:0}
+.telas img{display:block;width:100%;border:1px solid var(--borda-forte);border-radius:6px}
+.telas figcaption{font-size:12.5px;color:var(--texto-2)}
+.telas figcaption b{color:var(--texto)}
 .chave{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--texto-2);align-items:center}
 .chave i{display:inline-block;vertical-align:middle;margin-right:5px;border-radius:50%}
 .chave .a{width:9px;height:9px;background:var(--critico);border:1.5px solid #fff;box-shadow:0 0 0 1px var(--borda-forte)}
@@ -137,10 +142,26 @@ svg{display:block;max-width:100%;height:auto}
 <div class="wrap">
 
 <header class="ler">
-  <div class="kic">plano do app · 17 nov 2026</div>
+  <div class="kic">plano e resultado · 17 nov 2026</div>
   <h1>LoL Tracking</h1>
   <p class="sub">Você digita o nome de um jogador, escolhe uma partida, e o app baixa o replay, abre o jogo e assiste sozinho à partida seguindo cada um dos 10 jogadores, gravando posição, vida, mana, cooldowns, itens e eventos. Sem IA no rastreio: só as APIs locais do jogo e leitura da tela por gabarito.</p>
 </header>
+
+<section>
+  <div class="ler"><h2>O app como ficou</h2>
+  <p>As cinco tarefas foram entregues. Estas são capturas das telas de verdade, com os dados do rastreio real de uma partida sua (você de Akshan e a LeBlanc adversária, do minuto 0 ao 15). “Cliente do LoL fechado” aparece porque as capturas foram tiradas num servidor de desenvolvimento.</p></div>
+  <div class="telas">
+    <figure><img src="ui/08.png" alt="Mapa com play aos 8:42, com os retratos dos dez jogadores e o painel do Akshan aberto" loading="lazy"><figcaption><b>Mapa com play</b>, 8:42: você saindo do meio pelo rio de cima. O painel mostra vida, mana, recargas, atributos e itens do instante.</figcaption></figure>
+    <figure><img src="ui/09.png" alt="Mapa com play aos 8:48 com as zonas pintadas e o Akshan na cova do Barão" loading="lazy"><figcaption><b>Mapa com play</b>, 8:48, com as zonas pintadas: a morte na cova do Barão.</figcaption></figure>
+    <figure><img src="ui/04.png" alt="Tela da partida rastreada com o mapa do abate e a lista de onde cada jogador estava" loading="lazy"><figcaption><b>Partida rastreada</b>: onde cada um estava no abate das 8:48 e quem bateu com o quê.</figcaption></figure>
+    <figure><img src="ui/01.png" alt="Tela de jogadores com a lista de partidas e o estado do replay de cada uma" loading="lazy"><figcaption><b>Jogadores</b>: partidas, estado do replay, baixar e rastrear.</figcaption></figure>
+    <figure><img src="ui/03.png" alt="Tela da fila de rastreio com o progresso por jogador" loading="lazy"><figcaption><b>Fila de rastreio</b> ao vivo (aqui com o jogo falso do modo de teste).</figcaption></figure>
+    <figure><img src="ui/10.png" alt="Tela de estudo com a comparação entre vitórias e derrotas" loading="lazy"><figcaption><b>Estudo</b>: vitórias contra derrotas. Com uma partida só rastreada, quase tudo aparece como insuficiente.</figcaption></figure>
+  </div>
+  <div class="ler"><h3 style="font-size:16px;margin-top:8px">Teste do clone (Shaco)</h3>
+  <div class="cal-topo" style="grid-template-columns:minmax(0,300px) minmax(0,1fr)"><div><img src="ui/clone.png" alt="Recorte do jogo com o Shaco verdadeiro, com nome e nível, e o clone atrás com uma barra menor sem nome" style="border-radius:6px;display:block"></div>
+  <div><p>Na sua partida de Vi, o app seguiu o Shaco adversário dos 5 aos 20 minutos. Aos 9:39, logo depois da ultimate, aparecem os dois: o verdadeiro com nome, nível e contorno de seleção, e o clone atrás com uma barra menor, sem nome. A câmera e o painel ficaram no verdadeiro.</p><p style="color:var(--texto-2)">É uma ocorrência só. Neeko e Wukong não foram testados.</p></div></div></div>
+</section>
 
 <section class="ler">
   <h2>É permitido?</h2>
@@ -381,10 +402,10 @@ svg{display:block;max-width:100%;height:auto}
   <h2>Tarefas dos agentes</h2>
   <p style="color:var(--texto-2)">Cinco agentes Opus, um de cada vez. Cada um só começa depois que eu validar o anterior: testes rodando e, onde der, prova contra o jogo de verdade.</p>
   <div class="tarefa"><div class="top"><span class="pill ok">1 · entregue</span><b>Base, cliente do LoL e replays</b></div><p>Servidor Go com SQLite, janela Electron, busca de jogador, lista de partidas com estado do replay, download. Chave da Riot opcional.</p></div>
-  <div class="tarefa"><div class="top"><span class="pill n">2</span><b>Motor do rastreio</b></div><p>Abrir o replay, travar a câmera pela tecla, velocidade, laço de amostragem, calibração da posição, eventos, fila dos 10 passes com pausa e retomada.</p></div>
-  <div class="tarefa"><div class="top"><span class="pill n">3</span><b>Leitura da tela</b></div><p>Captura da janela e leitura por gabarito: vida, mana, atributos, cooldowns e barras laterais. Testada com capturas reais guardadas no repositório.</p></div>
-  <div class="tarefa"><div class="top"><span class="pill n">4</span><b>Análise e estudo</b></div><p>Zonas do mapa, saídas de rota, retrato de cada abate, listas de vitórias e derrotas por jogador e a comparação entre elas.</p></div>
-  <div class="tarefa"><div class="top"><span class="pill n">5</span><b>Interface</b></div><p>As quatro telas acima ligadas ao servidor, com progresso ao vivo do rastreio, mais o mapa em tela cheia com play.</p></div>
+  <div class="tarefa"><div class="top"><span class="pill ok">2 · entregue</span><b>Motor do rastreio</b></div><p>Abrir o replay, travar a câmera pela tecla, velocidade, laço de amostragem, calibração da posição, eventos, fila dos 10 passes com pausa e retomada.</p></div>
+  <div class="tarefa"><div class="top"><span class="pill ok">3 · entregue</span><b>Leitura da tela</b></div><p>Captura da janela e leitura por gabarito: vida, mana, atributos, cooldowns e barras laterais. Testada com capturas reais guardadas no repositório.</p></div>
+  <div class="tarefa"><div class="top"><span class="pill ok">4 · entregue</span><b>Análise e estudo</b></div><p>Zonas do mapa, saídas de rota, retrato de cada abate, listas de vitórias e derrotas por jogador e a comparação entre elas.</p></div>
+  <div class="tarefa"><div class="top"><span class="pill ok">5 · entregue</span><b>Interface</b></div><p>As quatro telas acima ligadas ao servidor, com progresso ao vivo do rastreio, mais o mapa em tela cheia com play.</p></div>
 </section>
 
 <section class="ler">
