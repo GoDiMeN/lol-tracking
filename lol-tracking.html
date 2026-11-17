@@ -1,0 +1,336 @@
+<title>LoL Tracking</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Leiaute: coluna única de leitura (plano) com um bloco largo de protótipo em abas; mesma paleta e fontes do Make Livros. */
+:root{
+  --fundo:#0d1017; --fundo-2:#12161f; --fundo-3:#182030; --fundo-4:#1f2937; --borda:#242e3d; --borda-forte:#35415a;
+  --texto:#e8ecf3; --texto-2:#94a3b8; --texto-3:#64748b;
+  --acento:#4b9fff; --acento-fraco:#1e3a5f; --acento-texto:#0d1017;
+  --ok:#3fb950; --ok-fraco:#12301b; --atencao:#d29922; --atencao-fraco:#3a2b0b; --critico:#f85149; --critico-fraco:#3e1512;
+  --azul:#4b9fff; --vermelho:#f0616d; --mapa:#141c17; --mapa-rota:#2a3327; --mapa-rio:#16303f;
+  --font-ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --raio:8px;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){
+  --fundo:#eef1f5; --fundo-2:#ffffff; --fundo-3:#f4f6f9; --fundo-4:#e7ebf1; --borda:#d7dde6; --borda-forte:#b9c2cf;
+  --texto:#151a22; --texto-2:#4e5a6a; --texto-3:#7a8595;
+  --acento:#1f6fd1; --acento-fraco:#dbe8fa; --acento-texto:#ffffff;
+  --ok:#1f8a3a; --ok-fraco:#dcf3e1; --atencao:#9a6b12; --atencao-fraco:#fbeecf; --critico:#c93a32; --critico-fraco:#fadcda;
+  --azul:#1f6fd1; --vermelho:#c93a47; --mapa:#dfe7dc; --mapa-rota:#c9d2c2; --mapa-rio:#bcd9e8;
+  color-scheme:light;
+}}
+:root[data-theme="light"]{
+  --fundo:#eef1f5; --fundo-2:#ffffff; --fundo-3:#f4f6f9; --fundo-4:#e7ebf1; --borda:#d7dde6; --borda-forte:#b9c2cf;
+  --texto:#151a22; --texto-2:#4e5a6a; --texto-3:#7a8595;
+  --acento:#1f6fd1; --acento-fraco:#dbe8fa; --acento-texto:#ffffff;
+  --ok:#1f8a3a; --ok-fraco:#dcf3e1; --atencao:#9a6b12; --atencao-fraco:#fbeecf; --critico:#c93a32; --critico-fraco:#fadcda;
+  --azul:#1f6fd1; --vermelho:#c93a47; --mapa:#dfe7dc; --mapa-rota:#c9d2c2; --mapa-rio:#bcd9e8;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+body{background:var(--fundo);color:var(--texto);font-family:var(--font-ui);font-size:14.5px;line-height:1.55;
+  padding-block:28px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1040px;margin:0 auto;display:flex;flex-direction:column;gap:36px}
+.ler{max-width:72ch}
+h1{font-size:30px;line-height:1.15;margin:0;letter-spacing:-.01em;text-wrap:balance}
+h2{font-size:19px;margin:0 0 10px;text-wrap:balance}
+h3{font-size:14px;margin:0 0 6px}
+p{margin:0 0 10px}
+.sub{color:var(--texto-2);margin-top:8px;max-width:68ch}
+.kic{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--texto-3);margin-bottom:8px}
+.mono{font-family:var(--font-mono);font-size:12px}
+code{font-family:var(--font-mono);font-size:12.5px;background:var(--fundo-3);border:1px solid var(--borda);border-radius:4px;padding:0 5px}
+section{display:flex;flex-direction:column;gap:12px;min-width:0}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500;white-space:nowrap;font-family:var(--font-mono)}
+.pill.ok{background:var(--ok-fraco);color:var(--ok)} .pill.at{background:var(--atencao-fraco);color:var(--atencao)}
+.pill.cr{background:var(--critico-fraco);color:var(--critico)} .pill.ac{background:var(--acento-fraco);color:var(--acento)}
+.pill.n{background:var(--fundo-4);color:var(--texto-2)}
+.aviso{border:1px solid var(--borda-forte);background:var(--fundo-2);border-radius:var(--raio);padding:14px 16px}
+.aviso p:last-child{margin-bottom:0}
+.duas{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.lista{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px}
+.rolar{overflow-x:auto;border:1px solid var(--borda);border-radius:var(--raio);background:var(--fundo-2)}
+table{border-collapse:collapse;width:100%;font-size:13px;min-width:620px}
+th{text-align:left;font-weight:600;color:var(--texto-2);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;padding:9px 12px;border-bottom:1px solid var(--borda);white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid var(--borda);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.num,.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* protótipo */
+.abas{display:flex;gap:4px;flex-wrap:wrap}
+.abas button{font:inherit;font-size:13px;padding:6px 12px;border-radius:6px;border:1px solid var(--borda);background:var(--fundo-2);color:var(--texto-2);cursor:pointer}
+.abas button[aria-selected="true"]{background:var(--acento-fraco);border-color:var(--acento);color:var(--texto)}
+.abas button:focus-visible,.proto button:focus-visible{outline:2px solid var(--acento);outline-offset:2px}
+.janela{border:1px solid var(--borda-forte);border-radius:10px;overflow:hidden;background:var(--fundo)}
+.titulo{display:flex;align-items:center;gap:10px;height:40px;padding:0 12px;background:var(--fundo-2);border-bottom:1px solid var(--borda);font-size:13px}
+.titulo b{font-weight:600} .titulo .dir{margin-left:auto;display:flex;gap:8px;align-items:center;color:var(--texto-2);font-size:12px}
+.ponto{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+.corpo{display:grid;grid-template-columns:200px minmax(0,1fr);min-height:440px}
+.menu{background:var(--fundo-2);border-right:1px solid var(--borda);padding:10px 8px;display:flex;flex-direction:column;gap:2px;font-size:13px}
+.menu span{padding:6px 10px;border-radius:6px;color:var(--texto-2)}
+.menu span.on{background:var(--fundo-4);color:var(--texto)}
+.menu .rot{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--texto-3);padding:10px 10px 4px}
+.tela{padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.linha{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.campo{flex:1;min-width:160px;background:var(--fundo-3);border:1px solid var(--borda);border-radius:6px;padding:7px 10px;color:var(--texto);font:inherit;font-size:13px}
+.btn{font:inherit;font-size:12.5px;padding:6px 12px;border-radius:6px;border:1px solid var(--borda-forte);background:var(--fundo-3);color:var(--texto);cursor:default;white-space:nowrap}
+.btn.pri{background:var(--acento);border-color:var(--acento);color:var(--acento-texto);font-weight:600}
+.cartao{border:1px solid var(--borda);border-radius:var(--raio);background:var(--fundo-2)}
+.partida{display:grid;grid-template-columns:6px minmax(0,1.6fr) minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 12px 9px 0;border-bottom:1px solid var(--borda);font-size:13px}
+.partida:last-child{border-bottom:0}
+.partida i{align-self:stretch;border-radius:0 3px 3px 0}
+.partida.v i{background:var(--ok)} .partida.d i{background:var(--critico)}
+.partida .t{font-weight:600} .partida .m{color:var(--texto-2);font-size:12px;font-family:var(--font-mono)}
+.barra{height:6px;border-radius:3px;background:var(--fundo-4);overflow:hidden}
+.barra b{display:block;height:100%;background:var(--acento)}
+.barra.ok b{background:var(--ok)}
+.passe{display:grid;grid-template-columns:22px minmax(0,1.2fr) minmax(0,2fr) 76px;gap:10px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--borda);font-size:12.5px}
+.passe:last-child{border-bottom:0}
+.passe .tc{font-family:var(--font-mono);font-size:11px;color:var(--texto-3)}
+.tm-a{color:var(--azul)} .tm-v{color:var(--vermelho)}
+.grade{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:12px}
+.kv{display:grid;grid-template-columns:1fr auto;gap:4px 12px;font-size:12.5px;padding:10px 12px}
+.kv span{color:var(--texto-2)} .kv b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-weight:600;text-align:right}
+.cab{padding:8px 12px;border-bottom:1px solid var(--borda);font-size:12px;font-weight:600;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.cab .dir{margin-left:auto;color:var(--texto-2);font-weight:400;font-family:var(--font-mono)}
+svg{display:block;max-width:100%;height:auto}
+.cmp{display:grid;grid-template-columns:minmax(0,1.4fr) 70px 70px minmax(0,1.2fr);gap:10px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--borda);font-size:12.5px}
+.cmp:last-child{border-bottom:0}
+.cmp.h{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--texto-3)}
+.passos{counter-reset:p;display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.passos li{counter-increment:p;display:grid;grid-template-columns:30px minmax(0,1fr);gap:10px;align-items:start}
+.passos li::before{content:counter(p);font-family:var(--font-mono);font-size:12px;width:26px;height:26px;border-radius:50%;border:1px solid var(--borda-forte);display:grid;place-items:center;color:var(--texto-2)}
+.tarefa{border:1px solid var(--borda);border-radius:var(--raio);background:var(--fundo-2);padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.tarefa .top{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.tarefa .top b{font-size:14px}
+.tarefa p{margin:0;color:var(--texto-2);font-size:13px}
+@media (max-width:720px){
+  .corpo{grid-template-columns:minmax(0,1fr)} .menu{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--borda)} .menu .rot{display:none}
+  .grade{grid-template-columns:minmax(0,1fr)}
+  .partida{grid-template-columns:6px minmax(0,1fr) auto} .partida .m2{display:none}
+  .passe{grid-template-columns:22px minmax(0,1fr) 70px} .passe .barra{display:none}
+  .cmp{grid-template-columns:minmax(0,1fr) 56px 56px} .cmp .obs{display:none}
+}
+</style>
+
+<div class="wrap">
+
+<header class="ler">
+  <div class="kic">plano do app · 17 nov 2026</div>
+  <h1>LoL Tracking</h1>
+  <p class="sub">Você digita o nome de um jogador, escolhe uma partida, e o app baixa o replay, abre o jogo e assiste sozinho à partida seguindo cada um dos 10 jogadores, gravando posição, vida, mana, cooldowns, itens e eventos. Sem IA no rastreio: só as APIs locais do jogo e leitura da tela por gabarito.</p>
+</header>
+
+<section class="ler">
+  <h2>É permitido?</h2>
+  <div class="aviso">
+    <p><span class="pill ok">sim, para uso pessoal</span> O app só assiste a replays. Ele não lê a memória do jogo, não roda durante partida ao vivo e não dá vantagem a ninguém em jogo.</p>
+    <ul class="lista">
+      <li><b>Replay API e Live Client Data</b> são APIs oficiais da Riot, feitas para ferramentas de replay. A Replay API vem desligada e se liga com <code>EnableReplayApi=1</code> no <code>game.cfg</code>.</li>
+      <li><b>API local do cliente (LCU)</b>, usada para listar partidas e baixar o replay: a Riot tolera, mas diz que é "não suportada oficialmente" e pode mudar sem aviso.</li>
+      <li><b>Tecla para escolher o jogador</b>: o app aperta a mesma tecla que você apertaria no modo espectador, só dentro do replay.</li>
+      <li><b>Se um dia for distribuir</b> para outras pessoas, a Riot exige registrar o produto no portal de desenvolvedores.</li>
+    </ul>
+  </div>
+  <p style="color:var(--texto-2)">A Riot anunciou em 2026 que vai limitar o download de replays às partidas do próprio jogador. Hoje, no 16.22, baixei aqui um replay de partida em que a sua conta não jogou e funcionou. Se a restrição entrar, a parte de estudar outros jogadores fica limitada às partidas em que você estava.</p>
+</section>
+
+<section class="ler">
+  <h2>O que confirmei andando no replay</h2>
+  <ul class="lista">
+    <li><b>Travar a câmera num jogador:</b> pedir pela API não segura, a "Directed Camera" toma de volta. O que trava é a tecla do jogador (<code>1</code>–<code>5</code> time azul, <code>Q W E R T</code> vermelho) apertada duas vezes. Testei com você: o seletor virou "Akshan (GodiNzt)" e ficou.</li>
+    <li><b>A trava aguenta a morte</b> do jogador e <b>cai a cada salto</b> na linha do tempo. O app reaperta e confere depois de todo salto.</li>
+    <li><b>Posição:</b> com a câmera presa, a API devolve a coordenada da câmera, que anda junto do campeão. A diferença fixa entre os dois é calibrada contra as posições exatas que o cliente guarda de minuto em minuto.</li>
+    <li><b>Vida, mana, atributos e cooldowns</b> não vêm por API no replay. Estão no painel do canto inferior esquerdo, com texto nítido (<span class="mono">1274 / 1274</span>, <span class="mono">62</span> s no R, <span class="mono">151</span> s no Incendiar). Leitura por gabarito de dígitos.</li>
+    <li><b>Itens, nível, K/D/A, CS, morto e tempo de respawn</b> dos 10 vêm prontos da API do jogo. <b>Abates com posição, ouro, XP, wards e objetivos</b> vêm da linha do tempo do cliente.</li>
+    <li><b>Velocidade:</b> 2× e 8× são aceitos pela API.</li>
+  </ul>
+</section>
+
+<section>
+  <div class="ler"><h2>Design do app</h2>
+  <p style="color:var(--texto-2)">Mesma base do Make Livros: servidor local em Go com SQLite, janela Electron, interface em HTML/CSS/JS puro, tudo em português. Os números abaixo são exemplos; os nomes são da partida que usei no teste.</p></div>
+  <div class="abas" role="tablist" id="abas">
+    <button role="tab" id="aba-partidas" aria-selected="true" data-t="partidas">Jogador e partidas</button>
+    <button role="tab" id="aba-rastreio" aria-selected="false" data-t="rastreio">Rastreio em andamento</button>
+    <button role="tab" id="aba-partida" aria-selected="false" data-t="partida">Partida rastreada</button>
+    <button role="tab" id="aba-estudo" aria-selected="false" data-t="estudo">Estudo</button>
+  </div>
+
+  <div class="janela proto">
+    <div class="titulo"><b>LoL Tracking</b><span class="dir"><span class="ponto"></span>cliente do LoL conectado · GodiNzt#br1 · 16.22</span></div>
+    <div class="corpo">
+      <nav class="menu" aria-label="Menu do protótipo">
+        <span class="rot">rastrear</span>
+        <span data-m="partidas" class="on">Jogadores</span>
+        <span data-m="rastreio">Fila de rastreio</span>
+        <span data-m="partida">Partidas rastreadas</span>
+        <span class="rot">aprender</span>
+        <span data-m="estudo">Estudo</span>
+        <span>Configurações</span>
+      </nav>
+
+      <div class="tela" data-p="partidas">
+        <div class="linha">
+          <input class="campo" id="busca" value="GodiNzt#br1" aria-label="Nome do jogador" readonly>
+          <span class="btn pri">Buscar</span>
+        </div>
+        <div class="linha" style="font-size:12.5px;color:var(--texto-2)"><span>19 partidas</span><span class="pill ok">12 dá para ver</span><span class="pill n">7 de patch antigo</span></div>
+        <div class="cartao">
+          <div class="partida d"><i></i><div><div class="t">Akshan · meio · derrota</div><div class="m">ranqueada solo · 39:02 · 15 nov 18:34</div></div><div class="m m2">2/9/4 · 187 CS</div><div class="linha"><span class="pill ok">baixado</span><span class="btn pri">Rastrear</span></div></div>
+          <div class="partida v"><i></i><div><div class="t">Akshan · meio · vitória</div><div class="m">ranqueada solo · 34:56 · 16 nov 01:36</div></div><div class="m m2">11/3/7 · 221 CS</div><div class="linha"><span class="pill ac">dá para baixar</span><span class="btn">Baixar</span></div></div>
+          <div class="partida v"><i></i><div><div class="t">Yone · meio · vitória</div><div class="m">ranqueada solo · 21:43 · 15 nov 23:47</div></div><div class="m m2">8/1/5 · 160 CS</div><div class="linha"><span class="pill ac">dá para baixar</span><span class="btn">Baixar</span></div></div>
+          <div class="partida d"><i></i><div><div class="t">Akshan · meio · derrota</div><div class="m">ranqueada solo · 23:36 · 23 out 22:35</div></div><div class="m m2">3/6/2 · 131 CS</div><div class="linha"><span class="pill n">patch 16.21</span></div></div>
+        </div>
+      </div>
+
+      <div class="tela" data-p="rastreio" hidden>
+        <div class="linha"><b>Akshan · derrota · 39:02</b><span class="pill ac">rastreando a 2×</span><span class="btn" style="margin-left:auto">Pausar</span><span class="btn">Cancelar</span></div>
+        <div class="linha" style="font-size:12.5px;color:var(--texto-2)"><span class="num">3 de 10 jogadores</span><div class="barra" style="flex:1;min-width:120px"><b style="width:27%"></b></div><span class="num">faltam ~2 h 21 min</span></div>
+        <div class="cartao">
+          <div class="passe"><span class="tc tm-a">1</span><span>Malphite · Nacht Faust</span><div class="barra ok"><b style="width:100%"></b></div><span class="pill ok">pronto</span></div>
+          <div class="passe"><span class="tc tm-a">2</span><span>Master Yi · Tião Gomes</span><div class="barra ok"><b style="width:100%"></b></div><span class="pill ok">pronto</span></div>
+          <div class="passe"><span class="tc tm-a">3</span><span>Akshan · GodiNzt</span><div class="barra"><b style="width:71%"></b></div><span class="num">27:41</span></div>
+          <div class="passe"><span class="tc tm-a">4</span><span>Ashe · Dszinn</span><div class="barra"><b style="width:0"></b></div><span class="pill n">na fila</span></div>
+          <div class="passe"><span class="tc tm-v">Q</span><span>Teemo · SóSplito</span><div class="barra"><b style="width:0"></b></div><span class="pill n">na fila</span></div>
+        </div>
+        <div class="cartao"><div class="cab">Última leitura <span class="dir">27:41 · 4 por segundo de jogo</span></div>
+          <div class="kv"><span>Vida</span><b>1 173 / 1 274</b><span>Mana</span><b>182 / 543</b><span>Posição</span><b>x 7 121 · y 7 302 · rota do meio</b><span>Cooldowns</span><b>Q 0 · W 0 · E 7 · R 62 · D 151 · F 0</b></div>
+        </div>
+        <p style="font-size:12.5px;color:var(--texto-2);margin:0">O jogo precisa ficar visível na tela enquanto o rastreio roda. Mexer no mouse não atrapalha; cobrir a janela do jogo, sim.</p>
+      </div>
+
+      <div class="tela" data-p="partida" hidden>
+        <div class="linha"><b>Akshan · derrota · 39:02</b><span class="pill ok">10 de 10 rastreados</span><span class="num" style="margin-left:auto;color:var(--texto-2)">23 412 amostras · 61 abates</span></div>
+        <div class="grade">
+          <div class="cartao">
+            <div class="cab">Mapa no momento 08:33 <span class="dir">abate 7 de 61</span></div>
+            <svg viewBox="0 0 300 300" role="img" aria-label="Mapa com a posição dos dez jogadores no momento de um abate">
+              <rect x="0" y="0" width="300" height="300" fill="var(--mapa)"/>
+              <path d="M30 270 L30 40 Q30 30 40 30 L270 30" fill="none" stroke="var(--mapa-rota)" stroke-width="16"/>
+              <path d="M30 270 L260 270 Q270 270 270 260 L270 30" fill="none" stroke="var(--mapa-rota)" stroke-width="16"/>
+              <path d="M30 270 L270 30" fill="none" stroke="var(--mapa-rota)" stroke-width="16"/>
+              <path d="M40 60 Q150 130 260 240" fill="none" stroke="var(--mapa-rio)" stroke-width="14"/>
+              <path d="M150 150 L138 162 L128 158 L120 172 L112 168" fill="none" stroke="var(--azul)" stroke-width="1.5" stroke-dasharray="3 3"/>
+              <circle cx="112" cy="168" r="6" fill="var(--azul)"/><text x="121" y="186" font-size="9" fill="var(--texto)" font-family="var(--font-mono)">Akshan</text>
+              <circle cx="96" cy="150" r="6" fill="var(--azul)" opacity=".45"/><path d="M90 144 L102 156 M102 144 L90 156" stroke="var(--critico)" stroke-width="2"/>
+              <text x="52" y="141" font-size="9" fill="var(--texto)" font-family="var(--font-mono)">Master Yi ✕</text>
+              <circle cx="88" cy="160" r="6" fill="var(--vermelho)"/><text x="40" y="176" font-size="9" fill="var(--texto)" font-family="var(--font-mono)">Warwick</text>
+              <circle cx="38" cy="96" r="5" fill="var(--azul)"/><circle cx="44" cy="82" r="5" fill="var(--vermelho)"/>
+              <circle cx="222" cy="266" r="5" fill="var(--azul)"/><circle cx="232" cy="262" r="5" fill="var(--azul)"/>
+              <circle cx="254" cy="250" r="5" fill="var(--vermelho)"/><circle cx="262" cy="240" r="5" fill="var(--vermelho)"/>
+              <circle cx="176" cy="126" r="5" fill="var(--vermelho)"/>
+            </svg>
+          </div>
+          <div class="cartao">
+            <div class="cab">Onde cada um estava <span class="dir">08:33</span></div>
+            <div class="kv">
+              <span class="tm-a">Master Yi · morreu</span><b>rio de cima · 0%</b>
+              <span class="tm-a">Akshan</span><b>fora da rota há 19 s · 92% · R em 62 s</b>
+              <span class="tm-a">Malphite</span><b>rota de cima · 61%</b>
+              <span class="tm-a">Ashe</span><b>rota de baixo · 88%</b>
+              <span class="tm-a">Seraphine</span><b>rota de baixo · 74%</b>
+              <span class="tm-v">Warwick · matou</span><b>rio de cima · 43%</b>
+              <span class="tm-v">Teemo</span><b>rota de cima · 80%</b>
+              <span class="tm-v">LeBlanc</span><b>rota do meio · 55%</b>
+              <span class="tm-v">Smolder</span><b>rota de baixo · 90%</b>
+              <span class="tm-v">Lux</span><b>rota de baixo · 66%</b>
+            </div>
+          </div>
+        </div>
+        <div class="cartao"><div class="cab">Akshan · vida ao longo da partida <span class="dir">as marcas são mortes; faixas são saídas de rota</span></div>
+          <svg viewBox="0 0 800 110" role="img" aria-label="Linha da vida ao longo da partida com mortes e saídas de rota marcadas" style="padding:8px 12px">
+            <rect x="96" y="6" width="34" height="84" fill="var(--atencao-fraco)"/><rect x="168" y="6" width="22" height="84" fill="var(--atencao-fraco)"/><rect x="250" y="6" width="46" height="84" fill="var(--atencao-fraco)"/>
+            <line x1="0" y1="90" x2="800" y2="90" stroke="var(--borda-forte)" stroke-width="1"/>
+            <polyline fill="none" stroke="var(--ok)" stroke-width="2" points="0,14 40,16 70,40 96,30 118,70 130,90 131,14 168,20 186,58 190,90 191,14 250,24 270,36 296,90 297,14 360,30 420,52 455,90 456,14 520,18 580,40 640,22 700,60 742,90 743,14 800,30"/>
+            <g fill="var(--critico)"><circle cx="130" cy="90" r="4"/><circle cx="190" cy="90" r="4"/><circle cx="296" cy="90" r="4"/><circle cx="455" cy="90" r="4"/><circle cx="742" cy="90" r="4"/></g>
+            <g font-size="10" fill="var(--texto-3)" font-family="var(--font-mono)"><text x="0" y="106">00:00</text><text x="190" y="106">10:00</text><text x="395" y="106">20:00</text><text x="600" y="106">30:00</text><text x="768" y="106">39:02</text></g>
+          </svg>
+        </div>
+      </div>
+
+      <div class="tela" data-p="estudo" hidden>
+        <div class="linha"><b>Estudo: GodiNzt de Akshan</b><span class="pill ok">4 vitórias</span><span class="pill cr">5 derrotas</span><span class="btn" style="margin-left:auto">Adicionar partida</span></div>
+        <p style="font-size:12.5px;color:var(--texto-2);margin:0">Você escolhe o jogador e as partidas à mão. O app compara, com conta e não com IA, o que foi diferente entre as que ele ganhou e as que perdeu.</p>
+        <div class="cartao">
+          <div class="cmp h"><span>Comportamento</span><span>Vitórias</span><span>Derrotas</span><span class="obs">O que mostra</span></div>
+          <div class="cmp"><span>Saídas de rota até os 14 min</span><span class="num">3,2</span><span class="num">6,8</span><span class="obs" style="color:var(--texto-2)">sai mais quando perde</span></div>
+          <div class="cmp"><span>Mortes com menos de 40% de vida ao sair da rota</span><span class="num">0,5</span><span class="num">2,4</span><span class="obs" style="color:var(--texto-2)">roaming com pouca vida</span></div>
+          <div class="cmp"><span>Mortes com o R em recarga</span><span class="num">1,0</span><span class="num">3,1</span><span class="obs" style="color:var(--texto-2)">luta sem a ultimate</span></div>
+          <div class="cmp"><span>Distância média do aliado mais próximo ao morrer</span><span class="num">1 150</span><span class="num">2 480</span><span class="obs" style="color:var(--texto-2)">morre isolado</span></div>
+          <div class="cmp"><span>CS aos 10 min</span><span class="num">74</span><span class="num">58</span><span class="obs" style="color:var(--texto-2)">farm cai quando sai da rota</span></div>
+        </div>
+        <div class="cartao"><div class="cab">Anotações da partida de 15 nov · derrota</div><div class="kv" style="grid-template-columns:1fr"><span>Campo livre para você escrever o que viu. Fica guardado com a partida e entra depois na rede de avaliações.</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="ler">
+  <h2>Como o rastreio roda</h2>
+  <ol class="passos">
+    <li><div><b>Buscar o jogador</b> pelo nome no cliente do LoL e listar as partidas, marcando quais têm replay para ver. Replay só abre no patch em que a partida foi jogada.</div></li>
+    <li><div><b>Baixar e abrir</b> o replay escolhido. O app guarda antes os dados finais e a linha do tempo da partida.</div></li>
+    <li><div><b>Um passe por jogador.</b> Volta para 00:00, aperta a tecla do jogador, confere se o seletor travou nele, põe em 2× e segue.</div></li>
+    <li><div><b>Ler quatro vezes por segundo de jogo:</b> tempo, posição, o painel do jogador na tela e a lista dos 10 da API.</div></li>
+    <li><div><b>Terminar</b> quando o tempo chega ao fim da partida. Vitória ou derrota vem dos dados da partida, não da tela.</div></li>
+    <li><div><b>Juntar os 10 passes</b> pelo relógio do jogo. O replay é sempre igual, então dá para saber onde estavam os 10 em qualquer instante.</div></li>
+    <li><div><b>Derivar:</b> saídas de rota, e para cada abate a posição, a vida e os cooldowns de todos naquele momento.</div></li>
+  </ol>
+</section>
+
+<section>
+  <div class="ler"><h2>O que fica gravado</h2></div>
+  <div class="rolar"><table>
+    <thead><tr><th>Dado</th><th>De onde vem</th><th>Frequência</th><th>Quem</th></tr></thead>
+    <tbody>
+      <tr><td>Posição no mapa (x, y) e zona</td><td>câmera presa, calibrada</td><td class="num">4/s de jogo</td><td>jogador do passe</td></tr>
+      <tr><td>Vida e mana em número</td><td>tela, painel do jogador</td><td class="num">4/s</td><td>jogador do passe</td></tr>
+      <tr><td>Cooldown de Q, W, E, R e dos dois feitiços</td><td>tela, ícones</td><td class="num">4/s</td><td>jogador do passe</td></tr>
+      <tr><td>Dano, armadura, resistência, velocidades</td><td>tela, painel</td><td class="num">1/s</td><td>jogador do passe</td></tr>
+      <tr><td>Vida e mana em % nos quadros laterais</td><td>tela, barras</td><td class="num">4/s</td><td>os 10</td></tr>
+      <tr><td>Nível, itens, K/D/A, CS, wards, morto, respawn</td><td>API do jogo</td><td class="num">1/s</td><td>os 10</td></tr>
+      <tr><td>Abates (quem, em quem, assistências, onde)</td><td>API do jogo + linha do tempo</td><td>por evento</td><td>partida</td></tr>
+      <tr><td>Ouro, XP, compras, wards, torres, dragões, barão</td><td>linha do tempo do cliente</td><td>por minuto e por evento</td><td>os 10</td></tr>
+      <tr><td>Saída de rota (início, fim, para onde, com quanto de vida)</td><td>calculado</td><td>por saída</td><td>os 10</td></tr>
+      <tr><td>Retrato de cada abate: onde estava e como estava cada um</td><td>calculado</td><td>por abate</td><td>os 10</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="ler">
+  <h2>Tarefas dos agentes</h2>
+  <p style="color:var(--texto-2)">Cinco agentes Opus, um de cada vez. Cada um só começa depois que eu validar o anterior: testes rodando e, onde der, prova contra o jogo de verdade.</p>
+  <div class="tarefa"><div class="top"><span class="pill n">1</span><b>Base, cliente do LoL e replays</b></div><p>Servidor Go com SQLite, janela Electron, busca de jogador, lista de partidas com estado do replay, download. Chave da Riot opcional.</p></div>
+  <div class="tarefa"><div class="top"><span class="pill n">2</span><b>Motor do rastreio</b></div><p>Abrir o replay, travar a câmera pela tecla, velocidade, laço de amostragem, calibração da posição, eventos, fila dos 10 passes com pausa e retomada.</p></div>
+  <div class="tarefa"><div class="top"><span class="pill n">3</span><b>Leitura da tela</b></div><p>Captura da janela e leitura por gabarito: vida, mana, atributos, cooldowns e barras laterais. Testada com capturas reais guardadas no repositório.</p></div>
+  <div class="tarefa"><div class="top"><span class="pill n">4</span><b>Análise e estudo</b></div><p>Zonas do mapa, saídas de rota, retrato de cada abate, listas de vitórias e derrotas por jogador e a comparação entre elas.</p></div>
+  <div class="tarefa"><div class="top"><span class="pill n">5</span><b>Interface</b></div><p>As quatro telas acima ligadas ao servidor, com progresso ao vivo do rastreio.</p></div>
+</section>
+
+<section class="ler">
+  <h2>Pontos de atenção</h2>
+  <ul class="lista">
+    <li><b>A chave em <code>token.txt</code> não funcionou</b>: a API da Riot respondeu "Unknown apikey". Chave de desenvolvimento vence em 24 horas. O app não depende dela; com uma chave válida ele ganha um segundo caminho para o histórico.</li>
+    <li><b>Tempo:</b> uma partida de 39 minutos leva cerca de 3 h 15 min para os 10 jogadores a 2×. A 8× seriam uns 49 minutos, mas preciso provar antes que a leitura da tela aguenta.</li>
+    <li><b>O computador fica ocupado</b> durante o rastreio: o jogo precisa estar na tela.</li>
+    <li><b>Posição dos outros 9 durante um passe</b> só fica completa depois dos 10 passes. Com menos passes, o retrato dos abates usa a posição por minuto da linha do tempo.</li>
+    <li><b>Mudei uma configuração do seu jogo:</b> <code>EnableReplayApi=1</code> no <code>game.cfg</code>, com cópia em <code>game.cfg.bak-loltracking</code>.</li>
+  </ul>
+</section>
+
+</div>
+
+<script>
+(function(){
+  var abas=[].slice.call(document.querySelectorAll('#abas button'));
+  function mostra(t){
+    abas.forEach(function(b){b.setAttribute('aria-selected', b.dataset.t===t ? 'true':'false')});
+    [].forEach.call(document.querySelectorAll('.tela'),function(p){p.hidden = p.dataset.p!==t});
+    [].forEach.call(document.querySelectorAll('.menu span[data-m]'),function(m){m.classList.toggle('on', m.dataset.m===t)});
+  }
+  abas.forEach(function(b){b.addEventListener('click',function(){mostra(b.dataset.t)})});
+})();
+</script>

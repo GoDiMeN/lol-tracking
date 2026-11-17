@@ -1,0 +1,10 @@
+# A chave da Riot nunca entra no git (CLAUDE.md, regra 6).
+token.txt
+*.rofl
+node_modules/
+app/node_modules/
+dist/
+app/dist/
+dados/
+server/dados/
+*.exe
