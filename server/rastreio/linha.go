@@ -135,8 +135,10 @@ func (lt LinhaDoTempo) PosicaoInterpolada(pid int, tMs int64) (float64, float64,
 	return 0, 0, false
 }
 
-// Fontes (lugar de renascer) de cada time no mapa 11.
-var fontes = map[string][2]float64{"ORDER": {400, 420}, "CHAOS": {14340, 14390}}
+// Fontes (lugar de renascer) de cada time no mapa 11: a posição pela câmera
+// logo depois de renascer, medida na sonda de 2026-11-17 (ORDER (404, 571),
+// CHAOS (14340, 14507)).
+var fontes = map[string][2]float64{"ORDER": {404, 571}, "CHAOS": {14340, 14507}}
 
 // FonteDoTime devolve a fonte pelo time do LCU (100/200).
 func FonteDoTime(time int) [2]float64 {

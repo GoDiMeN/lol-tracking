@@ -29,6 +29,10 @@ func depsReais(t *testing.T) Deps {
 	if _, err := os.Stat(lock); err != nil {
 		t.Skip("cliente do LoL fechado")
 	}
+	// Um -timeout curto mata o processo sem rodar os defers: o replay ficaria aberto (regra 5).
+	if prazo, ok := t.Deadline(); ok && time.Until(prazo) < 5*time.Minute {
+		t.Skip("rode com -timeout 10m ou mais (um timeout no meio deixaria o replay aberto)")
+	}
 	j := NovaJanela()
 	return Deps{LCU: lcu.NovoReal(lock), API: NovaAPI(EnderecoPadrao), Jogo: j, Teclado: j, Tela: j,
 		Relogio: RelogioReal{}, GameCfg: GameCfgDe(lock)}

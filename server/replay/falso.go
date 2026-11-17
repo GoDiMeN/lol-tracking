@@ -340,7 +340,7 @@ func (f *Falso) Jogadores(ctx context.Context) ([]Jogador, error) {
 			centro, texto = Ponto{}, "340000000000000000000000000000000000000.000,340000000000000000000000000000000000000.000"
 		}
 		j := Jogador{Nome: jf.Nome, Tag: "br1", Invocador: jf.Nome, Campeao: jf.Campeao, Time: jf.Time,
-			Nivel: min(18, 1+int(t/90)), Placar: Placar{CS: int(t / 7), Ward: math.Floor(t/60*10) / 10},
+			Nivel: min(18, 1+int(t/90)), Placar: Placar{CS: int(t/7) / 10 * 10, Ward: math.Floor(t/60*10) / 10},
 			CentroTexto: texto, Centro: centro}
 		j.Itens = []Item{{ID: 1055, Slot: 0, Quantidade: 1}}
 		if t > 150 {

@@ -186,7 +186,10 @@ func (m *motor) esperaSeek(ctx context.Context, alvoS float64) error {
 	limite := m.d.Relogio.Agora().Add(15 * time.Second)
 	for {
 		pb, err := m.d.API.Playback(ctx)
-		if err == nil && !pb.Buscando && math.Abs(pb.Tempo-alvoS) < 3 {
+		// O relógio volta a andar logo depois do seek: a 8× passa 8 s de jogo
+		// por segundo real, então a folga cresce com a velocidade.
+		folga := 3 + 4*m.cfg.Velocidade
+		if err == nil && !pb.Buscando && pb.Tempo >= alvoS-1 && pb.Tempo <= alvoS+folga {
 			return nil
 		}
 		if m.d.Relogio.Agora().After(limite) {

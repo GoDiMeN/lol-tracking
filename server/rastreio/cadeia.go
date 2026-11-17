@@ -338,8 +338,8 @@ func geraItens(c *ContextoCadeia) []ItemCadeia {
 	return itens
 }
 
-// LimiteDivergenciaCS: diferença de CS (lido no jogo × linha do tempo) a partir
-// da qual vira item "cs_divergente".
+// LimiteDivergenciaCS: folga (além da dezena do creepScore) entre o CS lido no
+// jogo e o da linha do tempo antes de virar item "cs_divergente".
 const LimiteDivergenciaCS = 3
 
 func geraMinuto(c *ContextoCadeia) []ItemCadeia {
@@ -354,10 +354,13 @@ func geraMinuto(c *ContextoCadeia) []ItemCadeia {
 		d := map[string]any{"cs_lcu": j.CS, "ouro_total": j.OuroTotal, "ouro_atual": j.OuroAtual, "xp": j.XP, "nivel": j.Nivel}
 		i := sort.Search(len(as), func(k int) bool { return as[k].TMs > q.TMs }) - 1
 		if i >= 0 && q.TMs-as[i].TMs <= 2000 {
+			// O creepScore do playerlist anda de 10 em 10 (medido: 30→40→50; é o
+			// CS arredondado para baixo na dezena). Bate se o da linha do tempo
+			// está na mesma dezena, com folga de LimiteDivergenciaCS.
 			d["cs"] = as[i].CS
-			dif := as[i].CS - j.CS
+			dif := j.CS - as[i].CS
 			d["diferenca"] = dif
-			if dif >= LimiteDivergenciaCS || -dif >= LimiteDivergenciaCS {
+			if dif < -LimiteDivergenciaCS || dif > 9+LimiteDivergenciaCS {
 				itens = append(itens, ItemCadeia{TMs: q.TMs, Tipo: "cs_divergente", Dados: map[string]any{
 					"cs": as[i].CS, "cs_lcu": j.CS, "diferenca": dif}})
 			}
