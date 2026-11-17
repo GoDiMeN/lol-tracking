@@ -57,21 +57,59 @@ Eventos comuns a toda execução: `erro {"texto"}` (seguido de `fim`), `aviso {"
 
 `Participante` = uma linha da tabela `participantes` (ver `dados.md`), com `venceu`/`primeiro_abate` em booleano e `itens` como lista de 7 ids. `posicao` usa os nomes do Live Client Data: `TOP`, `JUNGLE`, `MIDDLE`, `BOTTOM`, `UTILITY` (vazio fora de Summoner's Rift).
 
+## Rastreio — tarefa 2
+
+Um rastreio = até 10 passes (um por jogador) em sequência, na mesma abertura do replay. **Um por vez**: com um rodando,
+criar ou retomar outro é 409 (o corpo traz `rastreio_id` e `execucao` do que está rodando). Toda execução **fecha o replay**
+ao terminar, pausar, cancelar, falhar ou estourar (regra 5).
+
+| Método | Rota | Resposta |
+|---|---|---|
+| POST | `/api/partidas/{id}/rastreio` `{"jogadores": [participante_id]?, "velocidade": 2?}` | `202 {"rastreio": Rastreio, "execucao": {"id"}}`. Padrão: os 10, velocidade 2 (0,5–8). 400 participante inexistente/repetido, partida incompleta ou velocidade fora; 404 partida não está no banco; 409 já há rastreio rodando, fase do cliente não permitida (só `None`/`WatchInProgress`) ou replay não baixado. Importa os eventos da linha do tempo na hora. |
+| GET | `/api/rastreios?limite=50` | `{"rastreios": [Rastreio]}`, do mais novo ao mais antigo (limite 1–500). |
+| GET | `/api/rastreios/{id}` | `{"rastreio": Rastreio, "passes": [Passe]}`. 404. |
+| POST | `/api/rastreios/{id}/pausar` | 204 (também se já está pausado). O passe guarda o último `t`; o replay fecha. 409 se terminou. |
+| POST | `/api/rastreios/{id}/retomar` | `202 {"execucao": {"id"}}`. Continua os passes não concluídos do último `t` gravado (seek ~4 s antes + retrava). Vale para `pausado` e `falhou`; 409 nos outros estados ou com outro rodando. |
+| POST | `/api/rastreios/{id}/cancelar` | 204. Passe começado é fechado (compactado) como `cancelado`; os pendentes viram `cancelado`. 409 se já concluiu. O `/api/execucoes/{id}/cancelar` da execução faz o mesmo. |
+| GET | `/api/rastreios/{id}/eventos` | SSE da execução mais recente do rastreio (o mesmo de `/api/execucoes/{id}/eventos`). 404 se não houve execução neste processo. |
+
+Eventos SSE: `abrindo_replay {rastreio_id, game_id}`, `replay_aberto {duracao_ms, largura, altura}`,
+`passe_inicio {passe_id, participante_id, nome, t_inicio_ms, t_fim_ms, duracao_ms}`, `trava {passe_id, tentativas, ok, motivo?}`,
+`amostra {passe_id, participante_id, t_ms, x?, y?, origem, morto, selecao, amostras, retravas, ms_leitura}` (no máximo 1 por
+segundo real), `passe_fim {passe_id, participante_id, amostras, taxa, bytes, bytes_time, cadeia, calibracao {modo, pontos,
+erro_mediano, erro_maximo}, estatisticas}`, `pausado {rastreio_id, motivo?}`, `concluido {rastreio_id}`, `fechando_replay`,
+`aviso`, `erro`, `fim`.
+
+`Rastreio = {"id", "game_id", "estado": "rodando"|"pausado"|"concluido"|"cancelado"|"falhou", "velocidade", "t_inicio_ms", "t_fim_ms" (0 = fim da partida), "criado_em", "atualizado_em", "terminado_em", "erro", "passes_total", "passes_concluidos", "passe_atual": participante_id|null, "progresso": 0–1, "estimativa_s", "execucao": {"id"}|null}`
+
+`Passe = {"id", "rastreio_id", "game_id", "participante_id", "ordem", "estado": "pendente"|"rodando"|"pausado"|"concluido"|"cancelado"|"falhou", "t_atual_ms", "duracao_ms", "amostras", "tentativas_trava", "retravas", "amostras_sem_trava", "taxa" (amostras por segundo de jogo)|null, "calibracao_pontos", "erro_calibracao_mediano"|null, "erro_calibracao_maximo"|null, "iniciado_em", "terminado_em", "erro", "compactado": bool, "bytes"}`
+
+### Partida rastreada — tarefa 2
+
+Leem do **bloco compactado** do passe (decodificado uma vez, cache em memória) ou, com o passe em andamento, da tabela de
+trabalho. O passe que representa um jogador numa partida é o concluído mais recente; senão o mais recente com amostras.
+Tempos na query em **segundos** (aceita fração); na resposta em ms.
+
+| Método | Rota | Resposta |
+|---|---|---|
+| GET | `/api/partidas/rastreadas` | `{"partidas": [{"game_id", "participantes": [ids], "rastreados"}]}`: partidas com passe concluído. |
+| GET | `/api/partidas/{id}/amostras?participante=3&de=0&ate=600&passo=0&limite=5000` | `{"participante_id", "passe_id", "fonte": "compactado"|"trabalho", "de_ms", "ate_ms", "passo_ms", "amostras": [Amostra], "proximo_ms": n|null}`. `passo` > 0 = a primeira amostra de cada intervalo (decimação). Página: pedir de novo com `de = proximo_ms/1000`. 404 se o jogador não foi rastreado. |
+| GET | `/api/partidas/{id}/estados?de=0&ate=60&passo=1` | `{"quadros": [Quadro], "de_ms", "ate_ms", "passo_ms"}`: os 10 de `passo` em `passo` (mín. 0,1 s, máx. 1200 quadros). É o que o mapa com play usa. |
+| GET | `/api/partidas/{id}/momento?t=513` | `{"quadro": Quadro}`: os 10 num instante. |
+| GET | `/api/partidas/{id}/eventos?tipo=abate` | `{"eventos": [Evento]}` em ordem de tempo (as duas fontes, sem abate/monstro/estrutura duplicado). |
+| GET | `/api/partidas/{id}/cadeia?participante=3&tipos=morte,abate` | `{"participante_id", "passe_id", "itens": [{"t_ms", "tipo", "dados"}]}`: a cadeia reduzida (tipos em `dados.md`). 404 se não há passe fechado. |
+
+`Amostra = {"t_ms", "x", "y", "origem": "camera"|"morte"|"base"|"interpolada", "cam_x", "cam_z", "tela_x", "tela_y", "selecao_ok", "trava_perdida", "morto", "respawn", "nivel", "cs", "abates", "mortes", "assistencias", "ward", "dt_ms", "vida", "vida_max", "mana", "mana_max", "cd": {"q","w","e","r","d","f"}, "atributos": {"ad","ap","armadura","rm","vel_ataque","vel_mov"}}` — o que não foi lido vem `null` (as colunas da tela ficam `null` até a tarefa 3).
+
+`Quadro = {"t_ms", "jogadores": [{"participante_id", "x", "y", "origem" (da amostra, ou "linha_do_tempo" = interpolada nos quadros por minuto para quem não foi rastreado), "rastreado", "morto", "respawn", "nivel", "abates", "mortes", "assistencias", "cs", "itens": [{"id","qtd"}], "vida_pct", "mana_pct", "vida", "vida_max", "mana", "mana_max"}]}`
+
+`Evento = {"id", "fonte": "linha_do_tempo"|"jogo", "tipo": "abate"|"monstro"|"estrutura"|"multiabate"|"primeiro_abate"|"ace"|"inicio"|"fim"|<outro em minúsculas>, "tipo_original", "t_ms", "quem_id", "quem_nome", "em_quem_id", "em_quem_nome", "assistencias": [ids], "x", "y", "confirmado_jogo": bool, "dados": <JSON cru da fonte>}`
+
 ---
 
 ## Previstas (não implementadas)
 
 Rascunho para os próximos agentes; quem implementar ajusta aqui antes do código.
-
-### Rastreio — tarefa 2
-
-| Método | Rota | Ideia |
-|---|---|---|
-| POST | `/api/partidas/{id}/rastreio` `{"jogadores": [participante_id]?, "velocidade": 2}` | põe a partida na fila (padrão: os 10). `202 {"rastreio": Rastreio, "execucao": {"id"}}`. 409 se já há rastreio dela. Recusa se a fase não for `None`/`WatchInProgress`. |
-| GET | `/api/rastreios` | `{"rastreios": [Rastreio]}`: a fila, com passe atual, progresso e estimativa. |
-| GET | `/api/rastreios/{id}` | `{"rastreio": Rastreio, "passes": [Passe]}`. |
-| POST | `/api/rastreios/{id}/pausar` · `/retomar` · `/cancelar` | 204. Pausar e cancelar **fecham o replay** (regra 5). |
-| GET | `/api/rastreios/{id}/eventos` | SSE do rastreio: `passe_inicio`, `amostra` (a última leitura, resumida), `passe_fim`, `erro`, `fim`. |
 
 ### Leitura da tela — tarefa 3
 
@@ -79,15 +117,11 @@ Rascunho para os próximos agentes; quem implementar ajusta aqui antes do códig
 |---|---|---|
 | POST | `/api/visao/ler` (multipart com a captura) | lê uma captura guardada e devolve o que reconheceu; para calibrar e testar sem o jogo. |
 
-### Partida rastreada e análise — tarefas 2 e 4
+### Análise — tarefa 4
 
 | Método | Rota | Ideia |
 |---|---|---|
-| GET | `/api/partidas/rastreadas` | `{"partidas": [...]}` com quantos dos 10 foram rastreados. |
-| GET | `/api/partidas/{id}/amostras?participante=&de=&ate=` | as amostras (tempo, x, y, vida, mana, cooldowns...). |
-| GET | `/api/partidas/{id}/eventos` | abates, objetivos, compras (Live Client + linha do tempo). |
-| GET | `/api/partidas/{id}/momento?t=513` | onde e como estavam os 10 num instante (o mapa da tela). |
-| GET | `/api/partidas/{id}/saidas-de-rota?participante=` | início, fim, para onde, vida ao sair. |
+| GET | `/api/partidas/{id}/saidas-de-rota?participante=` | início, fim, para onde, vida ao sair (provavelmente vira tipo da cadeia). |
 | GET | `/api/partidas/{id}/abates/{n}/retrato` | o retrato de cada abate. |
 | PUT | `/api/partidas/{id}/anotacao` `{"texto"}` | anotação livre da partida. |
 

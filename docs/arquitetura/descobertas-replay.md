@@ -114,6 +114,7 @@ comparados com os quadros por minuto da linha do tempo.
 - **Mapa com play:** tela cheia, retrato do campeão (Data Dragon) + nome, play/pausa/velocidade/barra de tempo, atividade de cada um,
   clique no jogador abre vida, mana, recargas, atributos e itens do instante. Exige rota que devolva o estado dos 10 por janela de tempo.
 - `POST /Exit` na porta 2999 devolve 204 e o jogo leva alguns segundos para fechar; esperar até 15 s antes de matar o processo.
+  **Corrigido na seção 4.1:** o 204 vem, mas o jogo não fecha; quem fecha é o encerramento do processo depois dos 15 s.
 
 ## 4. Tela (referência 2560×1440, HUD em escala padrão)
 
@@ -127,6 +128,41 @@ comparados com os quadros por minuto da linha do tempo.
 - Topo: placar dos times, ouro, torres, dragões, relógio. Minimapa no canto inferior direito.
 - O texto é nítido em resolução nativa: leitura por **gabarito de dígitos** (sem IA em tempo de execução).
 - Captura por GDI (`BitBlt` da tela) funcionou com o jogo em janela sem borda. Tela cheia exclusiva: não verificado.
+
+## 4.1 O motor em Go contra o jogo (medido, 2026-11-17, tarefa 2)
+
+Sondas `go test -tags real` em `server/replay` e `server/rastreio`, partida 3304594274, jogador 3 (GodiNzt/Akshan) e 10
+(FabioBR/Lux). Cada execução abriu e fechou o replay; no fim, `League of Legends.exe` fechado e `LeagueClientUx.exe` aberto.
+
+- **Tela.** Com o processo DPI-aware, a área cliente da janela do jogo é **2560×1440** (o `game.cfg` diz `Width=3840 Height=2160`,
+  mas é o tamanho físico que a janela tem nesta máquina; o `screenPositionCenter` vem nesse mesmo espaço: centro ~(1280, 720)
+  com a câmera presa). A captura GDI da área inteira saiu nítida (HUD, painel, quadros laterais, minimapa).
+- **Custo de uma leitura** (playback, render, playerlist, playback): ~27 ms a 2× e 4×, ~32 ms a 8×. Cada pedido 3,5–5 ms.
+  A captura da área inteira, em paralelo, ~24–28 ms. Abrir o replay até a API responder: ~6 s.
+- **Taxa** (meta 4 por segundo de jogo): **3,98** a 2×, **3,96** a 4×, **3,67** a 8× (a 8× o ciclo de 31 ms já é o tempo da
+  leitura; com a leitura da tela da tarefa 3 vai cair mais). A 8× o seek precisa de folga: o relógio anda 8 s de jogo por
+  segundo real logo depois dele.
+- **Teclas.** `3`,`3` e `T`,`T` travaram na 1ª tentativa com o jogo rodando (o `T` pausado continua não confiável — o motor
+  despausa antes). A trava não caiu em 19 min de jogo seguidos, fora o recall e a morte.
+- **Morte** (8:48, respawn 19,9 s): `isDead` vira verdadeiro na amostra de 8:48, `selectionName` fica `""`, a posição vem do
+  evento (4843, 10410); ao renascer (9:08) a seleção **volta sozinha** e a primeira amostra já é de câmera, na fonte.
+  Também volta sozinha quando a tecla foi apertada a 2 s da morte e a trava "pegou" no último instante (6:00 → 6:12).
+- **Recall:** a câmera pula para a fonte com a seleção mantida; uma amostra sai "fora da tela" no salto (trava perdida de
+  ~250 ms, não chega a retravar). Fonte pela câmera: ORDER ~(376–404, 567–595), CHAOS ~(14340, 14507).
+- **`creepScore` do `playerlist` anda de 10 em 10** (30 → 40 → 50: é o CS arredondado para baixo na dezena). A conferência
+  com a linha do tempo (`minionsKilled + jungleMinionsKilled`) tem de aceitar a dezena: 30 × 36 está certo.
+- **`POST /Exit` responde 204 mas o jogo NÃO fecha** (diverge da seção 3.3): em 6 aberturas, o processo continuou vivo depois
+  dos 15 s; numa medida dedicada, ainda vivo 46 s depois. O fechamento de verdade é o encerramento do processo
+  `League of Legends.exe` (o cliente segue normal). A fase do gameflow lida com o jogo ainda aberto depois do `/Exit` foi
+  `None`. A rota `/Exit` é a única "exit/quit/close" no openapi do jogo.
+- **Posição.** Ajuste completo (4 coeficientes) com 9 quadros a 4× (min 20–30): **erro mediano 33, máximo 108**; a fórmula
+  da 3.2 sem ajuste nos mesmos pontos deu mediano 31 e máximo 254 (o máximo é um quadro com o campeão a 355 px do centro,
+  câmera atrasada), e só o deslocamento (−2, +1291) mediano 39 e máximo 415. Os por-pixel ajustados (1,18 e 1,12) saíram
+  menores que os da 3.2 (1,37 e 1,77), mas vêm de poucos pontos longe do centro: o motor refaz por partida e grava o erro.
+  Trechos curtos (2–3 quadros vivos) só ajustam o deslocamento: 16 (2 pontos, 2×), 72/92 (3 pontos, 8×).
+- **Tamanho do bloco compactado:** 7,2 bytes por amostra (6 919 bytes, 956 amostras), 6,8 (16 249 bytes, 2 383 amostras).
+- **Eventos.** A linha do tempo do LCU desta partida só tem `CHAMPION_KILL`, `ELITE_MONSTER_KILL` e `BUILDING_KILL` (sem
+  itens nem wards, ao contrário do que a seção 2 sugeria); compras e vendas vêm do inventário do `playerlist` segundo a segundo.
 
 ## 5. Custo de tempo
 
