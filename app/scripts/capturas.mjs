@@ -73,6 +73,16 @@ const CAPTURAS = [
     antes: `document.documentElement.dataset.theme = 'light'`,
     depois: 400,
   },
+  {
+    // Conferência sem imagem: tocar a 8× por 4 s atravessa a janela de 60 s (pré-busca) sem travar.
+    nome: 'confere-replay-tocando',
+    salva: false,
+    url: `${BASE}/#replay/${G}/50`,
+    espera: 2500,
+    antes: `(() => { [...document.querySelectorAll('.rp-vels button')].find((b) => b.textContent === '8×').click(); document.querySelector('.rp-play').click(); })()`,
+    depois: 4000,
+    confere: `JSON.stringify({relogio: document.querySelector('.rp-relogio').textContent, aviso: document.querySelector('.rp-aviso').hidden ? '' : document.querySelector('.rp-aviso').textContent, visiveis: [...document.querySelectorAll('.figura')].filter((f) => !f.hidden).length})`,
+  },
 ];
 
 // Preparos que mexem no servidor (só nos de desenvolvimento, nunca no LoL de verdade).
@@ -126,6 +136,7 @@ async function tira(win, c) {
     await win.webContents.executeJavaScript(`document.querySelector('#conteudo').scrollTop = ${c.rola}`);
     await esperaMs(400);
   }
+  if (c.salva === false) return console.log('ok', c.nome);
   const img = await win.webContents.capturePage();
   fs.writeFileSync(path.join(SAIDA, `${c.nome}.png`), img.toPNG());
   console.log('ok', c.nome);
