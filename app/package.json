@@ -7,7 +7,7 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test src/main/servidor.test.mjs src/renderer/formato.test.mjs"
+    "test": "node --test src/main/servidor.test.mjs src/renderer/formato.test.mjs src/renderer/tarefa5.test.mjs"
   },
   "devDependencies": {
     "electron": "^39.8.10"
