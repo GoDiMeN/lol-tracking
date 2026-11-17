@@ -29,6 +29,8 @@ type Falso struct {
 	replays       map[int64]*MetadataReplay
 	// Chamadas registra as ações (create/download/watch) para os testes conferirem.
 	Chamadas []string
+	// AoAssistir é chamado no watch (o modo teste liga aqui o jogo falso).
+	AoAssistir func(gameID int64)
 }
 
 // VersaoFalsa é a versão do jogo "instalado" no cliente falso.
@@ -348,8 +350,12 @@ func (f *Falso) AssisteReplay(ctx context.Context, gameID int64) error {
 		return err
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.Chamadas = append(f.Chamadas, fmt.Sprintf("watch %d", gameID))
+	ao := f.AoAssistir
+	f.mu.Unlock()
+	if ao != nil {
+		ao(gameID)
+	}
 	return nil
 }
 
