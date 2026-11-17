@@ -11,7 +11,10 @@ import (
 )
 
 // Ponto é uma coordenada do jogo.
-type Ponto struct{ X, Y float64 }
+type Ponto struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
 
 // Vocabulário das zonas (fixo; documentado em docs/arquitetura/dados.md).
 const (

@@ -399,6 +399,14 @@ func (p *preparo) classifica(k int) rotuloAtv {
 				fmt.Sprintf("%s a %.0f, %.0f s depois", strings.ToLower(e.Tipo), d, float64(e.TMs-t)/1000)}}
 		}
 	}
+	// Quem atravessa o mapa não está farmando: deslocamento em linha reta nos
+	// últimos JanelaDeslocamentoMs acima de DeslocamentoAndando = andando.
+	if q, ok := PosicaoEm(c.Amostras, t-Param.JanelaDeslocamentoMs); ok {
+		if d := dist(z.ponto, q); d > Param.DeslocamentoAndando {
+			return rotuloAtv{atv: AAndando, confianca: "media", zona: z.zona, sinais: []string{
+				fmt.Sprintf("deslocou %.0f em %.0f s", d, float64(Param.JanelaDeslocamentoMs)/1000)}}
+		}
+	}
 	tipo := TipoZona(z.zona)
 	if tipo == "rota" || tipo == "selva" || tipo == "rio" {
 		if r, ok := csPorMinuto(c.Linha, c.ParticipanteID, t); ok && r >= Param.CSMinimoPorMin {

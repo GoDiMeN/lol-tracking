@@ -29,6 +29,11 @@ type Parametros struct {
 	JanelaObjetivoMs int64
 	// CSMinimoPorMin: ritmo de CS (linha do tempo, no minuto) para "farmando".
 	CSMinimoPorMin float64
+	// JanelaDeslocamentoMs e DeslocamentoAndando: andou mais que isso em linha
+	// reta na janela = está indo para algum lugar, não farmando (a ~350 de
+	// velocidade, 4 s andando reto são ~1400).
+	JanelaDeslocamentoMs int64
+	DeslocamentoAndando  float64
 	// TrechoMinimoMs: trecho de atividade "andando"/"farmando" mais curto que
 	// isso é absorvido pelo anterior (tira o pisca-pisca).
 	TrechoMinimoMs int64
@@ -55,6 +60,8 @@ var Param = Parametros{
 	RaioObjetivo:          1500,
 	JanelaObjetivoMs:      40000,
 	CSMinimoPorMin:        3,
+	JanelaDeslocamentoMs:  4000,
+	DeslocamentoAndando:   1000,
 	TrechoMinimoMs:        3000,
 	RaioSuperioridade:     1500,
 	VidaBaixaPct:          30,
