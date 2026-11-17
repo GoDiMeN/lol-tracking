@@ -24,6 +24,11 @@ type Config struct {
 	TokenRiot string
 	// Renderer é a pasta servida em "/" (LOL_RENDERER; vazio = só a API).
 	Renderer string
+	// GuardaCapturas guarda 1 captura PNG (+ JSON da API) a cada
+	// CapturaACadaS segundos de jogo em <Dados>/capturas (LOL_GUARDA_CAPTURAS=1,
+	// LOL_CAPTURA_A_CADA): material de teste da leitura da tela.
+	GuardaCapturas bool
+	CapturaACadaS  float64
 }
 
 // PortaPadrao também está em app/src/main/servidor.js: mexeu aqui, mexa lá.
@@ -58,6 +63,15 @@ func LoadConfig() Config {
 	}
 	if t := strings.TrimSpace(os.Getenv("LOL_TOKEN_RIOT")); t != "" {
 		cfg.TokenRiot = t
+	}
+	cfg.GuardaCapturas = ligado(os.Getenv("LOL_GUARDA_CAPTURAS"))
+	cfg.CapturaACadaS = 30
+	if s := strings.TrimSpace(os.Getenv("LOL_CAPTURA_A_CADA")); s != "" {
+		if v, err := strconv.ParseFloat(s, 64); err != nil || v < 1 {
+			log.Printf("AVISO: LOL_CAPTURA_A_CADA=%q inválido (segundos ≥ 1); usando 30", s)
+		} else {
+			cfg.CapturaACadaS = v
+		}
 	}
 	// LookupEnv: "definida e vazia" (não servir a interface) é diferente de
 	// "não definida" (servir a pasta padrão).

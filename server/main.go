@@ -18,6 +18,8 @@ import (
 	"loltracking/server/jogador"
 	"loltracking/server/lcu"
 	"loltracking/server/partida"
+	"loltracking/server/rastreio"
+	"loltracking/server/replay"
 	"loltracking/server/riot"
 	"loltracking/server/web"
 )
@@ -50,14 +52,45 @@ func main() {
 	}
 	chaveRiot := riot.Novo(cfg.TokenRiot, cfg.ModoTeste)
 
+	// O jogo (replay): de verdade, ou o falso que "abre" quando o LCU falso
+	// recebe o watch, com os participantes da partida pedida.
+	var depsReplay replay.Deps
+	if cfg.ModoTeste {
+		jogo := replay.NovoFalso(replay.RelogioReal{})
+		cliLCU.(*lcu.Falso).AoAssistir = func(gameID int64) {
+			if p, err := partida.Le(db, gameID); err == nil {
+				var elenco []replay.JogadorFalso
+				for _, pt := range p.Participantes {
+					t := "ORDER"
+					if pt.Time == 200 {
+						t = "CHAOS"
+					}
+					elenco = append(elenco, replay.JogadorFalso{Nome: pt.Nome, Campeao: pt.Campeao, Time: t})
+				}
+				jogo.ConfiguraPartida(elenco, float64(p.DuracaoS))
+			}
+			jogo.AbreReplay()
+		}
+		depsReplay = replay.Deps{LCU: cliLCU, API: jogo, Jogo: jogo, Teclado: jogo, Tela: jogo}
+	} else {
+		janela := replay.NovaJanela()
+		depsReplay = replay.Deps{LCU: cliLCU, API: replay.NovaAPI(replay.EnderecoPadrao), Jogo: janela, Teclado: janela,
+			Tela: janela, GameCfg: replay.GameCfgDe(cfg.Lockfile)}
+	}
+	cfgRastreio := rastreio.Config{CapturaACadaS: cfg.CapturaACadaS}
+	if cfg.GuardaCapturas {
+		cfgRastreio.PastaCapturas = filepath.Join(cfg.Dados, "capturas")
+	}
+
 	// Ordem de migração = ordem de dependência lógica (não há FOREIGN KEY entre
-	// pacotes). Os próximos (rastreio, analise, estudo) entram depois de partida.
+	// pacotes). Os próximos (analise, estudo) entram depois de rastreio.
 	migracoes := []struct {
 		nome  string
 		migra func(*banco.DB) error
 	}{
 		{"jogador", jogador.Migra},
 		{"partida", partida.Migra},
+		{"rastreio", rastreio.Migra},
 	}
 	for _, m := range migracoes {
 		if err := m.migra(db); err != nil {
@@ -79,6 +112,7 @@ func main() {
 	estado.Registra(mux, cliLCU, chaveRiot, cfg.ModoTeste)
 	jogador.Registra(mux, db, cliLCU)
 	partida.Registra(mux, partida.Deps{DB: db, LCU: cliLCU, Campeoes: nomes}, hub)
+	rastreio.Registra(mux, rastreio.NovaFila(rastreio.Deps{DB: db, LCU: cliLCU, Replay: depsReplay, Hub: hub, Config: cfgRastreio}))
 
 	if cfg.Renderer != "" {
 		if _, err := os.Stat(cfg.Renderer); errors.Is(err, os.ErrNotExist) {
