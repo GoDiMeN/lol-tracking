@@ -1,0 +1,191 @@
+{
+ "altura": 1440,
+ "game_id": 3304594274,
+ "jogadores": [
+  {
+   "championName": "Malphite",
+   "isDead": false,
+   "level": 15,
+   "position": "TOP",
+   "respawnTimer": 0,
+   "riotIdGameName": "Nacht Faust",
+   "riotIdTagLine": "STF",
+   "scores": {
+    "assists": 5,
+    "creepScore": 170,
+    "deaths": 4,
+    "kills": 3,
+    "wardScore": 18.902835845947266
+   },
+   "screenPositionCenter": "1364.5419922,909.9248047",
+   "team": "ORDER"
+  },
+  {
+   "championName": "Master Yi",
+   "isDead": false,
+   "level": 13,
+   "position": "JUNGLE",
+   "respawnTimer": 0,
+   "riotIdGameName": "Tião Gomes",
+   "riotIdTagLine": "br1",
+   "scores": {
+    "assists": 7,
+    "creepScore": 130,
+    "deaths": 9,
+    "kills": 8,
+    "wardScore": 12.170832633972168
+   },
+   "screenPositionCenter": "340282346638528859811704183484516925440.0000000,340282346638528859811704183484516925440.0000000",
+   "team": "ORDER"
+  },
+  {
+   "championName": "Akshan",
+   "isDead": true,
+   "level": 15,
+   "position": "MIDDLE",
+   "respawnTimer": 31.09791374206543,
+   "riotIdGameName": "GodiNzt",
+   "riotIdTagLine": "br1",
+   "scores": {
+    "assists": 3,
+    "creepScore": 170,
+    "deaths": 5,
+    "kills": 11,
+    "wardScore": 15.318961143493652
+   },
+   "screenPositionCenter": "340282346638528859811704183484516925440.0000000,340282346638528859811704183484516925440.0000000",
+   "team": "ORDER"
+  },
+  {
+   "championName": "Ashe",
+   "isDead": true,
+   "level": 13,
+   "position": "BOTTOM",
+   "respawnTimer": 42.86260986328125,
+   "riotIdGameName": "Dszinn",
+   "riotIdTagLine": "BR2",
+   "scores": {
+    "assists": 3,
+    "creepScore": 150,
+    "deaths": 6,
+    "kills": 9,
+    "wardScore": 23.876401901245117
+   },
+   "screenPositionCenter": "998.3164063,580.9876709",
+   "team": "ORDER"
+  },
+  {
+   "championName": "Seraphine",
+   "isDead": false,
+   "level": 12,
+   "position": "UTILITY",
+   "respawnTimer": 0,
+   "riotIdGameName": "TuTuzA0",
+   "riotIdTagLine": "BRA",
+   "scores": {
+    "assists": 20,
+    "creepScore": 10,
+    "deaths": 2,
+    "kills": 1,
+    "wardScore": 59.466426849365234
+   },
+   "screenPositionCenter": "340282346638528859811704183484516925440.0000000,340282346638528859811704183484516925440.0000000",
+   "team": "ORDER"
+  },
+  {
+   "championName": "Teemo",
+   "isDead": false,
+   "level": 15,
+   "position": "TOP",
+   "respawnTimer": 0,
+   "riotIdGameName": "SóSplito",
+   "riotIdTagLine": "br1",
+   "scores": {
+    "assists": 5,
+    "creepScore": 180,
+    "deaths": 4,
+    "kills": 1,
+    "wardScore": 23.582483291625977
+   },
+   "screenPositionCenter": "1551.2095947,547.8080444",
+   "team": "CHAOS"
+  },
+  {
+   "championName": "Warwick",
+   "isDead": false,
+   "level": 14,
+   "position": "JUNGLE",
+   "respawnTimer": 0,
+   "riotIdGameName": "STO21Shinigami",
+   "riotIdTagLine": "br1",
+   "scores": {
+    "assists": 4,
+    "creepScore": 110,
+    "deaths": 8,
+    "kills": 13,
+    "wardScore": 16.977344512939453
+   },
+   "screenPositionCenter": "1173.3693848,661.9139404",
+   "team": "CHAOS"
+  },
+  {
+   "championName": "LeBlanc",
+   "isDead": false,
+   "level": 13,
+   "position": "MIDDLE",
+   "respawnTimer": 0,
+   "riotIdGameName": "O tal do Dente",
+   "riotIdTagLine": "br1",
+   "scores": {
+    "assists": 2,
+    "creepScore": 140,
+    "deaths": 6,
+    "kills": 5,
+    "wardScore": 23.26279067993164
+   },
+   "screenPositionCenter": "340282346638528859811704183484516925440.0000000,340282346638528859811704183484516925440.0000000",
+   "team": "CHAOS"
+  },
+  {
+   "championName": "Smolder",
+   "isDead": false,
+   "level": 12,
+   "position": "BOTTOM",
+   "respawnTimer": 0,
+   "riotIdGameName": "WILLY WONKA",
+   "riotIdTagLine": "NGG4",
+   "scores": {
+    "assists": 5,
+    "creepScore": 130,
+    "deaths": 6,
+    "kills": 5,
+    "wardScore": 11.53053092956543
+   },
+   "screenPositionCenter": "340282346638528859811704183484516925440.0000000,340282346638528859811704183484516925440.0000000",
+   "team": "CHAOS"
+  },
+  {
+   "championName": "Lux",
+   "isDead": false,
+   "level": 11,
+   "position": "UTILITY",
+   "respawnTimer": 0,
+   "riotIdGameName": "FabioBR",
+   "riotIdTagLine": "br1",
+   "scores": {
+    "assists": 5,
+    "creepScore": 30,
+    "deaths": 8,
+    "kills": 2,
+    "wardScore": 50.934852600097656
+   },
+   "screenPositionCenter": "340282346638528859811704183484516925440.0000000,340282346638528859811704183484516925440.0000000",
+   "team": "CHAOS"
+  }
+ ],
+ "largura": 2560,
+ "nome": "GodiNzt",
+ "participante_id": 3,
+ "selecao": "",
+ "t_ms": 1423007
+}

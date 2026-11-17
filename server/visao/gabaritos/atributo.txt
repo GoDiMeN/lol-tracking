@@ -1,0 +1,236 @@
+# Fonte "atributo" do HUD (2560×1440, escala padrão). Gerado por TestGeraGabaritos a partir das
+# capturas rotuladas em testdata/rotulos.txt. Não edite à mão: rode de novo.
+glifo . 2 2
+ee
+ca
+glifo 0 6 10
+..cd9.
+.e9bea
+eb..de
+e...9e
+e....e
+e....e
+e9...e
+ed..ae
+aeb8e9
+.8dd8.
+glifo 0 6 10
+..bb..
+.c.9c9
+c9..bc
+c....c
+c....c
+c....c
+c....c
+cb..8c
+8c9.c.
+..bb..
+glifo 0 7 10
+..9ddb.
+.9eabeb
+.eb..de
+.e...ae
+9e...9e
+9e...9e
+.e9..9e
+.ed..be
+.bebaea
+..9dd9.
+glifo 1 4 10
+.ae.
+aee.
+ece.
+.9e.
+.9e.
+.9e.
+.9e.
+.9e.
+.ae.
+.dea
+glifo 1 4 10
+.9c.
+.cc.
+cac.
+..c.
+..c.
+..c.
+..c.
+..c.
+.9c.
+.bc9
+glifo 2 7 10
+.adeb..
+dd.aed.
+e...de.
+ec..be.
+9...ec.
+...be..
+..9e...
+..e....
+.ee..99
+eeeeee.
+glifo 2 7 10
+.9bca..
+bb.9cb.
+c...bc.
+ca..ac.
+....ca.
+...ac..
+...c...
+..c....
+.cc..88
+cccccc.
+glifo 3 6 10
+cccccc
+a..9c.
+...b..
+...b..
+..cb..
+...9cb
+....ac
+9...9c
+cb.8ca
+.9cb..
+glifo 3 6 10
+eeeeee
+c..ae.
+...ca.
+..ad..
+..ed9.
+...bed
+....be
+b...be
+ed8aec
+.aed9.
+glifo 4 6 10
+...cc.
+..bcc.
+..c.c.
+.b..c.
+.c..c.
+c...c.
+cccccc
+...9c.
+....c.
+...9c.
+glifo 4 8 10
+....ee..
+...dee..
+...e8e..
+..d..e..
+..e..e..
+.e...e..
+9eeeeee9
+....ae9.
+.....e..
+....be9.
+glifo 5 6 10
+.ccccc
+.c....
+9b....
+ab....
+bcccb.
+....cc
+....9c
+a...ac
+cb.9ca
+.acb..
+glifo 5 6 10
+.eeeee
+9e....
+ad....
+cd....
+deeed.
+....ee
+....ae
+c...be
+ed.aec
+.ced9.
+glifo 6 6 10
+...cb.
+..c...
+.c....
+bb.ba.
+cc..cc
+c9...c
+c....c
+cb...c
+ac8.bb
+..bb9.
+glifo 6 7 10
+...ed..
+.9e9...
+.e8....
+dd9dc..
+ee98ee.
+eb...e.
+e8...e9
+ec...e.
+bea.dd.
+.9dda..
+glifo 7 7 10
+eeeeeec
+a...be.
+....dd.
+....e..
+...ce..
+...e9..
+..be...
+..ee...
+.8eb...
+.de8...
+glifo 7 7 10
+cccccca
+9...ac.
+....bb.
+....c..
+...bc..
+...c...
+..9c...
+..cc...
+..c9...
+.bc....
+glifo 8 6 10
+..bca.
+ac..cc
+c9..8c
+bc..aa
+.accb.
+.c9.cb
+c....c
+c....c
+cc..bc
+.9cb9.
+glifo 8 6 10
+.9deb.
+ce..ee
+eb..ae
+de..cc
+.ceed.
+.eaaed
+e9...e
+e9...e
+ee..de
+.beeb.
+glifo 9 6 10
+.adda.
+ce.9ed
+e...ae
+e....e
+e9..9e
+ee9.ee
+.beace
+....e.
+...eb.
+.ce8..
+glifo 9 6 10
+..bb9.
+ac..cb
+c...8c
+c....c
+c...8c
+cc..cc
+.ac9ac
+....c.
+...ca.
+.bc...

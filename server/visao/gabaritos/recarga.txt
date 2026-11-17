@@ -1,0 +1,136 @@
+# Fonte "recarga" do HUD (2560×1440, escala padrão). Gerado por TestGeraGabaritos a partir das
+# capturas rotuladas em testdata/rotulos.txt. Não edite à mão: rode de novo.
+glifo . 3 3
+.c.
+ffa
+be.
+glifo 0 8 12
+..aed...
+.efcffb.
+.f...ff.
+ff...cfb
+ff....fd
+fe....ff
+ff....fe
+ff....fc
+ff....f.
+cfb..df.
+.ffddfa.
+..bec...
+glifo 1 5 12
+..ef.
+.dff.
+dfff.
+e.ff.
+..ff.
+..ff.
+..ff.
+..ff.
+..ff.
+..ff.
+..ff.
+..ffc
+glifo 2 8 12
+..ceea..
+.febfff.
+fe...ff.
+fe...cfa
+ff...ef.
+.....ff.
+....df..
+...afa..
+...fc...
+..fd....
+.ffeccdf
+fffffffe
+glifo 3 8 12
+cffffff.
+eddcefc.
+....cf..
+....f...
+...f....
+..effb..
+....eff.
+.....ef.
+.....afb
+fe...ef.
+ffebefd.
+.aefd...
+glifo 4 9 12
+....aff..
+....fff..
+...bfcf..
+...f.af..
+..bf.af..
+..f..af..
+.cf..af..
+.feaaefda
+cffffffff
+.....af..
+.....bf..
+.....efd.
+glifo 5 8 12
+.ffffff.
+.fecccc.
+.f......
+.f......
+.fda....
+afffff..
+....bff.
+.....df.
+.....afa
+fd...ff.
+ffebefd.
+.aefd...
+glifo 6 8 12
+....fd..
+..cfe...
+..fd....
+.fe.....
+bf.bfc..
+fffceff.
+ff...bfd
+ff....ff
+ff....fe
+ef....fa
+.ffcbfe.
+..cfda..
+glifo 7 8 12
+ffffffff
+fcbbbefc
+.....df.
+.....fe.
+....bf..
+....ff..
+....fa..
+...ff...
+...fe...
+..dfa...
+..ff....
+..ff....
+glifo 8 8 12
+..beeb..
+.ffacff.
+df...df.
+ff...af.
+afb..ee.
+.bfffe..
+.bfeffe.
+ef...bfc
+fe....ff
+ff....fd
+dffbcff.
+..dfea..
+glifo 9 8 12
+..beda..
+.febefe.
+ff...ef.
+fd....fc
+fd....fe
+ff...cfc
+bffbdffa
+..ee.cf.
+.....fe.
+....ff..
+...ff...
+.bee....

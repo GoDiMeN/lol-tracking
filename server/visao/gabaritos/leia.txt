@@ -1,0 +1,2 @@
+# Gabaritos dos glifos do HUD, um arquivo por fonte (formato em ../gabaritos.go).
+# Gerados por TestGeraGabaritos (LOL_GERA_GABARITOS=1) a partir das capturas rotuladas.
