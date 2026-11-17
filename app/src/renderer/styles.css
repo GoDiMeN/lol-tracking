@@ -7,17 +7,10 @@
   --azul:#4b9fff; --vermelho:#f0616d; --mapa:#141c17; --mapa-rota:#2a3327; --mapa-rio:#16303f;
   --font-ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --font-mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
-  --raio:8px;
+  --raio:8px; --titlebar-h:44px; --menu-w:244px;
   color-scheme:dark;
 }
-@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){
-  --fundo:#eef1f5; --fundo-2:#ffffff; --fundo-3:#f4f6f9; --fundo-4:#e7ebf1; --borda:#d7dde6; --borda-forte:#b9c2cf;
-  --texto:#151a22; --texto-2:#4e5a6a; --texto-3:#7a8595;
-  --acento:#1f6fd1; --acento-fraco:#dbe8fa; --acento-texto:#ffffff;
-  --ok:#1f8a3a; --ok-fraco:#dcf3e1; --atencao:#9a6b12; --atencao-fraco:#fbeecf; --critico:#c93a32; --critico-fraco:#fadcda;
-  --azul:#1f6fd1; --vermelho:#c93a47; --mapa:#dfe7dc; --mapa-rota:#c9d2c2; --mapa-rio:#bcd9e8;
-  color-scheme:light;
-}}
+/* O tema é o escuro do workflow e não segue o Windows; o claro só entra por escolha em Configurações. */
 :root[data-theme="light"]{
   --fundo:#eef1f5; --fundo-2:#ffffff; --fundo-3:#f4f6f9; --fundo-4:#e7ebf1; --borda:#d7dde6; --borda-forte:#b9c2cf;
   --texto:#151a22; --texto-2:#4e5a6a; --texto-3:#7a8595;
@@ -48,17 +41,31 @@ p{margin:0}
 /* --- Janela ----------------------------------------------------------------------------------- */
 .janela{display:flex;flex-direction:column;height:100%}
 .janela[hidden]{display:none}
-.titulo{display:flex;align-items:center;gap:10px;height:40px;padding:0 12px;background:var(--fundo-2);border-bottom:1px solid var(--borda);font-size:13px;flex:none}
-.titulo b{font-weight:600}
-.titulo .dir{margin-left:auto;display:flex;gap:8px;align-items:center;color:var(--texto-2);font-size:12px}
+/* Barra de título igual à do workflow: 44 px, arrasta a janela, marca à esquerda e os botões de
+   janela à direita (a janela não tem a moldura do Windows). */
+.titulo{display:flex;align-items:center;gap:12px;height:var(--titlebar-h);padding-left:14px;background:var(--fundo-2);border-bottom:1px solid var(--borda);font-size:13px;flex:none;-webkit-app-region:drag;user-select:none}
+.marca{display:flex;align-items:center;gap:8px;flex:none}
+.marca-ponto{width:10px;height:10px;border-radius:3px;background:linear-gradient(135deg,var(--acento),#7c5cff);box-shadow:0 0 10px rgba(75,159,255,.5)}
+.marca-texto{color:var(--texto-2);letter-spacing:.3px;font-size:13px}
+.marca-texto b{color:var(--texto);font-weight:600}
+.titulo .dir{margin-left:auto;display:flex;gap:8px;align-items:center;color:var(--texto-2);font-size:12px;padding-right:12px;-webkit-app-region:no-drag}
+.janela-botoes{display:flex;align-self:stretch;-webkit-app-region:no-drag}
+.win-btn{width:44px;border:none;border-radius:0;background:transparent;color:var(--texto-2);font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.win-btn:hover{background:var(--fundo-4);color:var(--texto)}
+.win-close:hover{background:#c0392b;color:#fff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--fundo-4);border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:var(--borda-forte);background-clip:padding-box}
 .ponto{width:8px;height:8px;border-radius:50%;background:var(--texto-3);flex:none}
-.ponto.ok{background:var(--ok)} .ponto.cr{background:var(--critico)}
+.ponto{width:9px;height:9px}
+.ponto.ok{background:var(--ok);box-shadow:0 0 0 3px rgba(63,185,80,.15)} .ponto.cr{background:var(--critico);box-shadow:0 0 0 3px rgba(248,81,73,.15)}
 
-.corpo{display:grid;grid-template-columns:200px minmax(0,1fr);flex:1;min-height:0}
+.corpo{display:grid;grid-template-columns:var(--menu-w) minmax(0,1fr);flex:1;min-height:0}
 .menu{background:var(--fundo-2);border-right:1px solid var(--borda);padding:10px 8px;display:flex;flex-direction:column;gap:2px;font-size:13px}
 .menu a{padding:6px 10px;border-radius:6px;color:var(--texto-2);text-decoration:none;display:flex;align-items:center;gap:6px}
 .menu a:hover{background:var(--fundo-3);color:var(--texto)}
-.menu a.on{background:var(--fundo-4);color:var(--texto)}
+.menu a.on{background:var(--acento-fraco);color:var(--texto)}
 .menu .rot{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--texto-3);padding:10px 10px 4px}
 .selo{margin-left:auto;font-family:var(--font-mono);font-size:10.5px;background:var(--acento-fraco);color:var(--acento);border-radius:999px;padding:0 6px}
 

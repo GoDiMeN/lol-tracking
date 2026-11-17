@@ -4,7 +4,7 @@
 import { api } from '../api.js';
 import { dataCurta } from '../formato.js';
 import { bytes } from '../texto.js';
-import { el, cartao, pilula, preferencia, guardaPreferencia, aplicaTema, erroNaTela, toast } from '../ui.js';
+import { el, cartao, pilula, preferencia, guardaPreferencia, aplicaTema, TEMA_PADRAO, erroNaTela, toast } from '../ui.js';
 
 export async function desenha(raiz, _rota, ctx) {
   const h1 = el('h1', 'titulo-tela', 'Configurações');
@@ -90,10 +90,11 @@ function preferencias() {
 
   const tema = el('fieldset', 'opcoes');
   tema.append(el('legend', '', 'Tema'));
-  const t = preferencia('tema', 'auto');
+  // Preferência antiga "auto" (igual ao Windows) deixou de existir: cai no padrão.
+  const guardado = preferencia('tema', TEMA_PADRAO);
+  const t = guardado === 'claro' ? 'claro' : 'escuro';
   for (const [v, rot] of [
-    ['auto', 'igual ao Windows'],
-    ['escuro', 'escuro'],
+    ['escuro', 'escuro (padrão)'],
     ['claro', 'claro'],
   ]) {
     const r = el('input');

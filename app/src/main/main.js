@@ -4,7 +4,8 @@
 // servidor esteja de pé (sobe um com `go run .` se o /health não responder), abre a janela apontada
 // para ele e, ao sair, derruba o servidor que ELE subiu, nunca um que já estava rodando.
 
-const { app, BrowserWindow, shell } = require('electron');
+const path = require('node:path');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const servidor = require('./servidor');
 
 const PORTA = servidor.portaDoAmbiente();
@@ -16,7 +17,7 @@ let janela = null;
 let nosso = null;
 
 const ESPERA = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>LoL Tracking</title>
-<style>body{margin:0;height:100vh;display:grid;place-items:center;background:#0d1017;color:#e8ecf3;font:14px system-ui,"Segoe UI",sans-serif}
+<style>body{margin:0;height:100vh;display:grid;place-items:center;background:#0d1017;color:#e8ecf3;font:14px system-ui,"Segoe UI",sans-serif;-webkit-app-region:drag}
 small{display:block;color:#94a3b8;margin-top:6px}</style></head>
 <body><div>Iniciando o LoL Tracking…<small>a primeira abertura compila o servidor e pode levar um minuto</small></div></body></html>`;
 
@@ -32,7 +33,14 @@ function criaJanela() {
     // O --fundo escuro do protótipo: sem clarão branco antes da página pintar.
     backgroundColor: '#0d1017',
     autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    // Sem a moldura do Windows: a barra de título é a do app, escura, igual à do workflow.
+    frame: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      preload: path.join(__dirname, 'preload.js'),
+    },
   });
   // Link de fora abre no navegador do sistema; dentro da janela só vive o app.
   janela.webContents.setWindowOpenHandler(({ url }) => {
@@ -70,6 +78,16 @@ async function inicia() {
   if (!janela) return;
   await janela.loadURL(erro ? dataUrl(erro) : `${BASE}/`).catch(() => {});
 }
+
+// Os botões da barra de título (a moldura é do app).
+ipcMain.handle('janela:minimiza', () => janela?.minimize());
+ipcMain.handle('janela:maximiza', () => {
+  if (!janela) return false;
+  if (janela.isMaximized()) janela.unmaximize();
+  else janela.maximize();
+  return janela.isMaximized();
+});
+ipcMain.handle('janela:fecha', () => janela?.close());
 
 // Uma instância só: a segunda tentaria subir outro servidor na mesma porta.
 if (!app.requestSingleInstanceLock()) {

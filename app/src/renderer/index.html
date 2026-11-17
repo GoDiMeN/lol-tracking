@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,9 +11,15 @@
   <body>
     <a class="pular" href="#conteudo">Pular para o conteúdo</a>
     <div class="janela" id="janela">
-      <header class="titulo">
-        <b>LoL Tracking</b>
+      <!-- Barra de título do app (a janela não tem a moldura do Windows): mesma do workflow. -->
+      <header class="titulo" id="titlebar">
+        <span class="marca" aria-label="LoL Tracking"><span class="marca-ponto"></span><span class="marca-texto">LoL <b>Tracking</b></span></span>
         <span class="dir" id="status" role="status"><span class="ponto" id="statusPonto"></span><span id="statusTexto">conectando ao servidor…</span></span>
+        <div class="janela-botoes" id="janelaBotoes" hidden>
+          <button type="button" class="win-btn" id="winMin" aria-label="Minimizar" title="Minimizar">&#x2014;</button>
+          <button type="button" class="win-btn" id="winMax" aria-label="Maximizar" title="Maximizar">&#x25A1;</button>
+          <button type="button" class="win-btn win-close" id="winFecha" aria-label="Fechar" title="Fechar">&#x2715;</button>
+        </div>
       </header>
       <div class="corpo">
         <nav class="menu" aria-label="Menu">

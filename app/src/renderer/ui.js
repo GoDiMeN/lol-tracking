@@ -199,9 +199,9 @@ export function participantePrincipal(partida, rastreados = []) {
   return r || partida.participantes[0];
 }
 
-// Tema: automático (do sistema), claro ou escuro, escolhido em Configurações.
+// Tema: escuro por padrão (o do workflow); claro só se escolhido em Configurações. Não segue o
+// Windows: com o sistema em modo claro o app abria claro, e o desenho dele é o escuro.
+export const TEMA_PADRAO = 'escuro';
 export function aplicaTema(tema) {
-  if (tema === 'claro') document.documentElement.dataset.theme = 'light';
-  else if (tema === 'escuro') document.documentElement.dataset.theme = 'dark';
-  else delete document.documentElement.dataset.theme;
+  document.documentElement.dataset.theme = tema === 'claro' ? 'light' : 'dark';
 }

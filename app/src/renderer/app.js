@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { lerRota, montaRota, itemDoMenu } from './rota.js';
-import { $, el, preferencia, aplicaTema } from './ui.js';
+import { $, el, preferencia, aplicaTema, TEMA_PADRAO } from './ui.js';
 import { desenha as jogadores } from './views/jogadores.js';
 import { desenha as rastreio } from './views/rastreio.js';
 import { desenha as partidas } from './views/partidas.js';
@@ -130,7 +130,18 @@ async function roteia() {
   }
 }
 
-aplicaTema(preferencia('tema', 'auto'));
+aplicaTema(preferencia('tema', TEMA_PADRAO));
+
+// Botões da barra de título: só existem dentro do app (no navegador a ponte não está lá).
+if (window.janelaApp) {
+  $('janelaBotoes').hidden = false;
+  $('winMin').addEventListener('click', () => window.janelaApp.minimiza());
+  $('winMax').addEventListener('click', () => window.janelaApp.alternaMaximizada());
+  $('winFecha').addEventListener('click', () => window.janelaApp.fecha());
+  $('titlebar').addEventListener('dblclick', (e) => {
+    if (!e.target.closest('button')) window.janelaApp.alternaMaximizada();
+  });
+}
 
 window.addEventListener('hashchange', roteia);
 atualizaStatus().then(roteia);
