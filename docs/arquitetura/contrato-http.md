@@ -65,7 +65,7 @@ ao terminar, pausar, cancelar, falhar ou estourar (regra 5).
 
 | Método | Rota | Resposta |
 |---|---|---|
-| POST | `/api/partidas/{id}/rastreio` `{"jogadores": [participante_id]?, "velocidade": 2?}` | `202 {"rastreio": Rastreio, "execucao": {"id"}}`. Padrão: os 10, velocidade 2 (0,5–8). 400 participante inexistente/repetido, partida incompleta ou velocidade fora; 404 partida não está no banco; 409 já há rastreio rodando, fase do cliente não permitida (só `None`/`WatchInProgress`) ou replay não baixado. Importa os eventos da linha do tempo na hora. |
+| POST | `/api/partidas/{id}/rastreio` `{"jogadores": [participante_id]?, "velocidade": 2?, "de_ms": 0?, "ate_ms": 0?}` | `202 {"rastreio": Rastreio, "execucao": {"id"}}`. Padrão: os 10, velocidade 2 (0,5–8), a partida inteira (`de_ms`/`ate_ms` = trecho em ms de jogo; `ate_ms` 0 = até o fim). 400 participante inexistente/repetido, partida incompleta, velocidade fora ou trecho inválido; 404 partida não está no banco; 409 já há rastreio rodando, fase do cliente não permitida (só `None`/`WatchInProgress`) ou replay não baixado. Importa os eventos da linha do tempo na hora. |
 | GET | `/api/rastreios?limite=50` | `{"rastreios": [Rastreio]}`, do mais novo ao mais antigo (limite 1–500). |
 | GET | `/api/rastreios/{id}` | `{"rastreio": Rastreio, "passes": [Passe]}`. 404. |
 | POST | `/api/rastreios/{id}/pausar` | 204 (também se já está pausado). O passe guarda o último `t`; o replay fecha. 409 se terminou. |
@@ -107,31 +107,86 @@ Tempos na query em **segundos** (aceita fração); na resposta em ms.
 
 `Evento = {"id", "fonte": "linha_do_tempo"|"jogo", "tipo": "abate"|"monstro"|"estrutura"|"multiabate"|"primeiro_abate"|"ace"|"inicio"|"fim"|<outro em minúsculas>, "tipo_original", "t_ms", "quem_id", "quem_nome", "em_quem_id", "em_quem_nome", "assistencias": [ids], "x", "y", "confirmado_jogo": bool, "dados": <JSON cru da fonte>}`
 
----
+Quando um passe fecha (concluído ou cancelado com amostras), a análise da partida é refeita sozinha em segundo plano (abaixo).
+
+## Análise — tarefa 4
+
+Tudo deduzido por regra (sem IA) e recalculável. Vocabulários e regras: `dados.md` (seções `cadeia` e `analise`); decisões em
+`docs/decisoes/2026-11-17-zonas-do-mapa.md` e `docs/decisoes/2026-11-17-atividade-deduzida.md`. Tempos na query em segundos;
+na resposta em ms.
+
+| Método | Rota | Resposta |
+|---|---|---|
+| GET | `/api/mapa/zonas?celula=100` | `{"zonas": [InfoZona], "subzonas": {codigo: nome}, "grupos": [..], "limites": {"min": {x,y}, "max": {x,y}}, "grade": Grade, "imagem"}`. `celula` 25–1000 unidades. Para o mapa pintar/consultar a zona sem refazer a geometria. |
+| GET | `/api/indicadores` | `{"indicadores": [DefIndicador], "atividades": [..], "fases": [..], "parametros": {...}}`: o vocabulário dos indicadores e os limiares em uso. |
+| GET | `/api/partidas/{id}/analise` | `{"analise": Analise \| null}` (null = nunca analisada). |
+| POST | `/api/partidas/{id}/analise` | Recalcula agora (síncrono, ~0,2 s com 2 passes de 15 min). `200 {"analise": Analise}`. 404 partida; 409 sem a linha do tempo do LCU guardada. Busca e guarda a linha do tempo da Riot na primeira vez, se a chave vale (falha da Riot vira `avisos`). |
+| GET | `/api/partidas/{id}/abates` | `{"abates": [Retrato]}` em ordem de tempo (vazia se não analisada). |
+| GET | `/api/partidas/{id}/abates/{n}` | `{"abate": Retrato}`. 404. |
+| GET | `/api/partidas/{id}/indicadores?participante=` | `{"indicadores": [Indicador]}` (sem participante = os 10), na ordem do vocabulário. |
+| GET | `/api/partidas/{id}/saidas-de-rota?participante=` | `{"saidas": [{"participante_id", "tipo": "saiu_da_rota"\|"entrou_em_rota", "t_ms", "dados"}]}` (dados = o item da cadeia). Só rastreados. |
+| GET | `/api/partidas/{id}/atividades?de=0&ate=600&participante=` | `{"atividades": [Trecho], "de_ms", "ate_ms"}`: os trechos que tocam a janela, de todos os rastreados (ou de um). |
+| GET | `/api/partidas/{id}/cs?participante=` | `{"jogadores": [{"participante_id", "divergencias", "minutos": [{"minuto", "t_ms", "cs_lcu", "cs_jogo", "diferenca", "divergente"}]}]}`: CS do jogo (estado dos 10, anda de 10 em 10) × linha do tempo, minuto a minuto, para quem tem estado gravado. |
+| GET | `/api/imagens/campeao/{campeao_id}` | PNG do retrato quadrado (Data Dragon, `img/champion/<chave>.png`), baixado uma vez e servido de `dados/imagens/`. 404 sem rede na primeira vez, id desconhecido ou modo teste; 400 id inválido. |
+| GET | `/api/imagens/item/{item_id}` | PNG do ícone do item (Data Dragon `img/item/<id>.png`), mesmo cache. |
+
+`Analise = {"game_id", "calculada_em", "rastreados": [ids], "passes", "riot": bool, "abates", "indicadores", "avisos": [texto], "ms"}`
+
+`InfoZona = {"codigo", "nome", "tipo": "base"|"rota"|"rio"|"cova"|"selva"|"fora", "lado": "azul"|"vermelho"|"", "subzonas": [..], "cor"}`
+
+`Grade = {"origem": {x,y}, "celula", "colunas", "n_linhas", "codigos": [zona], "linhas": ["AAB..."], "legenda"}` — `linhas[i][j]` é `'A'` + índice em `codigos` da célula de centro `(origem.x + (j+0,5)·celula, origem.y + (i+0,5)·celula)`; linha 0 = y mínimo (embaixo).
+
+`Retrato = {"n", "t_ms", "vitima", "matador", "assistencias", "x", "y", "zona", "subzona", "aliados_da_vitima", "inimigos_da_vitima", "superioridade" (inimigos − (aliados+1); > 0 = vítima em inferioridade), "aliado_mais_proximo", "aproximado", "jogadores": [JogadorNoAbate], "riot": RiotNoAbate|null}`
+
+`JogadorNoAbate = {"participante_id", "time", "papel": "vitima"|"matador"|"assistencia"|"", "x", "y", "origem": "rastreado"|"evento"|"morte"|"perto_do_abate"|"linha_do_tempo"|"", "aproximada", "zona", "subzona", "dist_vitima", "vivo": bool|null, "vida_pct", "mana_pct", "nivel", "itens": [{id,qtd}], "rastreado", "vida", "vida_max", "cd": {q,w,e,r,d,f}|null, "r_aprendido", "r_disponivel", "flash_disponivel", "aliados_perto", "inimigos_perto", "fora_da_rota_ms"}` (nulo = não se sabe)
+
+`RiotNoAbate = {"recebido": [Dano], "causado": [Dano], "por_jogador": {pid: dano}, "ouro", "sequencia"}`, `Dano = {"participante_id", "nome", "habilidade" (spellName ou "ataque básico"), "slot", "basico", "tipo", "fisico", "magico", "verdadeiro", "total"}`
+
+`Indicador = {"participante_id", "indicador", "valor"|null, "aproximado", "detalhe": {"momentos"?: [{t_ms, texto}], "cobertura_ms"?, ...}, "rotulo", "unidade", "fonte", "melhor": "maior"|"menor"|""}`
+
+`DefIndicador = {"nome", "rotulo", "unidade", "fonte": "linha_do_tempo"|"riot"|"rastreio"|"retrato"|"estado", "quem": "todos"|"rastreados"|"rotador"|"cacador", "melhor", "descricao"}`
+
+`Trecho = {"participante_id", "t_ms", "fim_ms", "atividade": "morto"|"na_base"|"lutando"|"trocando"|"objetivo"|"torre"|"farmando"|"andando", "com": [ids], "zona", "confianca": "alta"|"media"|"baixa", "sinais": [texto]}`
+
+## Estudo — tarefa 4
+
+| Método | Rota | Resposta |
+|---|---|---|
+| GET | `/api/estudos` | `{"estudos": [Estudo]}` (o mais mexido primeiro). |
+| POST | `/api/estudos` `{"nome", "puuid", "campeao_id"?, "posicao"?}` | `201 {"estudo": Estudo}`. 400 sem nome/puuid ou posição inválida. |
+| GET | `/api/estudos/{id}` | `{"estudo": Estudo, "partidas": [PartidaDoEstudo]}`. 404. |
+| PATCH | `/api/estudos/{id}` `{"nome"?, "campeao_id"?, "posicao"?}` | `{"estudo": Estudo}`. |
+| DELETE | `/api/estudos/{id}` | 204 (leva a lista junto). |
+| GET | `/api/estudos/{id}/sugestoes` | `{"partidas": [PartidaDoEstudo + "tem_linha_do_tempo"]}`: partidas do jogador no banco, fora da lista, que cabem no filtro. |
+| POST | `/api/estudos/{id}/partidas/{game_id}` `{"anotacao"?}` | `201 {"partida": PartidaDoEstudo}`. Resultado vem dos dados da partida. Analisa a partida se ainda não foi. 400 o jogador não está nela; 404 estudo/partida; 409 já está. |
+| PUT | `/api/estudos/{id}/partidas/{game_id}` `{"anotacao"}` | `{"partida": PartidaDoEstudo}` (vazio apaga a anotação). 404 se não está na lista. |
+| DELETE | `/api/estudos/{id}/partidas/{game_id}` | 204. |
+| GET | `/api/estudos/{id}/comparacao` | `Comparacao`: para cada indicador com valor, vitórias × derrotas, ordenado pelo tamanho de efeito (insuficientes no fim). |
+| GET | `/api/estudos/{id}/indicadores/{nome}` | `{"indicador": DefIndicador, "partidas": [{"game_id", "resultado", "participante_id", "criada_em", "campeao", "valor", "aproximado", "momentos": [{t_ms, texto}], "detalhe"}]}`: o que compõe o indicador em cada partida (ex.: "morreu fora da rota aos 8:48"). 400 indicador desconhecido. |
+
+`Estudo = {"id", "nome", "puuid", "jogador": "Nome#tag", "campeao_id", "campeao", "posicao", "criado_em", "atualizado_em", "vitorias", "derrotas"}`
+
+`PartidaDoEstudo = {"game_id", "resultado": "vitoria"|"derrota", "participante_id", "campeao_id", "campeao", "posicao", "abates", "mortes", "assistencias", "criada_em", "duracao_s", "anotacao", "adicionada_em", "atualizada_em", "fora_do_filtro", "analisada", "rastreado", "rastreados": [ids]}`
+
+`Comparacao = {"estudo", "vitorias", "derrotas", "sem_analise": [game_id], "ressalva": texto, "linhas": [{"indicador", "rotulo", "unidade", "fonte", "melhor", "vitorias": Lado, "derrotas": Lado, "diferenca" (média V − média D), "efeito" (d de Cohen; null sem variação ou sem um lado), "insuficiente" (< 3 partidas num lado), "aproximado", "observacao"}]}`, `Lado = {"n", "media", "mediana", "min", "max", "desvio"}`. **Não é causa**: a `ressalva` vai sempre.
+
+## O que a tarefa 5 usa em cada tela
+
+- **Partida rastreada**: `GET /api/partidas/{id}` (os 10), `GET .../analise` (e `POST` para refazer), `GET .../abates` (lista e
+  retrato de cada abate: posição/zona/vida/recargas dos 10, superioridade, dano da Riot), `GET .../saidas-de-rota` (faixas no
+  gráfico de vida), `GET .../amostras?participante=&passo=1` (vida ao longo da partida), `GET .../cadeia?participante=&tipos=`
+  (mortes, habilidades, compras, mudou_zona), `GET .../indicadores?participante=`, `GET .../cs`, `GET /api/mapa/zonas` (mapa do
+  momento), imagens.
+- **Estudo**: `GET/POST /api/estudos`, `GET /api/estudos/{id}` (lista com anotações), `.../sugestoes`, `POST/PUT/DELETE
+  .../partidas/{game_id}`, `GET .../comparacao` (tabela), `GET .../indicadores/{nome}` (exemplos ao clicar numa linha),
+  `GET /api/indicadores` (rótulos/unidades).
+- **Mapa com play** (tela cheia): `GET /api/mapa/zonas` (grade e cores), `GET .../estados?de=&ate=&passo=0.25` (os 10 por
+  janela: posição, vida %, morto, itens; painel do seguido), `GET .../atividades?de=&ate=` (o rótulo de cada um no instante),
+  `GET .../momento?t=` (clique: vida, mana, recargas, atributos, itens), `GET .../eventos`, `/api/imagens/campeao/{campeao_id}`
+  e `/api/imagens/item/{id}`. A zona de cada um no instante: pela `grade` (ou pelos `mudou_zona` da cadeia).
 
 ## Previstas (não implementadas)
 
-Rascunho para os próximos agentes; quem implementar ajusta aqui antes do código.
-
-### Leitura da tela — tarefa 3
-
 | Método | Rota | Ideia |
 |---|---|---|
-| POST | `/api/visao/ler` (multipart com a captura) | lê uma captura guardada e devolve o que reconheceu; para calibrar e testar sem o jogo. |
-
-### Análise — tarefa 4
-
-| Método | Rota | Ideia |
-|---|---|---|
-| GET | `/api/partidas/{id}/saidas-de-rota?participante=` | início, fim, para onde, vida ao sair (provavelmente vira tipo da cadeia). |
-| GET | `/api/partidas/{id}/abates/{n}/retrato` | o retrato de cada abate. |
-| PUT | `/api/partidas/{id}/anotacao` `{"texto"}` | anotação livre da partida. |
-
-### Estudo — tarefa 4
-
-| Método | Rota | Ideia |
-|---|---|---|
-| GET/POST | `/api/estudos` | lista / cria `{"puuid", "campeao_id"?, "nome"}`. |
-| GET/DELETE | `/api/estudos/{id}` | |
-| POST/DELETE | `/api/estudos/{id}/partidas/{game_id}` | adiciona / tira partida da lista. |
-| GET | `/api/estudos/{id}/comparacao` | `{"linhas": [{"comportamento", "vitorias", "derrotas", "observacao"}]}`. |
+| POST | `/api/visao/ler` (multipart com a captura) | lê uma captura guardada e devolve o que reconheceu; para calibrar e testar sem o jogo (tarefa 3, não feita). |

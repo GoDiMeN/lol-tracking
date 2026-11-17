@@ -147,6 +147,32 @@ PK `(passe_id, conteudo)`. `conteudo` = `amostras` ou `amostras_time`; `versao` 
 | `habilidade_usada` | `habilidade` (`q w e r d f`), `recarga_s` (a primeira recarga lida depois do uso), `x`, `y` | o ícone do painel passou de pronto (colorido) para em recarga (número), confirmado por 2 leituras seguidas com a recarga descendo; ou a recarga saltou mais de 3 s para cima (uso logo depois de voltar). Leitura nula não muda o estado; lacuna de mais de 3 s sem leitura esquece o estado; morto não conta. O uso real foi entre a última leitura pronta e esta (até 250 ms antes a 4 leituras/s) |
 | `vida_baixa` | `vida`, `vida_max`, `pct`, `x`, `y` | vida do painel abaixo de 30% do máximo em 2 leituras seguidas, vindo de cima |
 | `recuperou` | `vida`, `vida_max`, `pct`, `duracao_ms`, `x`, `y` | depois de `vida_baixa`, de volta a 50% em 2 leituras seguidas sem morrer no meio (morrendo, fica só a `morte`) |
+| `mudou_zona` | `de`, `para`, `subzona`, `x`, `y` | tarefa 4 (`analise`): a zona confirmada mudou; só vale depois de `HistereseZonaMs` (3 s) na zona nova, e o item fica no instante em que ele entrou nela. Morte e renascimento não geram troca (há `morte`/`na_base`). Zonas: abaixo |
+| `saiu_da_rota` | `rota`, `para` (primeira zona fora), `zonas` (as visitadas), `fim_ms`, `duracao_ms`, `fim_motivo` (`voltou` `morreu` `base` `fim_do_passe`), `fase` (`rotas` `meio` `final`), `fase_rotas` (bool, < 14 min), `vida_pct`, `mana_pct` (0,5 s antes de sair: painel, senão quadro lateral), `cs_perdido_est` (só na fase de rotas: ritmo de CS dos 2 min antes × duração; grosseiro), `aconteceu` (`[{tipo: abate\|assistencia\|morte\|objetivo, t_ms, evento, vitima?, matador?}]`), `desfecho` (`morte` > `abate` > `objetivo` > `nada`), `conta` (falso = foi andando para a base sem nada acontecer: não é saída "para jogar"), `x`, `y` | só rotador (posição TOP/MIDDLE/BOTTOM/UTILITY; BOTTOM e UTILITY = rota de baixo). Começa num trecho fora da rota logo depois de um trecho na rota; ≥ `SaidaMinimaMs` (6 s) fora, salvo se morreu |
+| `voltou_para_rota` | `rota`, `inicio_ms`, `duracao_ms` | fim de uma saída que voltou para a rota |
+| `entrou_em_rota` | `rota`, `trecho`, `fim_ms`, `duracao_ms`, `fase`, `fase_rotas`, `vida_pct`, `aconteceu`, `desfecho`, `x`, `y` | só caçador: ficou ≥ 6 s numa rota (gank/visita) |
+| `na_base` | `fim_ms`, `duracao_ms`, `chegada` (`inicio` `renasceu` `recall` `andando`) | cada estadia viva na própria base; recall = salto de > 3000 em < 3 s logo antes |
+| `atividade` | `atividade`, `fim_ms`, `duracao_ms`, `com` (participantes), `zona`, `sinais` (até 6 frases: por que), `confianca` (`alta` `media` `baixa`) | trechos de atividade DEDUZIDA (não é registro de golpe; `docs/decisoes/2026-11-17-atividade-deduzida.md`). Vocabulário e regra abaixo |
+
+**Atividade** (a primeira regra que couber, a cada amostra; trechos iguais seguidos se juntam; `andando`/`farmando` de menos de 3 s
+é absorvido pelo trecho anterior):
+
+1. `morto` — morto no jogo (alta).
+2. `na_base` — na própria base (alta).
+3. `lutando` — com um inimigo **rastreado** a ≤ `AlcanceLuta` (1400) e mais alguém (2 inimigos, ou um aliado rastreado perto), e a vida de alguém caindo ≥ 4 pontos percentuais em 2 s (do seguido pelo painel; dos outros pelo quadro lateral). `com` = os envolvidos.
+4. `trocando` — o inimigo rastreado mais perto a ≤ `AlcanceTroca` (1000) e a vida de um dos dois caindo (alta com o painel lido). Também, com `com: []` e confiança baixa: rotador fora da rota com a própria vida caindo ≥ 8 pontos em 2 s sem inimigo rastreado perto (quem bateu não foi rastreado).
+5. `objetivo` / `torre` — a ≤ 1500 de onde caiu um monstro grande (até 40 s depois) ou uma torre/placa (até 20 s depois), derrubado pelo time dele (ou com ele). Placas vêm da linha do tempo da Riot, se guardada.
+6. `andando` — deslocou mais de 1000 em linha reta nos últimos 4 s (média).
+7. `farmando` — na rota, selva ou rio, com o CS da linha do tempo subindo ≥ 3/min naquele minuto (média; baixa se ninguém mais foi rastreado).
+8. `andando` — nenhum outro sinal (baixa).
+
+**Zonas** (`analise.Zona(x, y)`, fronteiras em `server/analise/fronteiras.go`, conferência em `docs/arquitetura/zonas.png`):
+`base_azul`/`base_vermelha` (subzona `fonte` ou `base`), `rota_topo`/`rota_meio`/`rota_baixo` (subzona `lado_azul`, `centro`,
+`lado_vermelho`: divididas pelas torres externas), `rio_cima`/`rio_baixo` (`rio`), `cova_barao`/`cova_dragao` (`cova` a ≤ 750 do
+monstro, `arredores` a ≤ 1300), `selva_azul_cima`, `selva_azul_baixo`, `selva_vermelha_cima`, `selva_vermelha_baixo` (`selva`),
+`fora_do_mapa`. Ordem de decisão: base, rota (a mais perto), cova, rio, selva (pelo lado do rio e da diagonal do meio).
+Do ponto de vista de um jogador (`GrupoRelativo`): `rota_propria`, `outra_rota`, `rio`, `covas`, `selva_propria`,
+`selva_inimiga`, `base_propria`, `base_inimiga`.
 
 ### `eventos`
 Os eventos da partida, das duas fontes: `linha_do_tempo` (importada ao criar o rastreio) e `jogo` (`eventdata`, coletado no
@@ -204,7 +230,59 @@ amostras) e ~1,3 KB por 4 min do estado dos 10. Uma partida de 39 min × 10 pass
 amostras + ~0,1 MB de estado dos 10 (um por passe). O teste `TestTamanhoDoBloco` mede o mesmo com dados sintéticos
 ruidosos (7,9 bytes/amostra).
 
-## Previstas (tarefa 4, não criadas)
+## analise
 
-- `saidas_de_rota`, `retratos_abate`, `estudos`, `estudo_partidas`, `anotacoes` (as análises da tarefa 4 provavelmente viram
-  tipos novos da `cadeia`).
+Tudo aqui é **recalculável**: `analise.Recalcula(partida)` (chamado sozinho quando um passe fecha, e por
+`POST /api/partidas/{id}/analise`) refaz a cadeia de todos os passes da partida (com o contexto de agora: os outros rastreados,
+a linha do tempo da Riot), e apaga e regrava retratos e indicadores. Rodar de novo dá o mesmo resultado (teste
+`TestRecalculaIdempotenteERetrato`). A exceção é `linhas_do_tempo_riot`, cópia do que a Riot devolveu (não muda).
+
+### `linhas_do_tempo_riot`
+`game_id` PK, `bruto` (JSON da match-v5 timeline, ~1 MB), `gravada_em`. Buscada uma vez, na primeira análise com chave válida;
+sem chave a análise segue sem ela (sem dano por abate, placas de torre, sentinelas e dano a campeões por minuto).
+
+### `retratos_abate`
+Um por `CHAMPION_KILL` da linha do tempo do LCU. PK `(game_id, n)` (n = 1, 2... na ordem do tempo), `t_ms`, `vitima`, `matador`,
+`dados` (o `Retrato` inteiro em JSON, ver `contrato-http.md`), `calculado_em`.
+
+Por jogador (os 10): posição (`origem`: `rastreado` = amostra do passe dele; `evento` = o local do abate, para a vítima; `morte` =
+estava morto, onde morreu; `perto_do_abate` = não rastreado mas matou/ajudou/morreu num abate a ≤ 8 s, posição desse abate;
+`linha_do_tempo` = interpolada entre os quadros de minuto — **aproximada**, pode errar milhares de unidades), zona, distância até a
+vítima, vivo (estado dos 10), `vida_pct`/`mana_pct` (quadro lateral), nível, itens; dos rastreados também vida exata, recargas,
+`r_aprendido`, `r_disponivel`, `flash_disponivel` (o slot do Flash pelo `feitico1/2` = 4) e `fora_da_rota_ms`. Aliados e inimigos a
+≤ `RaioSuperioridade` (1500) de cada um. `riot` (com a linha do tempo da Riot): `victimDamageReceived/Dealt` (quem bateu, com qual
+habilidade — `spellName`/`spellSlot`, ou ataque básico — e quanto), `por_jogador`, `ouro`, `sequencia`.
+
+### `indicadores`
+PK `(game_id, participante_id, indicador)`; `valor` (nulo = não deu para calcular), `aproximado` (rastreio parcial — cobertura
+< 90% da janela — ou posição aproximada), `detalhe` (JSON: `momentos` `[{t_ms, texto}]` quando o indicador é contagem de coisas,
+`cobertura_ms`, etc.), `calculado_em`. Índice `(indicador, game_id)`.
+
+Vocabulário (`analise.Vocabulario`, também em `GET /api/indicadores` com rótulo, unidade, fonte e direção "melhor"):
+`saidas_rota_ate14_n`, `saidas_rota_ate14_tempo_s`, `cs_perdido_saidas_est`, `mortes_fora_da_rota`, `mortes_saida_vida_baixa`
+(rotador rastreado); `visitas_rota_ate14_n`, `visitas_rota_ate14_com_abate` (caçador rastreado); `mortes`, `mortes_ate14`,
+`abates`, `assistencias`, `participacao_abates`, `cs_10`, `cs_15`, `cs_por_min`, `ouro_10/15`, `xp_10/15`, `dif_cs_10/15`,
+`dif_ouro_10/15`, `dif_xp_10/15` (contra o adversário direto: mesma posição no outro time) — linha do tempo, os 10;
+`dano_campeoes_10/15`, `wards_ate14` — Riot, os 10; `mortes_com_r_em_recarga`, `mortes_com_flash_em_recarga` (só mortes com a
+recarga lida), `dist_aliado_mais_proximo_morte`, `mortes_em_inferioridade` — retrato; `tempo_morto_s`, `tempo_vida_baixa_s`,
+`cs_divergencias` — estado dos 10 no trecho rastreado; `habilidades_por_min`, `recalls` — rastreados;
+`pct_<grupo>_<fase>` (grupo relativo de zona: `rota_propria outra_rota rio covas selva_propria selva_inimiga base_propria
+base_inimiga`; fase `rotas` < 14 min, `meio` 14–25, `final`) e `pct_atv_<atividade>_<fase>` — rastreados, só fase com ≥ 1 min
+rastreado.
+
+### `analises`
+Uma linha por partida analisada: `game_id` PK, `calculada_em`, `rastreados` (JSON), `passes`, `riot` (0/1), `abates`,
+`indicadores`, `avisos` (JSON), `ms`.
+
+Parâmetros das regras (limiares) em `server/analise/parametros.go` (`analise.Param`, também em `GET /api/indicadores`).
+
+## estudo
+
+### `estudos`
+`id`, `nome`, `puuid` (o jogador), `campeao_id` (0 = qualquer), `posicao` ('' = qualquer) — filtros só para sugerir partidas e
+marcar `fora_do_filtro`; a lista é escolhida à mão —, `criado_em`, `atualizado_em`.
+
+### `estudo_partidas`
+PK `(estudo_id, game_id)`; `resultado` (`vitoria`/`derrota`, dos dados da partida, não da pessoa), `anotacao` (texto livre),
+`adicionada_em`, `atualizada_em`. Ao entrar, a partida é analisada se ainda não foi (os indicadores da linha do tempo saem
+mesmo sem rastreio).

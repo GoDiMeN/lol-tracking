@@ -209,6 +209,38 @@ da partida 3304594274 (Akshan e Lux).
   importa (só dígitos). O dígito `9` do nível do campeão e alguns níveis de habilidade só existem nos gabaritos se apareceram
   nas capturas: dígito sem gabarito sai nulo, nunca errado (regerar com `LOL_GERA_GABARITOS=1` e mais capturas).
 
+## 4.3 Análise contra o dado real (medido, 2026-11-17, tarefa 4)
+
+Rastreio pela API do servidor (porta de teste, banco em `server/dados/analise-real/`): partida 3304594274, participantes 3
+(Akshan, GodiNzt) e 8 (LeBlanc), `{"velocidade": 4, "ate_ms": 900000}`. Dois passes de 0 a 15:00: 3 537 e 3 536 amostras, 3,97
+por segundo de jogo, calibração com erro mediano 13 e 18 (máximo 27 e 37). Conferência com a Riot: 115/117 e 123/126. O replay
+fechou sozinho; no fim `League of Legends.exe` não estava rodando (o `LeagueClient*` continuou). `Recalcula`: 157 ms (103
+abates, 310 indicadores).
+
+- **Saídas de rota do Akshan** (até 14 min, que contam): 8, 113 s fora. A das 8:36: meio → selva azul de cima (8:36) → rio de
+  cima (8:40) → arredores da cova do Barão (8:43) → morto às 8:48 em (4843, 10410), `fim_motivo: morreu`, `desfecho: morte`,
+  saiu com 92% de vida e 34% de mana. Bate com a história: Warwick matou o Master Yi na cova às 8:33 e o Malphite às 8:43
+  (Teemo ajudando), e o Akshan foi lá e morreu; a Riot mostra o Yi apanhando de `SRU_Horde` (eram as larvas do Vazio).
+  Outras saídas: as de 0:30/0:45 (antes das tropas), as curtas para o rio no centro (7–12 s, nada aconteceu) e a das 13:11
+  para a selva azul atrás do Warwick (abate às 13:20). As 7:13 e 13:30 terminaram em recall dentro do rio/selva.
+- **Zonas** a olho: as mortes dos 3 no Barão (`cova_barao/cova`), as do meio em `rota_meio/centro`, a da LeBlanc às 14:05 em
+  `selva_azul_baixo` (perseguida para dentro da selva azul), base/fonte nos renascimentos. Os 20 pontos da calibração caem na
+  rota certa (teste).
+- **Retrato dos abates** (8:48): vítima pelo evento; LeBlanc rastreada a 1 616 (rio de cima, 92,6%, R pronto, Flash em
+  recarga); Warwick e Teemo (não rastreados) postos no local do abate (`perto_do_abate`) → 2 inimigos × 0 aliados; Malphite e
+  Yi mortos no próprio local de morte. Akshan com 121/1274 de vida, R em recarga (usado entre 8:33 e 8:43), Flash pronto, fora
+  da rota havia 8 s. Riot: Teemo Q/E/R/básico, Warwick básicos/Q/passiva. Aos 2:27 o abate do Akshan na LeBlanc: Incendiar,
+  Q, básicos, passiva e E (o "quem bateu com o quê" só existe em volta das mortes).
+- **Posição dos rastreados × linha do tempo**: nos abates em que os dois foram rastreados (2:27/2:28, 4:16, 5:58, 12:45),
+  a amostra do matador fica a 75–640 do local do evento da vítima em 4 deles (coerente com o alcance) e a 1 226 no de 4:16
+  (LeBlanc; não conferido na captura se ela já tinha se afastado ou se é erro de posição).
+- **CS**: estado dos 10 × linha do tempo, minutos 1–15: **0 divergências** nos 10 (o `creepScore` arredondado na dezena).
+  CS aos 10: Akshan 59, LeBlanc 57; aos 15: 99 × 86.
+- **Atividade**: trocas curtas Akshan × LeBlanc repetidas na rota (alta: os dois rastreados, vida caindo nos dois), farmando o
+  resto do tempo de rota, `andando` quando atravessa o mapa, na base, morto. **Não bateu / limite:** a luta no Barão (8:43–8:48)
+  só aparece como `trocando` sem alvo e confiança baixa, porque Warwick e Teemo não foram rastreados; antes disso, de 8:00 a
+  8:36, ele aparece `farmando` (o CS dele subiu naquele minuto); a placa de torre conta como `torre` para quem está perto.
+
 ## 5. Custo de tempo
 
 Uma partida de 39 min, um passe por jogador a 2× = 19,5 min por jogador, **~3 h 15 min** os 10. A 8× = ~49 min.
