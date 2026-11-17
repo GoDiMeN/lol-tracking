@@ -271,6 +271,8 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 	var durLeitura, durCaptura, durTela []time.Duration
 	san := novoSaneador()
 	avisouTela := false
+	avisouPainel := false
+	var semPainelDesde int64 = -1
 	intervalo := time.Duration(float64(time.Second) / cfg.AmostrasPorSegundo / cfg.Velocidade)
 
 	for {
@@ -370,6 +372,21 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 			Abates: j.Placar.Abates, Mortes: j.Placar.Mortes, Assistencias: j.Placar.Assistencias, Ward: j.Placar.Ward,
 			DtMs: int64(math.Round((l.p2.Tempo - l.p1.Tempo) * 1000)), SelecaoOK: l.r.Selecao == a.nome,
 			Vida: l.tela.Vida, VidaMax: l.tela.VidaMax, Mana: l.tela.Mana, ManaMax: l.tela.ManaMax, CD: l.tela.CD, Atr: l.tela.Atr}
+		// Jogador vivo, câmera nele, captura feita e mesmo assim nenhuma vida lida
+		// por PainelCobertoMs de jogo: algo está por cima do painel (outra janela)
+		// ou o HUD mudou. Avisa uma vez; a posição não depende disso e continua.
+		if l.img != nil && l.errTela == nil && am.SelecaoOK && !j.Morto && am.Vida == nil {
+			if semPainelDesde < 0 {
+				semPainelDesde = tMs
+			} else if !avisouPainel && tMs-semPainelDesde >= PainelCobertoMs {
+				avisouPainel = true
+				msg := "o painel do jogador (canto inferior esquerdo do jogo) não está sendo lido: vida, recargas e atributos deste passe vão ficar vazios. Confira se há outra janela por cima do jogo."
+				log.Printf("rastreio: passe %d: %s", p.ID, msg)
+				m.ex.Emite("aviso_tela", map[string]any{"passe_id": p.ID, "erro": msg})
+			}
+		} else if am.Vida != nil {
+			semPainelDesde = -1
+		}
 		cx, cz := l.r.CameraPosicao.X, l.r.CameraPosicao.Z
 		am.CamX, am.CamZ = &cx, &cz
 		if j.Centro.Valido {

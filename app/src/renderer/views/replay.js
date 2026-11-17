@@ -389,6 +389,14 @@ export async function desenha(raiz, rota, ctx) {
       if (k === 'd' || k === 'f') c.append(el('small', '', rot));
       habs.append(c);
     }
+    // Passiva: só aparece quando está em recarga (Vex, Garen...); na maioria
+    // dos campeões ela nunca entra em recarga e seria só ruído.
+    if (typeof cd.p === 'number' && cd.p > 0) {
+      const rc = recarga(cd.p);
+      const c = el('div', `rp-hab ${rc.classe}`, [el('b', '', 'P'), el('span', '', rc.texto), el('small', '', 'Passiva')]);
+      c.title = `Passiva: ${rc.titulo}`;
+      habs.prepend(c);
+    }
     blocos.push(el('h3', '', 'Habilidades e feitiços'), habs);
     if (!rastreado) blocos.push(el('p', 'sub', 'Recargas, vida em número e atributos só existem para quem foi rastreado.'));
 

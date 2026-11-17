@@ -61,6 +61,9 @@ type JogadorNoAbate struct {
 	RAprendido      *bool              `json:"r_aprendido"`
 	RDisponivel     *bool              `json:"r_disponivel"` // nulo: não lido ou R ainda não aprendido
 	FlashDisponivel *bool              `json:"flash_disponivel"`
+	// Passiva: nulo = não lida (passe anterior à leitura dela). Só diz algo em
+	// campeão cuja passiva tem recarga (Vex, Garen...); nos outros é sempre true.
+	PassivaDisponivel *bool `json:"passiva_disponivel"`
 	// Perto (a menos de Param.RaioSuperioridade), contando só quem tem posição.
 	AliadosPerto  int `json:"aliados_perto"`
 	InimigosPerto int `json:"inimigos_perto"`
@@ -156,6 +159,7 @@ func (d *dadosPartida) retrato(n int, e rastreio.EventoLT) Retrato {
 					R: ultimoNaoNulo(as, t, func(a *rastreio.Amostra) *float64 { return a.CD.R }),
 					D: ultimoNaoNulo(as, t, func(a *rastreio.Amostra) *float64 { return a.CD.D }),
 					F: ultimoNaoNulo(as, t, func(a *rastreio.Amostra) *float64 { return a.CD.F }),
+					P: ultimoNaoNulo(as, t, func(a *rastreio.Amostra) *float64 { return a.CD.P }),
 				}
 				j.CD = &cd
 				if cd.R != nil {
@@ -163,6 +167,9 @@ func (d *dadosPartida) retrato(n int, e rastreio.EventoLT) Retrato {
 					if *cd.R >= 0 {
 						j.RDisponivel = bp(*cd.R == 0)
 					}
+				}
+				if cd.P != nil {
+					j.PassivaDisponivel = bp(*cd.P == 0)
 				}
 				var flash *float64
 				if part.Feitico1 == FeiticoFlash {

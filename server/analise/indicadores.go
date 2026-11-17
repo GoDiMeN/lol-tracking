@@ -58,6 +58,8 @@ var Vocabulario = func() []DefIndicador {
 		{"assistencias", "Assistências", "n", "linha_do_tempo", "todos", "maior", ""},
 		{"participacao_abates", "Participação nos abates", "%", "linha_do_tempo", "todos", "maior", "(abates + assistências) ÷ abates do time"},
 		{"mortes_com_r_em_recarga", "Mortes com o R em recarga", "n", "retrato", "rastreados", "menor", "só as mortes em que a recarga do R foi lida e o R já tinha sido aprendido"},
+		{"mortes_com_passiva_em_recarga", "Mortes com a passiva em recarga", "n", "retrato", "rastreados", "menor", "só para campeão cuja passiva entra em recarga (Vex, Garen...) e só as mortes em que ela foi lida"},
+		{"abates_com_passiva_em_recarga", "Abates e assistências com a passiva em recarga", "n", "retrato", "rastreados", "neutro", "lutas que terminaram em abate em que o jogador participou sem a passiva; só para campeão cuja passiva entra em recarga"},
 		{"mortes_com_flash_em_recarga", "Mortes com o Flash em recarga", "n", "retrato", "rastreados", "menor", "só as mortes em que a recarga do Flash foi lida"},
 		{"dist_aliado_mais_proximo_morte", "Distância do aliado mais perto ao morrer", "unidades", "retrato", "todos", "menor", "média nas mortes; aproximada quando algum aliado não foi rastreado"},
 		{"mortes_em_inferioridade", "Mortes em inferioridade numérica", "n", "retrato", "todos", "menor", "mais inimigos que aliados (contando a vítima) a menos de 1500 dela"},
@@ -282,11 +284,30 @@ func (d *dadosPartida) wardsAte14(pid int) []Momento {
 
 func (d *dadosPartida) indicadoresRetrato(c *coleta, retratos []Retrato) {
 	pid := c.pid
-	var r, flash, infer []Momento
-	nR, nF, nDist := 0, 0, 0
+	var r, flash, infer, pasM, pasA []Momento
+	nR, nF, nDist, nPM, nPA := 0, 0, 0, 0, 0
+	// A passiva só vira indicador se, neste passe, ela entrou em recarga alguma
+	// vez: na maioria dos campeões o ícone nunca apaga e o número seria sempre 0.
+	temPassiva := false
+	for i := range d.amostras[pid] {
+		if p := d.amostras[pid][i].CD.P; p != nil && *p > 0 {
+			temPassiva = true
+			break
+		}
+	}
 	soma, aprox, aproxInf := 0.0, false, false
 	var distMs []Momento
 	for _, rt := range retratos {
+		if temPassiva && rt.Vitima != pid && (rt.Matador == pid || contem(rt.Assistencias, pid)) {
+			for i := range rt.Jogadores {
+				if j := &rt.Jogadores[i]; j.ParticipanteID == pid && j.PassivaDisponivel != nil {
+					nPA++
+					if !*j.PassivaDisponivel {
+						pasA = append(pasA, Momento{rt.TMs, fmt.Sprintf("participou do abate aos %s com a passiva em recarga", MinSeg(rt.TMs))})
+					}
+				}
+			}
+		}
 		if rt.Vitima != pid {
 			continue
 		}
@@ -303,6 +324,12 @@ func (d *dadosPartida) indicadoresRetrato(c *coleta, retratos []Retrato) {
 			nR++
 			if !*eu.RDisponivel {
 				r = append(r, Momento{rt.TMs, fmt.Sprintf("morreu com o R em recarga aos %s", MinSeg(rt.TMs))})
+			}
+		}
+		if temPassiva && eu.PassivaDisponivel != nil {
+			nPM++
+			if !*eu.PassivaDisponivel {
+				pasM = append(pasM, Momento{rt.TMs, fmt.Sprintf("morreu com a passiva em recarga aos %s", MinSeg(rt.TMs))})
 			}
 		}
 		if eu.FlashDisponivel != nil {
@@ -327,6 +354,12 @@ func (d *dadosPartida) indicadoresRetrato(c *coleta, retratos []Retrato) {
 	}
 	if nF > 0 {
 		c.conta("mortes_com_flash_em_recarga", flash, false, map[string]any{"mortes_lidas": nF})
+	}
+	if nPM > 0 {
+		c.conta("mortes_com_passiva_em_recarga", pasM, false, map[string]any{"mortes_lidas": nPM})
+	}
+	if nPA > 0 {
+		c.conta("abates_com_passiva_em_recarga", pasA, false, map[string]any{"abates_lidos": nPA})
 	}
 	if nDist > 0 {
 		c.poe("dist_aliado_mais_proximo_morte", fp(soma/float64(nDist)), aprox, map[string]any{"momentos": distMs, "mortes": nDist})

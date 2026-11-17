@@ -332,6 +332,7 @@ function painelAbate(a, info, rastreados) {
       if (j.r_aprendido === false) partes.push('sem R');
       else if (j.r_disponivel === true) partes.push('R pronto');
       else if (j.r_disponivel === false) partes.push(`R em ${Math.round(j.cd?.r ?? 0)} s`);
+      if (j.passiva_disponivel === false) partes.push(`passiva em ${Math.round(j.cd?.p ?? 0)} s`);
       if (j.flash_disponivel === true) partes.push('Flash pronto');
       else if (j.flash_disponivel === false) partes.push('sem Flash');
       if (j.fora_da_rota_ms) partes.push(`fora da rota há ${Math.round(j.fora_da_rota_ms / 1000)} s`);

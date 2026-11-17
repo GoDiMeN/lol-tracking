@@ -22,7 +22,12 @@ const (
 	SaltoRecargaS = 3.0
 )
 
-var nomesHabilidade = [6]string{"q", "w", "e", "r", "d", "f"}
+var nomesHabilidade = [7]string{"q", "w", "e", "r", "d", "f", "passiva"}
+
+// iHabPassiva: a passiva entrar em recarga não é "usar" nada (na Vex é o medo
+// gasto, no Garen é ter levado dano): sai como item próprio, para não poluir
+// habilidade_usada.
+const iHabPassiva = 6
 
 func recargaDe(a *Amostra, i int) *float64 {
 	switch i {
@@ -36,8 +41,10 @@ func recargaDe(a *Amostra, i int) *float64 {
 		return a.CD.R
 	case 4:
 		return a.CD.D
+	case 5:
+		return a.CD.F
 	}
-	return a.CD.F
+	return a.CD.P
 }
 
 func posDados(a *Amostra, d map[string]any) map[string]any {
@@ -48,11 +55,12 @@ func posDados(a *Amostra, d map[string]any) map[string]any {
 }
 
 // geraHabilidade: "habilidade_usada" quando o ícone passa de pronto para em
-// recarga (ou a recarga salta para cima, uso logo depois de voltar).
+// recarga (ou a recarga salta para cima, uso logo depois de voltar). Na passiva
+// a mesma transição sai como "passiva_em_recarga".
 func geraHabilidade(c *ContextoCadeia) []ItemCadeia {
 	var itens []ItemCadeia
 	as := c.Amostras
-	for h := 0; h < 6; h++ {
+	for h := range nomesHabilidade {
 		// estado: 0 desconhecido, 1 pronta, 2 em recarga.
 		estado := 0
 		var ultimoT int64 = -1 << 40
@@ -87,8 +95,13 @@ func geraHabilidade(c *ContextoCadeia) []ItemCadeia {
 				}
 				if pendN >= LeiturasConfirma {
 					p := &as[pend]
-					itens = append(itens, ItemCadeia{TMs: p.TMs, Tipo: "habilidade_usada", Dados: posDados(p, map[string]any{
-						"habilidade": nomesHabilidade[h], "recarga_s": *recargaDe(p, h)})})
+					if h == iHabPassiva {
+						itens = append(itens, ItemCadeia{TMs: p.TMs, Tipo: "passiva_em_recarga", Dados: posDados(p, map[string]any{
+							"recarga_s": *recargaDe(p, h)})})
+					} else {
+						itens = append(itens, ItemCadeia{TMs: p.TMs, Tipo: "habilidade_usada", Dados: posDados(p, map[string]any{
+							"habilidade": nomesHabilidade[h], "recarga_s": *recargaDe(p, h)})})
+					}
 					estado, pend, pendN = 2, -1, 0
 				}
 			default:

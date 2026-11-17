@@ -71,10 +71,15 @@ var (
 	rVelMov    = ret{x0: 336, y0: 1185, x1: 380, y1: 1206}
 )
 
-// Fileira de ícones: Q, W, E, R, D, F (a passiva, em 20–63, não interessa).
-// O número da recarga fica no meio do ícone (linhas ~1242–1253); o nível da
-// habilidade, embaixo, saindo do ícone (linhas ~1261–1274).
-var xIcones = [6][2]int{{72, 115}, {124, 167}, {175, 218}, {227, 270}, {293, 336}, {340, 383}}
+// Fileira de ícones: Q, W, E, R, D, F e, por último, a passiva (que na tela é
+// a primeira, em 20–63). O número da recarga fica no meio do ícone (linhas
+// ~1242–1253); o nível da habilidade, embaixo, saindo do ícone (linhas
+// ~1261–1274). A passiva não tem nível; a recarga dela aparece do mesmo jeito
+// que nas outras (medido na Vex, partida 3301749762).
+var xIcones = [7][2]int{{72, 115}, {124, 167}, {175, 218}, {227, 270}, {293, 336}, {340, 383}, {20, 63}}
+
+// iPassiva é o índice da passiva em xIcones.
+const iPassiva = 6
 
 const (
 	yIcone0, yIcone1           = 1225, 1268

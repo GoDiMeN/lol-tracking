@@ -159,6 +159,10 @@ func Migra(db *banco.DB) error {
 			return err
 		}
 	}
+	// Recarga da passiva (Vex e afins): coluna nova na tabela de trabalho.
+	if err := banco.AdicionaColuna(db, "amostras_brutas", "cd_p", "REAL"); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -137,7 +137,7 @@ const HABILIDADE = { q: 'Q', w: 'W', e: 'E', r: 'R', d: 'o feitiço D', f: 'o fe
 export const GRUPOS_CADEIA = [
   { id: 'lutas', rotulo: 'abates e mortes', tipos: ['abate', 'assistencia', 'morte', 'renascimento'] },
   { id: 'rota', rotulo: 'saídas de rota', tipos: ['saiu_da_rota', 'voltou_para_rota', 'entrou_em_rota'] },
-  { id: 'habilidades', rotulo: 'habilidades', tipos: ['habilidade_usada'] },
+  { id: 'habilidades', rotulo: 'habilidades', tipos: ['habilidade_usada', 'passiva_em_recarga'] },
   { id: 'vida', rotulo: 'vida baixa', tipos: ['vida_baixa', 'recuperou'] },
   { id: 'base', rotulo: 'base e recall', tipos: ['na_base', 'recall'] },
   { id: 'itens', rotulo: 'itens e nível', tipos: ['compra', 'venda', 'nivel'] },
@@ -185,6 +185,8 @@ export function itemCadeia(item, nomes = {}) {
       return 'a câmera voltou ao jogador';
     case 'habilidade_usada':
       return `usou ${HABILIDADE[d.habilidade] || d.habilidade}${d.recarga_s ? ` (recarga de ${Math.round(d.recarga_s)} s)` : ''}`;
+    case 'passiva_em_recarga':
+      return `a passiva entrou em recarga${d.recarga_s ? ` (${Math.round(d.recarga_s)} s)` : ''}`;
     case 'vida_baixa':
       return `ficou com pouca vida (${Math.round(d.pct ?? 0)}%)`;
     case 'recuperou':

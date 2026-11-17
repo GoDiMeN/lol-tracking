@@ -19,6 +19,8 @@ const (
 )
 
 // Recargas são os segundos que faltam para cada habilidade (nulo = não lido).
+// P é a passiva: só alguns campeões têm recarga nela (Vex, Malphite...); nos
+// outros o ícone fica sempre aceso e a leitura dá 0.
 type Recargas struct {
 	Q *float64 `json:"q"`
 	W *float64 `json:"w"`
@@ -26,6 +28,7 @@ type Recargas struct {
 	R *float64 `json:"r"`
 	D *float64 `json:"d"`
 	F *float64 `json:"f"`
+	P *float64 `json:"p"`
 }
 
 // Atributos do painel do jogador selecionado (nulo = não lido).
@@ -143,6 +146,7 @@ var colunasAmostra = []defCol[Amostra]{
 	{"cd_r", 10, func(a *Amostra) any { return &a.CD.R }},
 	{"cd_d", 10, func(a *Amostra) any { return &a.CD.D }},
 	{"cd_f", 10, func(a *Amostra) any { return &a.CD.F }},
+	{"cd_p", 10, func(a *Amostra) any { return &a.CD.P }},
 	{"atr_ad", 1, func(a *Amostra) any { return &a.Atr.AD }},
 	{"atr_ap", 1, func(a *Amostra) any { return &a.Atr.AP }},
 	{"atr_armadura", 1, func(a *Amostra) any { return &a.Atr.Armadura }},
@@ -295,12 +299,12 @@ func EstadosDoBloco(b Bloco) []EstadoJogador { return doBloco(b, colunasEstado) 
 
 const colunasBrutas = `t_ms, x, y, origem, cam_x, cam_z, tela_x, tela_y, selecao_ok, trava_perdida, morto, respawn, nivel, cs,
 	abates, mortes, assistencias, ward, dt_ms, vida, vida_max, mana, mana_max, cd_q, cd_w, cd_e, cd_r, cd_d, cd_f,
-	atr_ad, atr_ap, atr_armadura, atr_rm, atr_vel_ataque, atr_vel_mov`
+	atr_ad, atr_ap, atr_armadura, atr_rm, atr_vel_ataque, atr_vel_mov, cd_p`
 
 func valoresBrutos(a *Amostra) []any {
 	return []any{a.TMs, a.X, a.Y, a.Origem, a.CamX, a.CamZ, a.TelaX, a.TelaY, a.SelecaoOK, a.TravaPerdida, a.Morto, a.Respawn,
 		a.Nivel, a.CS, a.Abates, a.Mortes, a.Assistencias, a.Ward, a.DtMs, a.Vida, a.VidaMax, a.Mana, a.ManaMax,
-		a.CD.Q, a.CD.W, a.CD.E, a.CD.R, a.CD.D, a.CD.F, a.Atr.AD, a.Atr.AP, a.Atr.Armadura, a.Atr.RM, a.Atr.VelAtaque, a.Atr.VelMov}
+		a.CD.Q, a.CD.W, a.CD.E, a.CD.R, a.CD.D, a.CD.F, a.Atr.AD, a.Atr.AP, a.Atr.Armadura, a.Atr.RM, a.Atr.VelAtaque, a.Atr.VelMov, a.CD.P}
 }
 
 // progresso é o que o passe guarda junto de cada lote de amostras: é de onde
@@ -319,7 +323,7 @@ func gravaBrutas(db *banco.DB, passeID, gameID int64, pid int, as []Amostra, es 
 	defer tx.Rollback()
 	if len(as) > 0 {
 		st, err := tx.Prepare(`INSERT INTO amostras_brutas (passe_id, game_id, participante_id, ` + colunasBrutas + `)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 		if err != nil {
 			return err
 		}
@@ -366,15 +370,15 @@ func leBrutas(db *banco.DB, passeID int64, deMs, ateMs int64) ([]Amostra, error)
 	var lista []Amostra
 	for linhas.Next() {
 		var a Amostra
-		var n [23]sql.NullFloat64
+		var n [24]sql.NullFloat64
 		if err := linhas.Scan(&a.TMs, &n[0], &n[1], &a.Origem, &n[2], &n[3], &n[4], &n[5], &a.SelecaoOK, &a.TravaPerdida,
 			&a.Morto, &a.Respawn, &a.Nivel, &a.CS, &a.Abates, &a.Mortes, &a.Assistencias, &a.Ward, &a.DtMs,
-			&n[6], &n[7], &n[8], &n[9], &n[10], &n[11], &n[12], &n[13], &n[14], &n[15], &n[16], &n[17], &n[18], &n[19], &n[20], &n[21]); err != nil {
+			&n[6], &n[7], &n[8], &n[9], &n[10], &n[11], &n[12], &n[13], &n[14], &n[15], &n[16], &n[17], &n[18], &n[19], &n[20], &n[21], &n[22]); err != nil {
 			return nil, err
 		}
 		a.X, a.Y, a.CamX, a.CamZ, a.TelaX, a.TelaY = lePtr(n[0]), lePtr(n[1]), lePtr(n[2]), lePtr(n[3]), lePtr(n[4]), lePtr(n[5])
 		a.Vida, a.VidaMax, a.Mana, a.ManaMax = lePtr(n[6]), lePtr(n[7]), lePtr(n[8]), lePtr(n[9])
-		a.CD = Recargas{lePtr(n[10]), lePtr(n[11]), lePtr(n[12]), lePtr(n[13]), lePtr(n[14]), lePtr(n[15])}
+		a.CD = Recargas{Q: lePtr(n[10]), W: lePtr(n[11]), E: lePtr(n[12]), R: lePtr(n[13]), D: lePtr(n[14]), F: lePtr(n[15]), P: lePtr(n[22])}
 		a.Atr = Atributos{lePtr(n[16]), lePtr(n[17]), lePtr(n[18]), lePtr(n[19]), lePtr(n[20]), lePtr(n[21])}
 		lista = append(lista, a)
 	}

@@ -135,3 +135,18 @@ ff.....ff
 ffe...aff
 .fffffff.
 ..befda..
+glifo 9 9 14
+...cfd...
+.dfffffe.
+bfc...ffb
+ff.....ff
+ff.....ff
+ff.....ff
+efe...eff
+.fffffeff
+..cfd.df.
+......ff.
+.....ffa.
+....efe..
+...ffe...
+.adec....

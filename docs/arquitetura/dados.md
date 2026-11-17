@@ -145,6 +145,7 @@ PK `(passe_id, conteudo)`. `conteudo` = `amostras` ou `amostras_time`; `versao` 
 | `cs_divergente` | `cs`, `cs_lcu`, `diferenca` | o CS do jogo fora da dezena do CS da linha do tempo (com folga de 3): o `creepScore` do `playerlist` anda **de 10 em 10** |
 | `trava_perdida` / `trava_retomada` | — | a câmera saiu do jogador vivo e voltou |
 | `habilidade_usada` | `habilidade` (`q w e r d f`), `recarga_s` (a primeira recarga lida depois do uso), `x`, `y` | o ícone do painel passou de pronto (colorido) para em recarga (número), confirmado por 2 leituras seguidas com a recarga descendo; ou a recarga saltou mais de 3 s para cima (uso logo depois de voltar). Leitura nula não muda o estado; lacuna de mais de 3 s sem leitura esquece o estado; morto não conta. O uso real foi entre a última leitura pronta e esta (até 250 ms antes a 4 leituras/s) |
+| `passiva_em_recarga` | `recarga_s`, `x`, `y` | o ícone da passiva passou de aceso para em recarga (mesma regra de `habilidade_usada`). O sentido depende do campeão: na Vex é o medo gasto, no Garen é ter levado dano. |
 | `vida_baixa` | `vida`, `vida_max`, `pct`, `x`, `y` | vida do painel abaixo de 30% do máximo em 2 leituras seguidas, vindo de cima |
 | `recuperou` | `vida`, `vida_max`, `pct`, `duracao_ms`, `x`, `y` | depois de `vida_baixa`, de volta a 50% em 2 leituras seguidas sem morrer no meio (morrendo, fica só a `morte`) |
 | `mudou_zona` | `de`, `para`, `subzona`, `x`, `y` | tarefa 4 (`analise`): a zona confirmada mudou; só vale depois de `HistereseZonaMs` (3 s) na zona nova, e o item fica no instante em que ele entrou nela. Morte e renascimento não geram troca (há `morte`/`na_base`). Zonas: abaixo |
@@ -218,7 +219,7 @@ codificação de algo que já existe muda a versão.
 Colunas de `amostras` (ordem de tempo): `t_ms`, `x`, `y` (inteiro), `origem` (texto), `cam_x`, `cam_z` (inteiro),
 `tela_x`, `tela_y` (÷10, décimo de pixel), `selecao_ok`, `trava_perdida`, `morto` (0/1), `respawn` (÷100), `nivel`, `cs`,
 `abates`, `mortes`, `assistencias`, `ward` (÷100), `dt_ms` (janela entre os dois `playback` da leitura), `vida`, `vida_max`,
-`mana`, `mana_max`, `cd_q` `cd_w` `cd_e` `cd_r` `cd_d` `cd_f` (÷10, segundos), `atr_ad`, `atr_ap`, `atr_armadura`, `atr_rm`,
+`mana`, `mana_max`, `cd_q` `cd_w` `cd_e` `cd_r` `cd_d` `cd_f` `cd_p` (÷10, segundos; `cd_p` é a passiva, nula em blob anterior a ela), `atr_ad`, `atr_ap`, `atr_armadura`, `atr_rm`,
 `atr_vel_ataque` (÷100), `atr_vel_mov`. As da tela (tarefa 3, `server/visao`) são nulas quando não lidas com confiança, com a câmera fora do jogador, com ele morto ou quando o nível do painel não é o do `playerlist` (painel de outro jogador); `vida_max`, `mana_max` e atributos só entram depois de 2 leituras iguais (ou mudança pequena) — `rastreio/sanidade.go`. `mana`/`mana_max` é o recurso da barra azul do painel (mana, energia, fúria...: o que a barra mostrar em texto); nulo se não há texto (campeão sem recurso). Nas recargas: `0` = pronta, `-1` = habilidade não aprendida (nível 0), nulo = não lida (inclusive ícone escurecido sem número: bloqueado por outra ação). Blob anterior à tarefa 3 lê tudo isso como nulo.
 
 Colunas de `amostras_time` (ordenado por participante e tempo, para as corridas ficarem longas): `participante_id`, `t_ms`,
@@ -263,7 +264,7 @@ Vocabulário (`analise.Vocabulario`, também em `GET /api/indicadores` com rótu
 (rotador rastreado); `visitas_rota_ate14_n`, `visitas_rota_ate14_com_abate` (caçador rastreado); `mortes`, `mortes_ate14`,
 `abates`, `assistencias`, `participacao_abates`, `cs_10`, `cs_15`, `cs_por_min`, `ouro_10/15`, `xp_10/15`, `dif_cs_10/15`,
 `dif_ouro_10/15`, `dif_xp_10/15` (contra o adversário direto: mesma posição no outro time) — linha do tempo, os 10;
-`dano_campeoes_10/15`, `wards_ate14` — Riot, os 10; `mortes_com_r_em_recarga`, `mortes_com_flash_em_recarga` (só mortes com a
+`dano_campeoes_10/15`, `wards_ate14` — Riot, os 10; `mortes_com_r_em_recarga`, `mortes_com_flash_em_recarga`, `mortes_com_passiva_em_recarga`, `abates_com_passiva_em_recarga` (os dois da passiva só existem se ela entrou em recarga alguma vez no passe) (só mortes com a
 recarga lida), `dist_aliado_mais_proximo_morte`, `mortes_em_inferioridade` — retrato; `tempo_morto_s`, `tempo_vida_baixa_s`,
 `cs_divergencias` — estado dos 10 no trecho rastreado; `habilidades_por_min`, `recalls` — rastreados;
 `pct_<grupo>_<fase>` (grupo relativo de zona: `rota_propria outra_rota rio covas selva_propria selva_inimiga base_propria

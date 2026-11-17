@@ -57,6 +57,11 @@ func novoSaneador() *saneador {
 	return s
 }
 
+// PainelCobertoMs: tempo de jogo com o jogador vivo e seguido sem nenhuma vida
+// lida a partir do qual o passe avisa que o painel está coberto. Na partida
+// 3304217746 um passe inteiro saiu assim (183 leituras em 1541) sem aviso.
+const PainelCobertoMs = 30000
+
 // limpaPainel zera os campos do painel.
 func limpaPainel(l *Leitura) {
 	l.Vida, l.VidaMax, l.Mana, l.ManaMax, l.Nivel = nil, nil, nil, nil, nil

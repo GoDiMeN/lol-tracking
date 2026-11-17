@@ -147,7 +147,7 @@ func (l *Leitor) lePainel(img *image.RGBA, e escala, lt *rastreio.Leitura) {
 	cds := []struct {
 		nome string
 		dst  **float64
-	}{{"cd_q", &lt.CD.Q}, {"cd_w", &lt.CD.W}, {"cd_e", &lt.CD.E}, {"cd_r", &lt.CD.R}, {"cd_d", &lt.CD.D}, {"cd_f", &lt.CD.F}}
+	}{{"cd_q", &lt.CD.Q}, {"cd_w", &lt.CD.W}, {"cd_e", &lt.CD.E}, {"cd_r", &lt.CD.R}, {"cd_d", &lt.CD.D}, {"cd_f", &lt.CD.F}, {"cd_p", &lt.CD.P}}
 	for i, cd := range cds {
 		v, k, ok := l.leRecarga(img, e, i)
 		c[cd.nome] = k
@@ -200,7 +200,9 @@ func (l *Leitor) leRecarga(img *image.RGBA, e escala, i int) (float64, float64, 
 		return v, k, true
 	}
 	if i >= 4 {
-		return 0, 0.5, false // feitiço cinza sem número: bloqueado
+		// Feitiço (ou passiva) cinza sem número: bloqueado. Passiva não tem
+		// "não aprendida".
+		return 0, 0.5, false
 	}
 	gs = componentes(img, e.r(rNivelHab(i)), &l.nivelHab)
 	txt, k := l.nivelHab.texto(gs)
