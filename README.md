@@ -1,8 +1,8 @@
 # LoL Tracking
 
 App desktop que rastreia replays do League of Legends: busca um jogador, lista as partidas com o estado do replay, baixa o
-replay e assiste sozinho, um passe por jogador, gravando posição, estado dos 10 e eventos num SQLite local (vida, mana e
-recargas lidas da tela entram na tarefa 3). Sem IA no rastreio. O rastreio só existe pela API por enquanto (as telas são da
+replay e assiste sozinho, um passe por jogador, gravando posição, estado dos 10 e eventos num SQLite local, mais vida, recurso, atributos e
+recargas do jogador seguido e as barras dos 10 lidas da tela por gabarito (`server/visao`, só 2560×1440). Sem IA no rastreio. O rastreio só existe pela API por enquanto (as telas são da
 tarefa 5): `POST /api/partidas/{id}/rastreio` abre o replay, trava a câmera com as teclas de seleção de jogador e **fecha o
 jogo** ao terminar, pausar, cancelar ou falhar. Regras de segurança da conta e layout: [`CLAUDE.md`](CLAUDE.md). O que foi medido no jogo:
 [`docs/arquitetura/descobertas-replay.md`](docs/arquitetura/descobertas-replay.md).

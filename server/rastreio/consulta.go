@@ -366,3 +366,10 @@ func ListaRastreadas(db *banco.DB) ([]PartidaRastreada, error) {
 	}
 	return lista, linhas.Err()
 }
+
+// AmostrasDoPasse devolve todas as amostras de um passe (do bloco compactado
+// ou, com o passe aberto, das tabelas de trabalho).
+func AmostrasDoPasse(db *banco.DB, p Passe) ([]Amostra, error) {
+	as, _, err := amostrasDoPasse(db, p)
+	return as, err
+}

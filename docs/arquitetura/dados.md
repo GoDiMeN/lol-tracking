@@ -110,6 +110,7 @@ cadeia reduzida (`cadeia`), e as linhas de trabalho do passe são apagadas. Deci
 | `amostras`, `amostras_sem_trava` | quantas leituras; quantas com a trava perdida (jogador vivo sem a câmera nele) |
 | `tentativas_trava`, `retravas` | teclas duplas usadas; quantas vezes a trava caiu e foi refeita |
 | `taxa` | amostras por segundo de jogo (meta 4) |
+| `conferencia_n`, `conferencia_iguais`, `conferencia_maior_dif`, `conferencia_riot` | conferência da leitura da tela com a linha do tempo da match-v5 da Riot (opcional, só com chave válida; nulos sem ela): nos quadros por minuto, amostra a ≤ 500 ms, viva e com o mesmo nível; máximos e atributos têm de bater exatos (velocidade de ataque ±0,01), vida e recurso atuais ±3% do máximo. `conferencia_riot` é o JSON por campo `{n, iguais, maior_dif, minutos, campos: {vida: {n, iguais, maior_dif}, ...}}` |
 | `calibracao` | JSON `{x0, x_px, y0, y_px, cx, cy, largura, altura, modo, descartados}` da fórmula câmera → mapa (abaixo) |
 | `calibracao_pontos`, `erro_calibracao_mediano`, `erro_calibracao_maximo` | o ajuste contra os quadros da linha do tempo (unidades do mapa) |
 | `iniciado_em`, `terminado_em`, `erro` | |
@@ -120,7 +121,7 @@ Uma linha por leitura do jogador seguido (~4 por segundo de jogo). Colunas = as 
 
 ### `amostras_time_brutas` (trabalho)
 O estado dos 10 a cada ~1 s de jogo, pelo `playerlist`: `t_ms, participante_id, nivel, abates, mortes, assistencias, cs, ward,
-morto, respawn, itens` (JSON `[{id,qtd}×7]` por slot) e `vida_pct, mana_pct` (tarefa 3). Vazia para todo passe fechado.
+morto, respawn, itens` (JSON `[{id,qtd}×7]` por slot) e `vida_pct, mana_pct` (tarefa 3: largura das barras dos quadros laterais, 0–100 com uma casa; `mana_pct` nulo quando a barra está vazia, porque não dá para distinguir 0 de mana de campeão sem recurso). Vazia para todo passe fechado.
 
 ### `passes_compactos`
 PK `(passe_id, conteudo)`. `conteudo` = `amostras` ou `amostras_time`; `versao` (do formato), `n` (linhas), `t_ini_ms`,
@@ -143,6 +144,9 @@ PK `(passe_id, conteudo)`. `conteudo` = `amostras` ou `amostras_time`; `versao` 
 | `minuto` | `cs`, `cs_lcu`, `diferenca`, `ouro_total`, `ouro_atual`, `xp`, `nivel` | um por quadro da linha do tempo |
 | `cs_divergente` | `cs`, `cs_lcu`, `diferenca` | o CS do jogo fora da dezena do CS da linha do tempo (com folga de 3): o `creepScore` do `playerlist` anda **de 10 em 10** |
 | `trava_perdida` / `trava_retomada` | — | a câmera saiu do jogador vivo e voltou |
+| `habilidade_usada` | `habilidade` (`q w e r d f`), `recarga_s` (a primeira recarga lida depois do uso), `x`, `y` | o ícone do painel passou de pronto (colorido) para em recarga (número), confirmado por 2 leituras seguidas com a recarga descendo; ou a recarga saltou mais de 3 s para cima (uso logo depois de voltar). Leitura nula não muda o estado; lacuna de mais de 3 s sem leitura esquece o estado; morto não conta. O uso real foi entre a última leitura pronta e esta (até 250 ms antes a 4 leituras/s) |
+| `vida_baixa` | `vida`, `vida_max`, `pct`, `x`, `y` | vida do painel abaixo de 30% do máximo em 2 leituras seguidas, vindo de cima |
+| `recuperou` | `vida`, `vida_max`, `pct`, `duracao_ms`, `x`, `y` | depois de `vida_baixa`, de volta a 50% em 2 leituras seguidas sem morrer no meio (morrendo, fica só a `morte`) |
 
 ### `eventos`
 Os eventos da partida, das duas fontes: `linha_do_tempo` (importada ao criar o rastreio) e `jogo` (`eventdata`, coletado no
@@ -189,7 +193,7 @@ Colunas de `amostras` (ordem de tempo): `t_ms`, `x`, `y` (inteiro), `origem` (te
 `tela_x`, `tela_y` (÷10, décimo de pixel), `selecao_ok`, `trava_perdida`, `morto` (0/1), `respawn` (÷100), `nivel`, `cs`,
 `abates`, `mortes`, `assistencias`, `ward` (÷100), `dt_ms` (janela entre os dois `playback` da leitura), `vida`, `vida_max`,
 `mana`, `mana_max`, `cd_q` `cd_w` `cd_e` `cd_r` `cd_d` `cd_f` (÷10, segundos), `atr_ad`, `atr_ap`, `atr_armadura`, `atr_rm`,
-`atr_vel_ataque` (÷100), `atr_vel_mov`. As da tela ficam todas nulas até a tarefa 3.
+`atr_vel_ataque` (÷100), `atr_vel_mov`. As da tela (tarefa 3, `server/visao`) são nulas quando não lidas com confiança, com a câmera fora do jogador, com ele morto ou quando o nível do painel não é o do `playerlist` (painel de outro jogador); `vida_max`, `mana_max` e atributos só entram depois de 2 leituras iguais (ou mudança pequena) — `rastreio/sanidade.go`. `mana`/`mana_max` é o recurso da barra azul do painel (mana, energia, fúria...: o que a barra mostrar em texto); nulo se não há texto (campeão sem recurso). Nas recargas: `0` = pronta, `-1` = habilidade não aprendida (nível 0), nulo = não lida (inclusive ícone escurecido sem número: bloqueado por outra ação). Blob anterior à tarefa 3 lê tudo isso como nulo.
 
 Colunas de `amostras_time` (ordenado por participante e tempo, para as corridas ficarem longas): `participante_id`, `t_ms`,
 `nivel`, `abates`, `mortes`, `assistencias`, `cs`, `ward` (÷100), `morto`, `respawn` (÷100), `vida_pct`, `mana_pct` (÷10),
@@ -200,7 +204,7 @@ amostras) e ~1,3 KB por 4 min do estado dos 10. Uma partida de 39 min × 10 pass
 amostras + ~0,1 MB de estado dos 10 (um por passe). O teste `TestTamanhoDoBloco` mede o mesmo com dados sintéticos
 ruidosos (7,9 bytes/amostra).
 
-## Previstas (tarefas 3–4, não criadas)
+## Previstas (tarefa 4, não criadas)
 
 - `saidas_de_rota`, `retratos_abate`, `estudos`, `estudo_partidas`, `anotacoes` (as análises da tarefa 4 provavelmente viram
   tipos novos da `cadeia`).

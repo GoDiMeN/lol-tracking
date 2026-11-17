@@ -77,12 +77,14 @@ Eventos SSE: `abrindo_replay {rastreio_id, game_id}`, `replay_aberto {duracao_ms
 `passe_inicio {passe_id, participante_id, nome, t_inicio_ms, t_fim_ms, duracao_ms}`, `trava {passe_id, tentativas, ok, motivo?}`,
 `amostra {passe_id, participante_id, t_ms, x?, y?, origem, morto, selecao, amostras, retravas, ms_leitura}` (no máximo 1 por
 segundo real), `passe_fim {passe_id, participante_id, amostras, taxa, bytes, bytes_time, cadeia, calibracao {modo, pontos,
-erro_mediano, erro_maximo}, estatisticas}`, `pausado {rastreio_id, motivo?}`, `concluido {rastreio_id}`, `fechando_replay`,
+erro_mediano, erro_maximo}, estatisticas}` (`estatisticas.ms_tela_mediana` = custo da leitura da tela), `aviso_tela {passe_id, erro}` (uma vez por
+passe: a tela não é a que a leitura conhece — resolução diferente de 2560×1440 ou escala do HUD diferente da padrão; as colunas
+da tela ficam nulas), `conferencia_riot {passe_id, n, iguais, maior_dif, campos}` (só com chave da Riot válida), `pausado {rastreio_id, motivo?}`, `concluido {rastreio_id}`, `fechando_replay`,
 `aviso`, `erro`, `fim`.
 
 `Rastreio = {"id", "game_id", "estado": "rodando"|"pausado"|"concluido"|"cancelado"|"falhou", "velocidade", "t_inicio_ms", "t_fim_ms" (0 = fim da partida), "criado_em", "atualizado_em", "terminado_em", "erro", "passes_total", "passes_concluidos", "passe_atual": participante_id|null, "progresso": 0–1, "estimativa_s", "execucao": {"id"}|null}`
 
-`Passe = {"id", "rastreio_id", "game_id", "participante_id", "ordem", "estado": "pendente"|"rodando"|"pausado"|"concluido"|"cancelado"|"falhou", "t_atual_ms", "duracao_ms", "amostras", "tentativas_trava", "retravas", "amostras_sem_trava", "taxa" (amostras por segundo de jogo)|null, "calibracao_pontos", "erro_calibracao_mediano"|null, "erro_calibracao_maximo"|null, "iniciado_em", "terminado_em", "erro", "compactado": bool, "bytes"}`
+`Passe = {"id", "rastreio_id", "game_id", "participante_id", "ordem", "estado": "pendente"|"rodando"|"pausado"|"concluido"|"cancelado"|"falhou", "t_atual_ms", "duracao_ms", "amostras", "tentativas_trava", "retravas", "amostras_sem_trava", "taxa" (amostras por segundo de jogo)|null, "calibracao_pontos", "erro_calibracao_mediano"|null, "erro_calibracao_maximo"|null, "iniciado_em", "terminado_em", "erro", "compactado": bool, "bytes", "conferencia_n"|null, "conferencia_iguais"|null, "conferencia_maior_dif"|null, "conferencia_riot": {n, iguais, maior_dif, minutos, campos}|null}` (conferência da tela com a Riot: `dados.md`)
 
 ### Partida rastreada — tarefa 2
 
@@ -99,9 +101,9 @@ Tempos na query em **segundos** (aceita fração); na resposta em ms.
 | GET | `/api/partidas/{id}/eventos?tipo=abate` | `{"eventos": [Evento]}` em ordem de tempo (as duas fontes, sem abate/monstro/estrutura duplicado). |
 | GET | `/api/partidas/{id}/cadeia?participante=3&tipos=morte,abate` | `{"participante_id", "passe_id", "itens": [{"t_ms", "tipo", "dados"}]}`: a cadeia reduzida (tipos em `dados.md`). 404 se não há passe fechado. |
 
-`Amostra = {"t_ms", "x", "y", "origem": "camera"|"morte"|"base"|"interpolada", "cam_x", "cam_z", "tela_x", "tela_y", "selecao_ok", "trava_perdida", "morto", "respawn", "nivel", "cs", "abates", "mortes", "assistencias", "ward", "dt_ms", "vida", "vida_max", "mana", "mana_max", "cd": {"q","w","e","r","d","f"}, "atributos": {"ad","ap","armadura","rm","vel_ataque","vel_mov"}}` — o que não foi lido vem `null` (as colunas da tela ficam `null` até a tarefa 3).
+`Amostra = {"t_ms", "x", "y", "origem": "camera"|"morte"|"base"|"interpolada", "cam_x", "cam_z", "tela_x", "tela_y", "selecao_ok", "trava_perdida", "morto", "respawn", "nivel", "cs", "abates", "mortes", "assistencias", "ward", "dt_ms", "vida", "vida_max", "mana", "mana_max", "cd": {"q","w","e","r","d","f"}, "atributos": {"ad","ap","armadura","rm","vel_ataque","vel_mov"}}` — o que não foi lido vem `null`. Recargas em segundos: `0` pronta, `-1` não aprendida, `null` não lida (vocabulário em `dados.md`).
 
-`Quadro = {"t_ms", "jogadores": [{"participante_id", "x", "y", "origem" (da amostra, ou "linha_do_tempo" = interpolada nos quadros por minuto para quem não foi rastreado), "rastreado", "morto", "respawn", "nivel", "abates", "mortes", "assistencias", "cs", "itens": [{"id","qtd"}], "vida_pct", "mana_pct", "vida", "vida_max", "mana", "mana_max"}]}`
+`Quadro = {"t_ms", "jogadores": [{"participante_id", "x", "y", "origem" (da amostra, ou "linha_do_tempo" = interpolada nos quadros por minuto para quem não foi rastreado), "rastreado", "morto", "respawn", "nivel", "abates", "mortes", "assistencias", "cs", "itens": [{"id","qtd"}], "vida_pct", "mana_pct" (quadros laterais da tela, 0–100), "vida", "vida_max", "mana", "mana_max", "cd", "atributos" (painel: só do jogador seguido no passe)}]}`
 
 `Evento = {"id", "fonte": "linha_do_tempo"|"jogo", "tipo": "abate"|"monstro"|"estrutura"|"multiabate"|"primeiro_abate"|"ace"|"inicio"|"fim"|<outro em minúsculas>, "tipo_original", "t_ms", "quem_id", "quem_nome", "em_quem_id", "em_quem_nome", "assistencias": [ids], "x", "y", "confirmado_jogo": bool, "dados": <JSON cru da fonte>}`
 

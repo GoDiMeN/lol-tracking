@@ -104,8 +104,8 @@ func TestConferenciaComRiot(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Minuto 30 s: vida a 10 de diferença (dentro de 3%), o resto exato; a Riot dá a
-	// velocidade de ataque em centésimos inteiros (80 × 0,79 conta como igual: ±0,01).
-	if c.Minutos != 1 || c.N != 6 || c.Iguais != 6 || math.Abs(c.MaiorDif-10) > 1e-9 || c.Campos["vida"].MaiorDif != 10 {
+	// velocidade de ataque numa unidade que não é a do HUD: fica de fora.
+	if c.Minutos != 1 || c.N != 5 || c.Iguais != 5 || math.Abs(c.MaiorDif-10) > 1e-9 || c.Campos["vida"].MaiorDif != 10 {
 		t.Fatalf("%+v %+v", c, c.Campos["atr_vel_ataque"])
 	}
 	// Nível diferente no quadro: pula (subida de nível no meio).

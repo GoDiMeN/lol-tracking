@@ -70,8 +70,8 @@ type linhaRiot struct {
 	} `json:"info"`
 }
 
-// Tolerâncias: os máximos e atributos têm de bater exatos (a velocidade de
-// ataque, ao centésimo); vida e recurso atuais mudam em combate entre o quadro
+// Tolerâncias: máximos e atributos ±1 (ver ConfereComRiot); vida e recurso
+// atuais mudam em combate entre o quadro
 // da Riot e a amostra mais perto (até 250 ms), então ±3% do máximo.
 const tolAtual = 0.03
 
@@ -107,32 +107,37 @@ func ConfereComRiot(bruto []byte, pid int, as []Amostra) (Conferencia, error) {
 		if !ok || q.Timestamp <= 0 {
 			continue
 		}
-		// Amostra mais perto do quadro (até 500 ms), viva e com o painel lido.
-		i := sort.Search(len(as), func(k int) bool { return as[k].TMs >= q.Timestamp })
-		var a *Amostra
-		for _, k := range []int{i - 1, i} {
-			if k >= 0 && k < len(as) && math.Abs(float64(as[k].TMs-q.Timestamp)) <= 500 && !as[k].Morto &&
-				(a == nil || math.Abs(float64(as[k].TMs-q.Timestamp)) < math.Abs(float64(a.TMs-q.Timestamp))) {
-				a = &as[k]
+		// Por campo: a amostra mais perto do quadro (até 500 ms), viva, no mesmo
+		// nível (o quadro da Riot pode cair numa subida de nível) e com o campo lido.
+		perto := func(campo func(*Amostra) *float64) *float64 {
+			i := sort.Search(len(as), func(k int) bool { return as[k].TMs >= q.Timestamp })
+			var melhor *float64
+			dist := 501.0
+			for k := max(0, i-3); k < min(len(as), i+3); k++ {
+				d := math.Abs(float64(as[k].TMs - q.Timestamp))
+				if v := campo(&as[k]); v != nil && d < dist && !as[k].Morto && (as[k].Nivel == 0 || as[k].Nivel == pf.Level) {
+					melhor, dist = v, d
+				}
 			}
-		}
-		// O quadro da Riot pode cair num instante de subida de nível: o painel
-		// já mostra os valores do nível novo ou ainda do velho. Pula.
-		if a == nil || (a.Nivel > 0 && pf.Level != a.Nivel) {
-			continue
+			return melhor
 		}
 		s := pf.ChampionStats
-		c.Minutos++
-		compara("vida_max", a.VidaMax, s.HealthMax, 0)
-		compara("vida", a.Vida, s.Health, tolAtual*s.HealthMax)
-		compara("mana_max", a.ManaMax, s.PowerMax, 0)
-		compara("mana", a.Mana, s.Power, tolAtual*s.PowerMax)
-		compara("atr_ad", a.Atr.AD, s.AttackDamage, 0)
-		compara("atr_ap", a.Atr.AP, s.AbilityPower, 0)
-		compara("atr_armadura", a.Atr.Armadura, s.Armor, 0)
-		compara("atr_rm", a.Atr.RM, s.MagicResist, 0)
-		compara("atr_vel_ataque", a.Atr.VelAtaque, s.AttackSpeed/100, 0.01)
-		compara("atr_vel_mov", a.Atr.VelMov, s.MovementSpeed, 0)
+		antes := c.N
+		// A Riot trunca os valores (1721,6 vira 1721) e o HUD arredonda (1722):
+		// máximos e atributos batem com ±1. O attackSpeed da Riot não está na
+		// unidade do HUD (Warwick: 164 na Riot, 1,05 na tela): não é comparado.
+		compara("vida_max", perto(func(a *Amostra) *float64 { return a.VidaMax }), s.HealthMax, 1)
+		compara("vida", perto(func(a *Amostra) *float64 { return a.Vida }), s.Health, tolAtual*s.HealthMax)
+		compara("mana_max", perto(func(a *Amostra) *float64 { return a.ManaMax }), s.PowerMax, 1)
+		compara("mana", perto(func(a *Amostra) *float64 { return a.Mana }), s.Power, tolAtual*s.PowerMax)
+		compara("atr_ad", perto(func(a *Amostra) *float64 { return a.Atr.AD }), s.AttackDamage, 1)
+		compara("atr_ap", perto(func(a *Amostra) *float64 { return a.Atr.AP }), s.AbilityPower, 1)
+		compara("atr_armadura", perto(func(a *Amostra) *float64 { return a.Atr.Armadura }), s.Armor, 1)
+		compara("atr_rm", perto(func(a *Amostra) *float64 { return a.Atr.RM }), s.MagicResist, 1)
+		compara("atr_vel_mov", perto(func(a *Amostra) *float64 { return a.Atr.VelMov }), s.MovementSpeed, 1)
+		if c.N > antes {
+			c.Minutos++
+		}
 	}
 	return c, nil
 }

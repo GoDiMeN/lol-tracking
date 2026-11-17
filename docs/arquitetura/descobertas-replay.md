@@ -164,6 +164,51 @@ Sondas `go test -tags real` em `server/replay` e `server/rastreio`, partida 3304
 - **Eventos.** A linha do tempo do LCU desta partida só tem `CHAMPION_KILL`, `ELITE_MONSTER_KILL` e `BUILDING_KILL` (sem
   itens nem wards, ao contrário do que a seção 2 sugeria); compras e vendas vêm do inventário do `playerlist` segundo a segundo.
 
+## 4.2 Leitura do HUD por gabarito (medida, 2026-11-17, tarefa 3)
+
+Pacote `server/visao`. Coordenadas em `regioes.go` (referência 2560×1440, HUD na escala padrão), medidas em 63 capturas
+da partida 3304594274 (Akshan e Lux).
+
+- **Painel** (só aparece com a câmera presa num jogador vivo; morto com seleção vazia ou câmera dirigida = sem painel). Texto
+  `vida / máx` em fonte pequena (glifos de 10 px, linhas 1142–1151, x 102–235); recurso em fonte maior (14 px, 1170–1183). A
+  barra `/` do recurso às vezes não passa do limiar (sobre o azul-claro): a divisão cai no maior espaço. Nível no canto do
+  retrato (64–98 × 1190–1213). Atributos em duas colunas (x 266–313 e 336–380; linhas 1133, 1160, 1185), cinza ou amarelo
+  (bônus): limiar por luminância. Linhas separadoras escuras e uniformes em y 1160 e 1189 (x 106–230) = painel presente.
+- **Ícones** Q W E R D F em x 72, 124, 175, 227, 293, 340 (43 px), y 1225–1268. **Pronto = colorido**; em recarga, bloqueado
+  ou não aprendido o ícone é **cinza puro** (r = g = b): fração de pixels saturados no miolo ≥ 0,47 nos prontos e 0,00 nos
+  cinzas (limiar 0,12). Número da recarga no meio (linhas ~1242–1253), branco com contorno preto, com decimal abaixo de 1 s
+  (`0.3`). O relógio de recarga desenha traços brancos de 1 px a partir do centro, mas o contorno preto separa os dígitos
+  deles (componentes conexos com limiar 160). Nível da habilidade embaixo (`0` = não aprendida). **Ícone cinza sem número**
+  acontece com habilidade/feitiço bloqueado por outra ação (ex.: Q e Incendiar do Akshan durante o E; Flash às vezes):
+  sai nulo, não 0.
+- **Quadros laterais**: barras de 54 px (x 42–95 à esquerda, 2463–2516 à direita; vida em y 275–282, recurso 287–294,
+  +137 por quadro), enchem da esquerda nos dois lados, vazio = `0x131313`. Dano recente = pedaço vermelho, não conta.
+  **Morto** = retrato em cinza + número vermelho puro (`#ff0000`) por cima; só o vermelho não basta (o retrato do Warwick tem
+  vermelho). O número é o `respawnTimer` arredondado para cima. Disponibilidade do R e dos feitiços nos quadros **não lida**
+  (o ícone tem o relógio por cima mas sem número; deixado de fora).
+- Acerto nas 63 capturas (rótulos a olho em `server/visao/testdata/rotulos.txt`): todos os campos 100% menos `cd_f` 98,3%
+  (1 nulo); **0 leituras erradas**. Com os gabaritos gerados só da metade das capturas, a outra metade também dá 0 erradas (os
+  nulos vêm de dígito que não estava na metade: nível 18, nível de habilidade 0). Custo: **~1,4 ms por leitura** (benchmark).
+- **Sonda real** (`go test -tags real -run TestRealTela ./visao/`, leitor ligado, capturas a cada 5 s): Akshan min 6–10 a
+  2×: 955 amostras, **3,98/s de jogo**, leitura da tela **1,56 ms** (mediana; leitura completa 29,5 ms). Com a câmera nele e
+  vivo (827 amostras): vida/vida_max/mana/atributos 99,9%, vel. movimento 99,5%, R 100%, D 99,6%, E 99,2%, F 98,8%, W 98,3%,
+  Q 92,0% (o resto é ícone bloqueado sem número: Q durante o E do Akshan); quadros laterais 100%. 31 itens de cadeia
+  (`habilidade_usada`, `vida_baixa` a 9,5% um segundo antes da morte de 8:48); conferidos nas capturas: Q usado em 6:50,9 com
+  7 s → captura de 6:55,4 mostra 2; Incendiar em 8:44,9 com 180 → 179 em 8:45,9. Akshan a 8× (min 16–17): **3,50/s**
+  (leitura completa 34 ms, tela 2,1 ms; o ciclo a 8× é de 31 ms, então a taxa já é limitada pela leitura). Master Yi, Teemo e
+  Warwick 30 s cada a 2×: 3,74–3,98/s, campos do painel 95–100% (Flash bloqueado no Yi: 86,6%), sem ajuste por campeão.
+  Habilidades de vários tempos geram dois usos (R do Akshan: canal 0,3 s e depois 96 s; E: 0,5 s e 18 s): é o que o HUD mostra.
+- **Conferência com a Riot** (match-v5 `championStats` por minuto): a Riot **trunca** (1721) e o HUD **arredonda** (1722):
+  máximos e atributos conferem com ±1. O `attackSpeed` da Riot não está na unidade do HUD (Warwick 164 × 1,05 na tela): fica
+  de fora. Na sonda (com as regras finais): **54 comparações, 50 iguais**. Os 4 diferentes são todos de um mesmo minuto de
+  luta do Akshan (min 8, a 1 min da morte): vida 184, mana 68, velocidade de movimento 62 e dano de ataque 4 — valores que
+  mudam em fração de segundo (a amostra é de até 250 ms antes/depois) ou por efeito temporário. `vida_max`, `mana_max`,
+  armadura, RM e PH bateram em todos os minutos. O Teemo estava morto no quadro de 13:00 (0 comparações).
+- **Limites:** só 2560×1440 foi medido (outra resolução → erro `ErrResolucao`, colunas nulas e evento `aviso_tela`); escala
+  do HUD diferente da padrão tira tudo do lugar (nenhum marco fixo encontrado → `ErrHUD`, mesmo aviso); idioma do cliente não
+  importa (só dígitos). O dígito `9` do nível do campeão e alguns níveis de habilidade só existem nos gabaritos se apareceram
+  nas capturas: dígito sem gabarito sai nulo, nunca errado (regerar com `LOL_GERA_GABARITOS=1` e mais capturas).
+
 ## 5. Custo de tempo
 
 Uma partida de 39 min, um passe por jogador a 2× = 19,5 min por jogador, **~3 h 15 min** os 10. A 8× = ~49 min.

@@ -90,6 +90,38 @@ func TestGeraGabaritos(t *testing.T) {
 			add(&l.morte, componentes(img, e.r(rr), &l.morte), fmt.Sprint(math.Ceil(j.Renasce)), fmt.Sprintf("%s quadro %d", r.arquivo, k))
 		}
 	}
+	// Capturas sem rótulo a olho (de sondas posteriores): o nível do retrato e
+	// o contador de renascimento têm a verdade no JSON do playerlist.
+	if os.Getenv("LOL_GERA_EXTRAS") == "1" {
+		rotuladas := map[string]bool{}
+		for _, r := range leRotulos(t) {
+			rotuladas[r.arquivo] = true
+		}
+		arqs, _ := filepath.Glob(filepath.Join(pasta, "*.png"))
+		for _, a := range arqs {
+			nome := strings.TrimSuffix(filepath.Base(a), ".png")
+			if rotuladas[nome] {
+				continue
+			}
+			img, info := abreCaptura(t, pasta, nome)
+			e := novaEscala(img.Rect)
+			if info.Selecao == "" || !faixaEscura(img, e.r(rSeparador1)) || !faixaEscura(img, e.r(rSeparador2)) {
+				continue
+			}
+			for _, j := range info.Jogadores {
+				if j.Nome == info.Selecao && !j.Morto {
+					gs := componentes(img, e.r(rNivel), &l.nivel)
+					// Subiu de nível entre a captura e o playerlist? Se os gabaritos
+					// atuais leem outro número com certeza, não usa.
+					if txt, _ := l.nivel.texto(gs); !strings.Contains(txt, "?") && txt != fmt.Sprint(j.Nivel) {
+						t.Logf("%s: tela %q × playerlist %d, ignorada", nome, txt, j.Nivel)
+						continue
+					}
+					add(&l.nivel, gs, fmt.Sprint(j.Nivel), nome+" (extra)")
+				}
+			}
+		}
+	}
 	t.Logf("saturação: menor de ícone pronto %.3f, maior de ícone cinza %.3f (limiar %.2f)", satPronto, satCinza, IconeColorido)
 	for _, f := range l.fontes() {
 		var gs []gabarito
