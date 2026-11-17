@@ -1,0 +1,4 @@
+{
+  "//": "Só para o node tratar os .js do renderer como módulos ES nos testes (node --test); o navegador ignora.",
+  "type": "module"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "lol-tracking",
+  "productName": "LoL Tracking",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LoL Tracking: rastreia replays do League of Legends e guarda tudo num SQLite local.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test src/main/servidor.test.mjs src/renderer/formato.test.mjs"
+  },
+  "devDependencies": {
+    "electron": "^39.8.10"
+  }
+}

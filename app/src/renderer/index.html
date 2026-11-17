@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Tudo vem do próprio servidor (mesma origem): nada de script, estilo ou conexão de fora. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'">
+    <title>LoL Tracking</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="janela">
+      <header class="titulo">
+        <b>LoL Tracking</b>
+        <span class="dir" id="status" role="status"><span class="ponto" id="statusPonto"></span><span id="statusTexto">conectando ao servidor…</span></span>
+      </header>
+      <div class="corpo">
+        <!-- As telas de rastreio, partidas rastreadas, estudo e configurações chegam nas próximas tarefas;
+             o menu já mostra onde vão ficar, desligado, em vez de telas de mentira. -->
+        <nav class="menu" aria-label="Menu">
+          <span class="rot">rastrear</span>
+          <a href="#jogadores" class="on" aria-current="page">Jogadores</a>
+          <span class="desligado" aria-disabled="true" title="chega numa próxima versão">Fila de rastreio</span>
+          <span class="desligado" aria-disabled="true" title="chega numa próxima versão">Partidas rastreadas</span>
+          <span class="rot">aprender</span>
+          <span class="desligado" aria-disabled="true" title="chega numa próxima versão">Estudo</span>
+          <span class="desligado" aria-disabled="true" title="chega numa próxima versão">Configurações</span>
+        </nav>
+
+        <main class="tela" id="telaJogadores">
+          <form class="linha" id="formBusca" autocomplete="off">
+            <input class="campo" id="busca" name="busca" placeholder="Nome#TAG (sem #, usa a tag da região)" aria-label="Nome do jogador" required>
+            <button class="btn pri" type="submit" id="botaoBuscar">Buscar</button>
+          </form>
+          <div class="linha recentes" id="recentes" aria-label="Buscados recentemente"></div>
+          <p class="aviso-linha" id="aviso" role="alert" hidden></p>
+          <div class="linha resumo" id="resumo" hidden></div>
+          <div class="cartao" id="lista" hidden></div>
+          <div class="linha" id="maisLinha" hidden><button class="btn" type="button" id="botaoMais">Carregar mais</button></div>
+        </main>
+      </div>
+    </div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
