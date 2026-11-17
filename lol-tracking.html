@@ -357,6 +357,16 @@ svg{display:block;max-width:100%;height:auto}
 </section>
 
 <section class="ler">
+  <h2>Como os dados ficam guardados</h2>
+  <p>Ao terminar a leitura de cada jogador, o que foi lido vira duas coisas e as linhas cruas são apagadas.</p>
+  <div class="duas">
+    <div class="aviso"><h3>Cadeia reduzida</h3><p>Só o que importa para contar o jogo daquele jogador: trajeto simplificado, mortes e renascimentos, abates, níveis, compras, CS e ouro por minuto, saídas de rota, habilidades usadas, atividade.</p><p style="color:var(--texto-2)">É o que as telas do app mostram.</p></div>
+    <div class="aviso"><h3>Bloco compactado</h3><p>Todas as leituras, ponto a ponto, num formato binário por coluna, com diferenças entre leituras e compressão por cima. Nada do que foi lido se perde.</p><p style="color:var(--texto-2)">Alimenta o mapa com play e, mais tarde, a leitura por IA.</p></div>
+  </div>
+  <p style="color:var(--texto-2)">O tamanho real por partida ainda vai ser medido pelo agente do motor; a cadeia reduzida pode ser refeita a qualquer momento a partir do bloco compactado.</p>
+</section>
+
+<section class="ler">
   <h2>Ações do campeão e mapa com play</h2>
   <p>Pedidos que entraram depois do primeiro plano.</p>
   <ul class="lista">
