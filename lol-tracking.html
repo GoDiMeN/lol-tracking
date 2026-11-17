@@ -106,7 +106,26 @@ svg{display:block;max-width:100%;height:auto}
 .tarefa .top{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
 .tarefa .top b{font-size:14px}
 .tarefa p{margin:0;color:var(--texto-2);font-size:13px}
+.cal-topo{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:18px;align-items:start}
+.mapa{position:relative;aspect-ratio:1;max-width:100%;border-radius:6px;overflow:hidden;background:var(--fundo-3)}
+.mapa img{display:block;width:100%;height:100%;object-fit:cover}
+.mapa .pt{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--critico);border:1.5px solid #fff}
+.mapa .rf{position:absolute;width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #000}
+.mapa.g .pt{width:13px;height:13px;margin:-6.5px 0 0 -6.5px}
+.mapa.g .rf{width:23px;height:23px;margin:-11.5px 0 0 -11.5px}
+.cal-grade{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.cal{border:1px solid var(--borda);border-radius:var(--raio);background:var(--fundo-2);padding:10px;display:flex;flex-direction:column;gap:8px}
+.cal.ruim{border-color:var(--critico)}
+.cal .par{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.cal .leg{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:12.5px}
+.cal .leg b{font-weight:600}
+.cal .rot2{font-size:10.5px;font-family:var(--font-mono);color:var(--texto-3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px}
+.chave{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--texto-2);align-items:center}
+.chave i{display:inline-block;vertical-align:middle;margin-right:5px;border-radius:50%}
+.chave .a{width:9px;height:9px;background:var(--critico);border:1.5px solid #fff;box-shadow:0 0 0 1px var(--borda-forte)}
+.chave .b{width:13px;height:13px;border:2px solid var(--texto)}
 @media (max-width:720px){
+  .cal-topo{grid-template-columns:minmax(0,1fr)}
   .corpo{grid-template-columns:minmax(0,1fr)} .menu{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--borda)} .menu .rot{display:none}
   .grade{grid-template-columns:minmax(0,1fr)}
   .partida{grid-template-columns:6px minmax(0,1fr) auto} .partida .m2{display:none}
@@ -147,6 +166,43 @@ svg{display:block;max-width:100%;height:auto}
     <li><b>Itens, nível, K/D/A, CS, morto e tempo de respawn</b> dos 10 vêm prontos da API do jogo. <b>Abates com posição, ouro, XP, wards e objetivos</b> vêm da linha do tempo do cliente.</li>
     <li><b>Velocidade:</b> 2× e 8× são aceitos pela API.</li>
   </ul>
+</section>
+
+<section>
+  <div class="ler"><h2>Calibração da posição</h2>
+  <p>Travei a câmera em cada um dos 10 jogadores em dois instantes da partida (04:00 e 14:00), li a coordenada da câmera e comparei com a posição exata que o cliente do LoL guarda para aquele minuto. São 20 pontos.</p></div>
+  <div class="cal-topo">
+    <div>
+      <div class="mapa g" id="mapa-geral"><img src="calib/map11.png" alt="Mapa vazio de Summoner's Rift com os 20 pontos da calibração"></div>
+    </div>
+    <div class="ler">
+      <div class="aviso">
+        <p><span class="pill ok">18 de 20 no lugar</span> A diferença entre câmera e campeão é fixa: <b class="num">x −2, y +1291</b>. Não muda de jogador para jogador nem de um canto do mapa para outro.</p>
+        <ul class="lista">
+          <li><b>Erro mediano: <span class="num">74</span> unidades</b>, máximo <span class="num">179</span>. O mapa tem cerca de 15 000 de lado, então é meio por cento. Uma rota tem perto de 1 000 de largura.</li>
+          <li><b>Jogador parado erra 5 a 8 unidades</b> (Seraphine aos 04:00, Warwick aos 14:00). O resto do erro é o campeão andando na fração de segundo entre o registro do cliente e a minha leitura, não a calibração.</li>
+          <li><span class="pill cr">2 falharam</span> <b>A tecla <code>T</code>, do décimo jogador</b>: o seletor mudou para a Lux, mas a câmera ficou parada onde estava o jogador anterior, nas duas tentativas. As outras nove teclas funcionaram. O agente do motor precisa resolver isso antes de rastrear o décimo jogador.</li>
+        </ul>
+      </div>
+      <div class="chave" style="margin-top:12px"><span><i class="a"></i>posição calculada pela câmera</span><span><i class="b"></i>posição registrada pelo cliente</span></div>
+      <p style="color:var(--texto-2);margin-top:10px">Abaixo, cada ponto: à esquerda o minimapa do jogo naquele instante (o retângulo branco é onde a câmera está), à direita o ponto calculado no mapa vazio da Riot. Fiz o teste com o jogo pausado; em movimento a 2× ainda falta medir.</p>
+    </div>
+  </div>
+  <div class="cal-grade" id="cal-grade"></div>
+  <div class="ler" style="margin-top:10px"><h3 style="font-size:16px">Com o replay rodando a 2×</h3>
+  <p>Repeti com o jogo andando: 10 minutos de partida seguindo o Akshan (tecla <code>3</code>) e 10 seguindo a Lux (tecla <code>T</code>), lendo cerca de 4 vezes por segundo de jogo e comparando a cada minuto com a posição do cliente. 17 pontos com o jogador vivo.</p></div>
+  <div class="rolar"><table>
+    <thead><tr><th>Como calcula</th><th>Erro mediano</th><th>Erro máximo</th><th>Em relação à largura de uma rota</th></tr></thead>
+    <tbody>
+      <tr><td>Só a diferença fixa da câmera</td><td class="num">94</td><td class="num">235</td><td>até um quarto</td></tr>
+      <tr><td>Diferença fixa + onde o campeão aparece na tela</td><td class="num">29</td><td class="num">95</td><td>menos de um décimo</td></tr>
+    </tbody>
+  </table></div>
+  <div class="ler"><ul class="lista">
+    <li><b>Em movimento a câmera atrasa</b> e o campeão sai do centro da tela. A API do jogo diz em que pixel ele está, então dá para descontar: é a segunda linha da tabela, e é a que o app vai usar.</li>
+    <li><b>A tecla <code>T</code> funcionou com o jogo rodando.</b> A falha de antes só aconteceu com o jogo pausado.</li>
+    <li><b>Enquanto o jogador está morto a câmera sai dele</b> e vai passear; o seletor fica vazio e volta sozinho quando ele renasce. Nesses trechos a posição gravada será o local da morte e depois a base, não a câmera.</li>
+  </ul></div>
 </section>
 
 <section>
@@ -301,13 +357,24 @@ svg{display:block;max-width:100%;height:auto}
 </section>
 
 <section class="ler">
+  <h2>Ações do campeão e mapa com play</h2>
+  <p>Pedidos que entraram depois do primeiro plano.</p>
+  <ul class="lista">
+    <li><b>Soltou magia:</b> dá para saber com precisão. Quando o ícone de Q, W, E, R ou de um feitiço passa de pronto para em recarga, a habilidade foi usada naquele instante.</li>
+    <li><b>Está atacando, e o quê:</b> o jogo não informa o alvo de cada ataque no replay, e ler isso da memória do jogo é justamente o que não vamos fazer. O app vai deduzir a atividade: <i>farmando</i> (CS subindo sem inimigo perto), <i>trocando com fulano</i> (inimigo ao alcance e a vida de um dos dois caindo), <i>batendo em torre ou objetivo</i> (perto da estrutura, com o evento confirmando), <i>andando</i> ou <i>na base</i>. É dedução, não registro de cada golpe.</li>
+    <li><b>CS conferido o tempo todo:</b> o CS vem da API do jogo a cada segundo e é comparado a cada minuto com o número oficial do cliente. Divergência fica marcada na partida.</li>
+    <li><b>Mapa em tela cheia com play:</b> o retrato do campeão e o nome do jogador andando pelo mapa, com play, pausa, velocidade e barra de tempo, mostrando a atividade de cada um. Clicar num jogador abre vida, mana, habilidades com recarga, atributos e itens naquele instante. Entra como quinta tela.</li>
+  </ul>
+</section>
+
+<section class="ler">
   <h2>Tarefas dos agentes</h2>
   <p style="color:var(--texto-2)">Cinco agentes Opus, um de cada vez. Cada um só começa depois que eu validar o anterior: testes rodando e, onde der, prova contra o jogo de verdade.</p>
-  <div class="tarefa"><div class="top"><span class="pill n">1</span><b>Base, cliente do LoL e replays</b></div><p>Servidor Go com SQLite, janela Electron, busca de jogador, lista de partidas com estado do replay, download. Chave da Riot opcional.</p></div>
+  <div class="tarefa"><div class="top"><span class="pill ok">1 · entregue</span><b>Base, cliente do LoL e replays</b></div><p>Servidor Go com SQLite, janela Electron, busca de jogador, lista de partidas com estado do replay, download. Chave da Riot opcional.</p></div>
   <div class="tarefa"><div class="top"><span class="pill n">2</span><b>Motor do rastreio</b></div><p>Abrir o replay, travar a câmera pela tecla, velocidade, laço de amostragem, calibração da posição, eventos, fila dos 10 passes com pausa e retomada.</p></div>
   <div class="tarefa"><div class="top"><span class="pill n">3</span><b>Leitura da tela</b></div><p>Captura da janela e leitura por gabarito: vida, mana, atributos, cooldowns e barras laterais. Testada com capturas reais guardadas no repositório.</p></div>
   <div class="tarefa"><div class="top"><span class="pill n">4</span><b>Análise e estudo</b></div><p>Zonas do mapa, saídas de rota, retrato de cada abate, listas de vitórias e derrotas por jogador e a comparação entre elas.</p></div>
-  <div class="tarefa"><div class="top"><span class="pill n">5</span><b>Interface</b></div><p>As quatro telas acima ligadas ao servidor, com progresso ao vivo do rastreio.</p></div>
+  <div class="tarefa"><div class="top"><span class="pill n">5</span><b>Interface</b></div><p>As quatro telas acima ligadas ao servidor, com progresso ao vivo do rastreio, mais o mapa em tela cheia com play.</p></div>
 </section>
 
 <section class="ler">
@@ -332,5 +399,29 @@ svg{display:block;max-width:100%;height:auto}
     [].forEach.call(document.querySelectorAll('.menu span[data-m]'),function(m){m.classList.toggle('on', m.dataset.m===t)});
   }
   abas.forEach(function(b){b.addEventListener('click',function(){mostra(b.dataset.t)})});
+
+  // Limites do mapa 11 nas coordenadas do jogo (documentação da Riot): min (-120,-120), max (14870,14980).
+  var P=[{"id":"m04_p01","m":4,"k":"1","j":"Nacht Faust","c":"Malphite","t":"ORDER","x":1757,"y":11847,"rx":1691,"ry":11881,"e":74},{"id":"m04_p02","m":4,"k":"2","j":"Tião Gomes","c":"Master Yi","t":"ORDER","x":3698,"y":10433,"rx":3696,"ry":10407,"e":26},{"id":"m04_p03","m":4,"k":"3","j":"GodiNzt","c":"Akshan","t":"ORDER","x":6906,"y":7221,"rx":6789,"ry":7221,"e":117},{"id":"m04_p04","m":4,"k":"4","j":"Dszinn","c":"Ashe","t":"ORDER","x":11962,"y":2254,"rx":11885,"ry":2227,"e":82},{"id":"m04_p05","m":4,"k":"5","j":"TuTuzA0","c":"Seraphine","t":"ORDER","x":10298,"y":1393,"rx":10303,"ry":1392,"e":5},{"id":"m04_p06","m":4,"k":"Q","j":"SóSplito","c":"Teemo","t":"CHAOS","x":3050,"y":11935,"rx":3101,"ry":11972,"e":63},{"id":"m04_p07","m":4,"k":"W","j":"STO21Shinigami","c":"Warwick","t":"CHAOS","x":9822,"y":13241,"rx":9794,"ry":13236,"e":28},{"id":"m04_p08","m":4,"k":"E","j":"O tal do Dente","c":"LeBlanc","t":"CHAOS","x":7586,"y":7201,"rx":7703,"ry":7213,"e":118},{"id":"m04_p09","m":4,"k":"R","j":"WILLY WONKA","c":"Smolder","t":"CHAOS","x":12997,"y":2596,"rx":13060,"ry":2605,"e":63},{"id":"m04_p10","m":4,"k":"T","j":"FabioBR","c":"Lux","t":"CHAOS","x":12997,"y":2596,"rx":13611,"ry":3872,"e":1416},{"id":"m14_p01","m":14,"k":"1","j":"Nacht Faust","c":"Malphite","t":"ORDER","x":2209,"y":12426,"rx":2113,"ry":12506,"e":125},{"id":"m14_p02","m":14,"k":"2","j":"Tião Gomes","c":"Master Yi","t":"ORDER","x":6716,"y":4820,"rx":6742,"ry":4820,"e":26},{"id":"m14_p03","m":14,"k":"3","j":"GodiNzt","c":"Akshan","t":"ORDER","x":6668,"y":7102,"rx":6601,"ry":6976,"e":142},{"id":"m14_p04","m":14,"k":"4","j":"Dszinn","c":"Ashe","t":"ORDER","x":7178,"y":1098,"rx":7197,"ry":1096,"e":19},{"id":"m14_p05","m":14,"k":"5","j":"TuTuzA0","c":"Seraphine","t":"ORDER","x":6600,"y":7747,"rx":6591,"ry":7925,"e":179},{"id":"m14_p06","m":14,"k":"Q","j":"SóSplito","c":"Teemo","t":"CHAOS","x":2702,"y":12035,"rx":2800,"ry":11957,"e":125},{"id":"m14_p07","m":14,"k":"W","j":"STO21Shinigami","c":"Warwick","t":"CHAOS","x":12070,"y":7970,"rx":12072,"ry":7977,"e":8},{"id":"m14_p08","m":14,"k":"E","j":"O tal do Dente","c":"LeBlanc","t":"CHAOS","x":6842,"y":7098,"rx":6959,"ry":7000,"e":152},{"id":"m14_p09","m":14,"k":"R","j":"WILLY WONKA","c":"Smolder","t":"CHAOS","x":11763,"y":1816,"rx":11728,"ry":1821,"e":36},{"id":"m14_p10","m":14,"k":"T","j":"FabioBR","c":"Lux","t":"CHAOS","x":11763,"y":1816,"rx":11955,"ry":1781,"e":195}];
+  function px(x){return ((x+120)/14990*100).toFixed(2)+'%'}
+  function py(y){return (100-(y+120)/15100*100).toFixed(2)+'%'}
+  function marca(cls,x,y){var d=document.createElement('span');d.className=cls;d.style.left=px(x);d.style.top=py(y);return d}
+  var geral=document.getElementById('mapa-geral'), grade=document.getElementById('cal-grade');
+  P.forEach(function(p){
+    geral.appendChild(marca('rf',p.rx,p.ry)); geral.appendChild(marca('pt',p.x,p.y));
+    var ruim=p.k==='T';
+    var c=document.createElement('div'); c.className='cal'+(ruim?' ruim':'');
+    var leg=document.createElement('div'); leg.className='leg';
+    var b=document.createElement('b'); b.textContent=p.c+' · '+p.j; b.className=p.t==='ORDER'?'tm-a':'tm-v';
+    var s=document.createElement('span'); s.className='mono'; s.style.color='var(--texto-2)'; s.textContent=(p.m<10?'0':'')+p.m+':00 · tecla '+p.k;
+    var e=document.createElement('span'); e.className='pill '+(ruim?'cr':'ok'); e.style.marginLeft='auto'; e.textContent=ruim?'câmera não foi':'erro '+p.e;
+    leg.appendChild(b); leg.appendChild(s); leg.appendChild(e);
+    var par=document.createElement('div'); par.className='par';
+    var a=document.createElement('div'); a.innerHTML='<div class="rot2">minimapa do jogo</div>';
+    var ma=document.createElement('div'); ma.className='mapa'; var ia=document.createElement('img'); ia.src='calib/'+p.id+'.jpg'; ia.loading='lazy'; ia.alt='Minimapa do jogo com a câmera em '+p.c; ma.appendChild(ia); a.appendChild(ma);
+    var d=document.createElement('div'); d.innerHTML='<div class="rot2">calculado no mapa da Riot</div>';
+    var mb=document.createElement('div'); mb.className='mapa g'; var ib=document.createElement('img'); ib.src='calib/map11.png'; ib.alt='Mapa vazio com a posição calculada de '+p.c; mb.appendChild(ib);
+    mb.appendChild(marca('rf',p.rx,p.ry)); mb.appendChild(marca('pt',p.x,p.y)); d.appendChild(mb);
+    par.appendChild(a); par.appendChild(d); c.appendChild(leg); c.appendChild(par); grade.appendChild(c);
+  });
 })();
 </script>

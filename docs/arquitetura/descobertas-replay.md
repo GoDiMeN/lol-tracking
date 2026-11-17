@@ -70,6 +70,51 @@ A **API da Riot** (`token.txt`, `X-Riot-Token`) é opcional: em 2026-11-17 a cha
 - `GET /liveclientdata/gamestats` → `gameTime`, `mapNumber`.
 - O jogo aceita `interfaceScoreboard:true` pela API: abre o placar (itens, K/D/A, CS dos 10) sem tecla.
 
+### 3.1 Calibração da posição (medida, 20 pontos, 2026-11-17)
+
+Câmera presa em cada um dos 10 jogadores nos quadros de 04:00 e 14:00 da partida 3304594274, com o jogo **pausado**.
+Dados brutos em `docs/calibracao/pontos.json`, recortes do minimapa em `docs/calibracao/*.jpg`, mapa vazio da Riot em `map11.png`.
+
+- **`posição = (cam_x − 2, cam_z + 1291)`**. Deslocamento constante: não depende do jogador nem da região do mapa.
+- 18 pontos válidos: erro mediano 74 unidades, médio 77, máximo 179 (mapa ≈ 15 000 de lado). Jogador parado: 5 a 8.
+  O resíduo é o campeão andando entre o carimbo do quadro do cliente e a leitura (até ~0,1 s) e a suavização da câmera;
+  dá para reduzir usando `screenPositionCenter` do `playerlist` (onde o campeão está na tela) para corrigir o atraso da câmera.
+- Para desenhar no `map11.png` do Data Dragon: limites do mapa 11 `min (−120, −120)`, `max (14870, 14980)`, com o y invertido.
+- **As 10 teclas selecionam o jogador certo** (`selectionName` conferido nas 20 leituras).
+- **Defeito aberto: a tecla `T` (10º jogador).** Nas duas leituras o seletor mudou para o jogador certo, mas a câmera **não se moveu**
+  (ficou na coordenada do jogador anterior). Não se sabe se é do `T` duplo, do jogo pausado ou do tempo de espera (700 ms).
+  O motor **não pode confiar só no `selectionName`**: tem que conferir que a câmera foi até o jogador (por exemplo,
+  `screenPositionCenter` dele perto do centro da tela) e tentar de novo se não foi.
+- **A falha do `T` só acontece com o jogo pausado**: rodando a 2×, `T`,`T` travou na primeira tentativa.
+
+### 3.2 Calibração com o replay rodando a 2× (medida, 2026-11-17)
+
+10 min de jogo seguindo o jogador 3 (min 2–12) e 10 seguindo o 10 (min 12–22), ~4 leituras por segundo de jogo
+(cada leitura: `playback`, `render`, `playerlist`, `playback`; tempo = média dos dois `playback`). 17 pontos com o jogador vivo,
+comparados com os quadros por minuto da linha do tempo.
+
+- Só o deslocamento fixo `(−2, +1291)`: erro mediano 94, máximo 235. A câmera **atrasa** em relação ao campeão em movimento.
+- **Fórmula a usar** (tela 2560×1440, centro 1280×720), com `sx, sy = screenPositionCenter` do jogador:
+  `x = cam_x + 0,2 + 1,374·(sx − 1280)` e `y = cam_z + 1249,6 − 1,768·(sy − 720)`. Erro mediano 29, máximo 95.
+  Os coeficientes por pixel dependem da resolução: escalar por `largura/2560` e `altura/1440`, ou reajustar pela linha do tempo
+  de cada partida (o motor deve refazer esse ajuste por partida e gravar o erro obtido).
+- **Jogador morto:** `selectionName` fica `""`, a câmera sai dele (vai para outro lugar do mapa) e `screenPositionCenter` vira `3.4e38`
+  ou um valor fora da tela. Ao renascer a seleção **volta sozinha**. Enquanto `isDead`, não usar a câmera: posição = local da morte
+  (evento da linha do tempo) e, perto do respawn, a fonte do time.
+- `screenPositionCenter` vem como **texto** `"x,y"` com ponto decimal.
+
+### 3.3 Pedidos de produto que dependem destas medidas
+
+- **Uso de habilidade:** transição pronto → recarga no ícone (Q, W, E, R, D, F) lido da tela = habilidade usada naquele instante.
+- **Ataque e alvo:** não existe na API do replay e não se lê memória. Vira **atividade deduzida** por amostra:
+  `farmando` (CS subindo, sem campeão inimigo perto), `trocando` com X (inimigo ao alcance e vida de um dos dois caindo, pelos
+  quadros laterais), `objetivo`/`torre` (perto da estrutura + evento da linha do tempo), `andando`, `na_base`, `morto`.
+- **CS:** `scores.creepScore` do `playerlist` a cada segundo, conferido a cada minuto contra `minionsKilled + jungleMinionsKilled`
+  da linha do tempo; divergência gravada.
+- **Mapa com play:** tela cheia, retrato do campeão (Data Dragon) + nome, play/pausa/velocidade/barra de tempo, atividade de cada um,
+  clique no jogador abre vida, mana, recargas, atributos e itens do instante. Exige rota que devolva o estado dos 10 por janela de tempo.
+- `POST /Exit` na porta 2999 devolve 204 e o jogo leva alguns segundos para fechar; esperar até 15 s antes de matar o processo.
+
 ## 4. Tela (referência 2560×1440, HUD em escala padrão)
 
 - Painel do jogador selecionado, canto inferior esquerdo, aproximadamente `x 0–420, y 1100–1340`:
