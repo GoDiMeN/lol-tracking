@@ -19,7 +19,7 @@ import (
 
 // Migra cria as tabelas do pacote. Ver docs/arquitetura/dados.md.
 func Migra(db *banco.DB) error {
-	return banco.Executa(db,
+	if err := banco.Executa(db,
 		`CREATE TABLE IF NOT EXISTS partidas (
 			game_id          INTEGER PRIMARY KEY,
 			plataforma       TEXT NOT NULL DEFAULT '',
@@ -104,7 +104,12 @@ func Migra(db *banco.DB) error {
 			bruto      TEXT NOT NULL,
 			gravada_em TEXT NOT NULL
 		)`,
-	)
+	); err != nil {
+		return err
+	}
+	// estado_replay_lcu entrou depois da primeira versão da tabela: banco antigo
+	// não a tem e o CREATE IF NOT EXISTS não acrescenta coluna.
+	return banco.AdicionaColuna(db, "partidas", "estado_replay_lcu", "TEXT NOT NULL DEFAULT ''")
 }
 
 // Deps é o que o pacote precisa do mundo de fora.

@@ -270,3 +270,37 @@ func TestTraduz(t *testing.T) {
 		t.Errorf("progresso sem teto: %v", r.Progresso)
 	}
 }
+
+// Banco antigo, de antes de estado_replay_lcu: a migração acrescenta a coluna
+// sem perder a linha que já existia.
+func TestMigraAcrescentaEstadoReplayLCU(t *testing.T) {
+	db, err := banco.AbreMemoria(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE partidas (
+		game_id INTEGER PRIMARY KEY, plataforma TEXT NOT NULL DEFAULT '', fila INTEGER NOT NULL DEFAULT 0,
+		modo TEXT NOT NULL DEFAULT '', tipo TEXT NOT NULL DEFAULT '', mapa INTEGER NOT NULL DEFAULT 0,
+		versao TEXT NOT NULL DEFAULT '', duracao_s INTEGER NOT NULL DEFAULT 0, criada_em TEXT NOT NULL DEFAULT '',
+		criada_em_ms INTEGER NOT NULL DEFAULT 0, time_vencedor INTEGER NOT NULL DEFAULT 0, completa INTEGER NOT NULL DEFAULT 0,
+		estado_replay TEXT NOT NULL DEFAULT '', progresso_replay REAL NOT NULL DEFAULT 0, estado_replay_em TEXT NOT NULL DEFAULT '',
+		detalhe_replay TEXT NOT NULL DEFAULT '', bruto TEXT NOT NULL, gravada_em TEXT NOT NULL, atualizada_em TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO partidas (game_id, bruto, gravada_em, atualizada_em) VALUES (7, '{}', 'x', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // duas vezes: a migração é idempotente
+		if err := Migra(db); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var v string
+	if err := db.QueryRow(`SELECT estado_replay_lcu FROM partidas WHERE game_id = 7`).Scan(&v); err != nil {
+		t.Fatalf("coluna não acrescentada: %v", err)
+	}
+	if v != "" {
+		t.Fatalf("valor padrão = %q", v)
+	}
+}
