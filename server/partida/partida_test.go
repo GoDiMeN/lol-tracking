@@ -262,4 +262,11 @@ func TestTraduz(t *testing.T) {
 			t.Errorf("%q → %q, esperava %q", lcuEstado, got, app)
 		}
 	}
+	// O lixo que o LCU de verdade mandou em downloadProgress fora do download.
+	if r := traduz(lcu.MetadataReplay{Estado: "download", Progresso: 2426758726}); r.Progresso != 0 {
+		t.Errorf("progresso fora do download: %v", r.Progresso)
+	}
+	if r := traduz(lcu.MetadataReplay{Estado: "downloading", Progresso: 250}); r.Progresso != 100 {
+		t.Errorf("progresso sem teto: %v", r.Progresso)
+	}
 }

@@ -33,12 +33,15 @@ var (
 
 // traduz converte o estado do LCU para o do app.
 func traduz(m lcu.MetadataReplay) Replay {
-	r := Replay{EstadoLCU: m.Estado, Progresso: m.Progresso}
+	// downloadProgress só vale durante o download: no estado "download" o LCU
+	// 16.22 devolveu lixo (2426758726, medido em 2026-11-17).
+	r := Replay{EstadoLCU: m.Estado}
 	switch m.Estado {
 	case "download", "retryDownload":
 		r.Estado = Baixavel
 	case "downloading", "checking":
 		r.Estado = Baixando
+		r.Progresso = max(0, min(100, m.Progresso))
 	case "watch":
 		r.Estado, r.Progresso = Baixado, 100
 	case "incompatible":

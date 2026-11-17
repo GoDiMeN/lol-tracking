@@ -36,6 +36,8 @@ func Migra(db *banco.DB) error {
 			estado_replay    TEXT NOT NULL DEFAULT '',
 			progresso_replay REAL NOT NULL DEFAULT 0,
 			estado_replay_em TEXT NOT NULL DEFAULT '',
+			estado_replay_lcu TEXT NOT NULL DEFAULT '',
+			detalhe_replay   TEXT NOT NULL DEFAULT '',
 			bruto            TEXT NOT NULL,
 			gravada_em       TEXT NOT NULL,
 			atualizada_em    TEXT NOT NULL
@@ -475,8 +477,9 @@ func Grava(ctx context.Context, d Deps, bruto []byte, completa bool) error {
 // GravaReplay guarda o último estado do replay visto (cache para quando o
 // cliente do LoL estiver fechado).
 func GravaReplay(db *banco.DB, gameID int64, r Replay) error {
-	_, err := db.Exec(`UPDATE partidas SET estado_replay = ?, progresso_replay = ?, estado_replay_em = ? WHERE game_id = ?`,
-		r.Estado, r.Progresso, banco.Agora(), gameID)
+	_, err := db.Exec(`UPDATE partidas SET estado_replay = ?, progresso_replay = ?, estado_replay_lcu = ?, detalhe_replay = ?,
+			estado_replay_em = ? WHERE game_id = ?`,
+		r.Estado, r.Progresso, r.EstadoLCU, r.Detalhe, banco.Agora(), gameID)
 	return err
 }
 
@@ -521,9 +524,10 @@ func Le(db *banco.DB, gameID int64) (Partida, error) {
 	var p Partida
 	var completa int
 	err := db.QueryRow(`SELECT game_id, plataforma, fila, modo, tipo, mapa, versao, duracao_s, criada_em, criada_em_ms,
-			time_vencedor, completa, estado_replay, progresso_replay FROM partidas WHERE game_id = ?`, gameID).
+			time_vencedor, completa, estado_replay, progresso_replay, estado_replay_lcu, detalhe_replay
+			FROM partidas WHERE game_id = ?`, gameID).
 		Scan(&p.GameID, &p.Plataforma, &p.Fila, &p.Modo, &p.Tipo, &p.Mapa, &p.Versao, &p.DuracaoS, &p.CriadaEm,
-			&p.CriadaEmMs, &p.TimeVencedor, &completa, &p.Replay.Estado, &p.Replay.Progresso)
+			&p.CriadaEmMs, &p.TimeVencedor, &completa, &p.Replay.Estado, &p.Replay.Progresso, &p.Replay.EstadoLCU, &p.Replay.Detalhe)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNaoEncontrada
 	}
