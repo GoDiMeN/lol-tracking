@@ -110,12 +110,21 @@ func (c *controller) cria(w http.ResponseWriter, r *http.Request) {
 	var corpo struct {
 		Jogadores  []int   `json:"jogadores"`
 		Velocidade float64 `json:"velocidade"`
+		// Trecho da partida (ms de jogo): de_ms = onde começa, ate_ms = onde
+		// termina (0 = fim da partida). Para rastrear só o começo (fase de rotas).
+		DeMs  int64 `json:"de_ms"`
+		AteMs int64 `json:"ate_ms"`
 	}
 	if err := web.LeJSON(w, r, &corpo); err != nil {
 		web.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ras, exID, err := c.f.Cria(r.Context(), id, Pedido{Jogadores: corpo.Jogadores, Velocidade: corpo.Velocidade})
+	if corpo.DeMs < 0 || corpo.AteMs < 0 || (corpo.AteMs > 0 && corpo.AteMs <= corpo.DeMs) {
+		web.WriteErr(w, http.StatusBadRequest, "de_ms e ate_ms precisam ser ≥ 0, com ate_ms > de_ms (ate_ms 0 = até o fim)")
+		return
+	}
+	ras, exID, err := c.f.Cria(r.Context(), id, Pedido{Jogadores: corpo.Jogadores, Velocidade: corpo.Velocidade,
+		TInicioMs: corpo.DeMs, TFimMs: corpo.AteMs})
 	if err != nil {
 		c.erro(w, err, "criar o rastreio")
 		return

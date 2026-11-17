@@ -497,3 +497,36 @@ func itoa(n int64) string {
 	b, _ := json.Marshal(n)
 	return string(b)
 }
+
+// O trecho (de_ms/ate_ms) pedido pela rota: o passe termina em ate_ms, não no
+// fim da partida (o jogo falso dura 300 s).
+func TestRotaRastreioComTrecho(t *testing.T) {
+	a := prepara(t, nil)
+	code, m := a.pede(t, "POST", "/api/partidas/"+itoa(partidaTeste)+"/rastreio",
+		`{"jogadores":[2],"velocidade":4,"de_ms":30000,"ate_ms":90000}`)
+	if code != 202 {
+		t.Fatal(code, m)
+	}
+	r := m["rastreio"].(map[string]any)
+	if r["t_inicio_ms"].(float64) != 30000 || r["t_fim_ms"].(float64) != 90000 {
+		t.Fatal(r)
+	}
+	a.fila.Espera()
+	ps := a.passes(t, int64(r["id"].(float64)))
+	if len(ps) != 1 || ps[0].Estado != Concluido {
+		t.Fatal(ps)
+	}
+	var ini, fim int64
+	if err := a.db.QueryRow(`SELECT t_ini_ms, t_fim_ms FROM passes_compactos WHERE passe_id = ? AND conteudo = ?`,
+		ps[0].ID, ConteudoAmostras).Scan(&ini, &fim); err != nil {
+		t.Fatal(err)
+	}
+	if ini < 29000 || ini > 31000 || fim < 89000 || fim > 92000 {
+		t.Fatalf("trecho gravado %d–%d, pedido 30000–90000", ini, fim)
+	}
+	for _, corpo := range []string{`{"de_ms":-1}`, `{"de_ms":60000,"ate_ms":60000}`, `{"ate_ms":-5}`} {
+		if code, m := a.pede(t, "POST", "/api/partidas/"+itoa(partidaTeste)+"/rastreio", corpo); code != 400 {
+			t.Fatal(corpo, code, m)
+		}
+	}
+}

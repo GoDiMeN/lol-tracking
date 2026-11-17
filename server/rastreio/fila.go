@@ -59,7 +59,8 @@ func NovaFila(d Deps) *Fila {
 	return f
 }
 
-// Pedido é o corpo de criar rastreio. TInicioMs/TFimMs são internos (sonda).
+// Pedido é o corpo de criar rastreio. TInicioMs/TFimMs: o trecho da partida
+// (de_ms/ate_ms na rota; TFimMs 0 = até o fim).
 type Pedido struct {
 	Jogadores  []int
 	Velocidade float64
