@@ -87,6 +87,7 @@ func main() {
 			log.Fatalf("gabaritos da leitura da tela: %v", err)
 		}
 		cfgRastreio.Leitor = leitor
+		cfgRastreio.Riot = chaveRiot
 	}
 	if cfg.GuardaCapturas {
 		cfgRastreio.PastaCapturas = filepath.Join(cfg.Dados, "capturas")

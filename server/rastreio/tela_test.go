@@ -3,6 +3,8 @@ package rastreio
 import (
 	"context"
 	"image"
+	"math"
+	"strings"
 	"testing"
 
 	"loltracking/server/replay"
@@ -73,5 +75,42 @@ func TestColunasDaTelaNoBlocoENasRotas(t *testing.T) {
 		if it.Dados["habilidade"] != "q" {
 			t.Fatalf("uso inesperado %+v", it)
 		}
+	}
+}
+
+type riotFalsa struct{ pedidos int }
+
+func (r *riotFalsa) LinhaDoTempo(ctx context.Context, gameID int64) ([]byte, error) {
+	r.pedidos++
+	// Minuto 1: bate com o leitorCiclico (vida 800/1000, AD 99); minuto 0 sem
+	// amostra perto; vida_max divergente no quadro de outro jogador.
+	return []byte(`{"info":{"frames":[
+		{"timestamp":0,"participantFrames":{"3":{"level":1,"championStats":{"health":800,"healthMax":1000}}}},
+		{"timestamp":30010,"participantFrames":{"3":{"level":LVL,"championStats":{"health":790,"healthMax":1000,"power":300,"powerMax":500,"attackDamage":99,"attackSpeed":80,"armor":10}}}}
+	]}}`), nil
+}
+
+func TestConferenciaComRiot(t *testing.T) {
+	var as []Amostra
+	f := func(v float64) *float64 { return &v }
+	for i := 0; i < 200; i++ {
+		as = append(as, Amostra{TMs: int64(i) * 250, Nivel: 2, Vida: f(800), VidaMax: f(1000), Mana: f(300), ManaMax: f(500),
+			Atr: Atributos{AD: f(99), VelAtaque: f(0.79)}})
+	}
+	bruto, _ := (&riotFalsa{}).LinhaDoTempo(context.Background(), 1)
+	bruto = []byte(strings.Replace(string(bruto), "LVL", "2", 1))
+	c, err := ConfereComRiot(bruto, 3, as)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Minuto 30 s: vida a 10 de diferença (dentro de 3%), o resto exato; a Riot dá a
+	// velocidade de ataque em centésimos inteiros (80 × 0,79 conta como igual: ±0,01).
+	if c.Minutos != 1 || c.N != 6 || c.Iguais != 6 || math.Abs(c.MaiorDif-10) > 1e-9 || c.Campos["vida"].MaiorDif != 10 {
+		t.Fatalf("%+v %+v", c, c.Campos["atr_vel_ataque"])
+	}
+	// Nível diferente no quadro: pula (subida de nível no meio).
+	bruto2 := []byte(strings.Replace(string(bruto), `"level":2`, `"level":3`, 1))
+	if c, _ := ConfereComRiot(bruto2, 3, as); c.Minutos != 0 {
+		t.Fatalf("quadro com nível diferente deveria ser pulado: %+v", c)
 	}
 }

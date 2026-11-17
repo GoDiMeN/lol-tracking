@@ -425,6 +425,12 @@ func (f *Fila) corre(ctx context.Context, c *corrida) {
 			falha("fechar o passe: " + err.Error())
 			return
 		}
+		if conf, err := conferePasse(f.d.DB, f.d.Config.Riot, p); err != nil {
+			logConferencia(p, err)
+		} else if conf != nil {
+			ex.Emite("conferencia_riot", map[string]any{"passe_id": p.ID, "n": conf.N, "iguais": conf.Iguais,
+				"maior_dif": conf.MaiorDif, "campos": conf.Campos})
+		}
 		ex.Emite("passe_fim", map[string]any{"passe_id": p.ID, "participante_id": p.ParticipanteID, "estatisticas": st,
 			"amostras": res.Amostras, "taxa": res.Taxa, "bytes": res.Bytes, "bytes_time": res.BytesTime, "cadeia": res.Cadeia,
 			"calibracao": map[string]any{"modo": res.Calibracao.Modo, "pontos": res.Calibracao.Pontos,

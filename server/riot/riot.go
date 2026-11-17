@@ -36,6 +36,10 @@ type Cliente struct {
 	base      string
 	http      *http.Client
 
+	baseRegional string
+	ritmo        sync.Mutex
+	ultimoPedido time.Time
+
 	mu     sync.Mutex
 	quando time.Time
 	ultimo Estado

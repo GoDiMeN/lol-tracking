@@ -31,6 +31,9 @@ type Config struct {
 	IntervaloEstadoMs int64
 	// Leitor da tela (tarefa 3). Nil = LeitorNulo.
 	Leitor LeitorDeTela
+	// Riot: linha do tempo da match-v5 para conferir a leitura da tela depois de
+	// cada passe (opcional; nil ou sem chave = não confere).
+	Riot FonteRiot
 	// PastaCapturas: se não vazia, guarda 1 captura PNG (+ JSON com o que a API
 	// dizia) a cada CapturaACadaS segundos de jogo — material de teste da tarefa 3.
 	PastaCapturas string

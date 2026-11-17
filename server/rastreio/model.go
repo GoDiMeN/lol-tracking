@@ -23,7 +23,7 @@ import (
 
 // Migra cria as tabelas do pacote. Ver docs/arquitetura/dados.md.
 func Migra(db *banco.DB) error {
-	return banco.Executa(db,
+	if err := banco.Executa(db,
 		`CREATE TABLE IF NOT EXISTS rastreios (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
 			game_id       INTEGER NOT NULL,
@@ -145,7 +145,21 @@ func Migra(db *banco.DB) error {
 			UNIQUE (game_id, fonte, tipo_original, t_ms, quem_nome, em_quem_nome)
 		)`,
 		`CREATE INDEX IF NOT EXISTS eventos_partida ON eventos (game_id, t_ms)`,
-	)
+	); err != nil {
+		return err
+	}
+	// Tarefa 3: conferência da leitura da tela com a API da Riot (opcional).
+	for _, c := range [][2]string{
+		{"conferencia_riot", "TEXT NOT NULL DEFAULT ''"},
+		{"conferencia_n", "INTEGER"},
+		{"conferencia_iguais", "INTEGER"},
+		{"conferencia_maior_dif", "REAL"},
+	} {
+		if err := banco.AdicionaColuna(db, "passes", c[0], c[1]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Estados de rastreio e de passe.
@@ -207,6 +221,11 @@ type Passe struct {
 	Erro                  string   `json:"erro"`
 	Compactado            bool     `json:"compactado"`
 	Bytes                 int      `json:"bytes"`
+	// Conferência da tela com a Riot (nulo = não conferido: sem chave).
+	ConferenciaN        *int64          `json:"conferencia_n"`
+	ConferenciaIguais   *int64          `json:"conferencia_iguais"`
+	ConferenciaMaiorDif *float64        `json:"conferencia_maior_dif"`
+	Conferencia         json.RawMessage `json:"conferencia_riot"`
 }
 
 // ErrNaoEncontrado: rastreio ou passe que não existe.
@@ -317,6 +336,7 @@ func LeRastreio(db *banco.DB, id int64) (Rastreio, error) {
 const colunasPasse = `p.id, p.rastreio_id, p.game_id, p.participante_id, p.ordem, p.estado, p.t_atual_ms, p.duracao_ms, p.amostras,
 	p.tentativas_trava, p.retravas, p.amostras_sem_trava, p.taxa, p.calibracao, p.calibracao_pontos,
 	p.erro_calibracao_mediano, p.erro_calibracao_maximo, p.iniciado_em, p.terminado_em, p.erro,
+	p.conferencia_n, p.conferencia_iguais, p.conferencia_maior_dif, p.conferencia_riot,
 	COALESCE((SELECT SUM(bytes) FROM passes_compactos c WHERE c.passe_id = p.id), -1)`
 
 func lePasses(db *banco.DB, filtro string, args ...any) ([]Passe, error) {
@@ -328,13 +348,24 @@ func lePasses(db *banco.DB, filtro string, args ...any) ([]Passe, error) {
 	var lista []Passe
 	for linhas.Next() {
 		var p Passe
-		var taxa, med, mx sql.NullFloat64
+		var taxa, med, mx, cmd sql.NullFloat64
+		var cn, ci sql.NullInt64
+		var conf string
 		if err := linhas.Scan(&p.ID, &p.RastreioID, &p.GameID, &p.ParticipanteID, &p.Ordem, &p.Estado, &p.TAtualMs,
 			&p.DuracaoMs, &p.Amostras, &p.TentativasTrava, &p.Retravas, &p.AmostrasSemTrava, &taxa, &p.Calibracao,
-			&p.CalibracaoPontos, &med, &mx, &p.IniciadoEm, &p.TerminadoEm, &p.Erro, &p.Bytes); err != nil {
+			&p.CalibracaoPontos, &med, &mx, &p.IniciadoEm, &p.TerminadoEm, &p.Erro, &cn, &ci, &cmd, &conf, &p.Bytes); err != nil {
 			return nil, err
 		}
 		p.Taxa, p.ErroCalibracaoMediano, p.ErroCalibracaoMaximo = nf(taxa), nf(med), nf(mx)
+		p.ConferenciaMaiorDif = nf(cmd)
+		if cn.Valid {
+			p.ConferenciaN, p.ConferenciaIguais = &cn.Int64, &ci.Int64
+		}
+		if conf != "" {
+			p.Conferencia = json.RawMessage(conf)
+		} else {
+			p.Conferencia = json.RawMessage("null")
+		}
 		p.Compactado = p.Bytes >= 0
 		if p.Bytes < 0 {
 			p.Bytes = 0
