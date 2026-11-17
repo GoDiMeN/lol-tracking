@@ -100,6 +100,26 @@ func (e *ErroLCU) Error() string {
 	return fmt.Sprintf("o cliente do LoL respondeu %d: %s", e.Status, e.Mensagem)
 }
 
+// StatusHTTP traduz um erro do LCU para o status e a frase que o controller
+// devolve (docs/arquitetura/contrato-http.md). ok=false: não é erro do LCU, e
+// quem chamou decide.
+//   - 503: cliente do LoL fechado (a pessoa resolve abrindo o cliente);
+//   - 502: o cliente respondeu erro (o LCU mudou ou recusou o pedido);
+//   - 500: rota proibida, que é bug nosso e nunca deveria acontecer.
+func StatusHTTP(err error) (status int, msg string, ok bool) {
+	var proibida *ErroRotaProibida
+	var lcuErr *ErroLCU
+	switch {
+	case errors.Is(err, ErrClienteFechado):
+		return 503, ErrClienteFechado.Error(), true
+	case errors.As(err, &proibida):
+		return 500, "pedido ao cliente do LoL recusado pela lista de rotas permitidas", true
+	case errors.As(err, &lcuErr):
+		return 502, lcuErr.Error(), true
+	}
+	return 0, "", false
+}
+
 // TagDaRegiao é a tag que o Riot ID ganha por padrão em cada região, usada
 // quando a pessoa digita só o nome. Região desconhecida: a própria região.
 func TagDaRegiao(regiao string) string {
