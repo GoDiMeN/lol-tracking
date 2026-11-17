@@ -273,3 +273,23 @@ Consequências para o código:
   "Clone" sobre a cabeça; nessa captura o texto não aparece (as barras estão sobrepostas).
 - Ainda a testar (Neeko, Wukong, e mais ocorrências do Shaco): a trava da câmera fica no campeão verdadeiro quando o clone nasce?
   o `selectionName` e o painel continuam sendo do jogador? a Neeko disfarçada muda o retrato dos quadros laterais?
+
+## 7. Painel coberto, cursor na borda, recursos diferentes e passiva (2026-11-17)
+
+- **Janela por cima do jogo.** A captura era da tela (BitBlt): com outra janela na frente do jogo, o leitor lia a outra janela.
+  Foi o que zerou vida/recargas do passe do Garen na partida 3304217746 (183 leituras em 1541 amostras vivas) e 100 s do passe
+  de teste da Vex. Agora a captura pede a imagem à própria janela: `PrintWindow(hwnd, dc, PW_CLIENTONLY|PW_RENDERFULLCONTENT)`.
+  Medido com a tela inteira coberta: imagem viva do replay, ~20 ms a 2560×1440 (igual ao BitBlt), sem derrubar a seleção, o replay
+  segue andando. Sem a flag 2 a imagem vem preta. Passe de teste com uma janela sobre o painel: 119 de 120 amostras vivas lidas,
+  taxa 3,97/s. Se o PrintWindow falhar ou vier preto (janela minimizada), cai no BitBlt da tela.
+- **Aviso de painel não lido.** Jogador vivo e seguido sem vida lida por 30 s de jogo → evento `aviso_tela` (uma vez por passe).
+- **Cursor na borda.** Com o jogo na frente e o cursor numa borda da tela, o jogo arrasta a câmera e a trava cai sem parar
+  (32 tentativas de trava e 7 retravas em 140 s de jogo; taxa caiu para 1,07/s). `Foco()` agora põe o cursor no meio da janela
+  do replay quando ele está a menos de 15% de uma borda. Só move; nunca clica. Com isso: 1 tentativa, 0 retravas.
+- **Campeão sem recurso (Garen)**: o painel tem o mesmo formato, com a barra de recurso vazia; mana sai nula e o resto é lido.
+- **Energia e fúria** (Akali, Lee Sin, Zed, Renekton; Kayn com mana): 15 capturas conferidas a olho, tudo certo. Conferência com
+  a Riot num passe a 4×: Akali 81/81, Renekton 95/97 (as 2 diferenças são a fúria, até 20 pontos), Vex 143/144.
+- **Nível 9**: faltava o gabarito do dígito; gerado com capturas do Garen e conferido em Akali e Lee Sin.
+- **Passiva**: o ícone da passiva (x 20–63, primeiro da fileira) mostra a recarga do mesmo jeito que as habilidades. Lido como
+  `cd_p`. Vex: 25/22/19 s conforme o nível, 31 entradas em recarga em 19 min. Garen também tem (regeneração interrompida por dano).
+  Na cadeia vira `passiva_em_recarga`; no retrato do abate, `passiva_disponivel`.

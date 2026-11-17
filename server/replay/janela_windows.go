@@ -44,6 +44,9 @@ var (
 	pClientToScreen                = user32.NewProc("ClientToScreen")
 	pGetDC                         = user32.NewProc("GetDC")
 	pReleaseDC                     = user32.NewProc("ReleaseDC")
+	pPrintWindow                   = user32.NewProc("PrintWindow")
+	pGetCursorPos                  = user32.NewProc("GetCursorPos")
+	pSetCursorPos                  = user32.NewProc("SetCursorPos")
 
 	pCreateCompatibleDC     = gdi32.NewProc("CreateCompatibleDC")
 	pCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
@@ -150,6 +153,7 @@ func (j *JanelaWindows) Foco() error {
 		return err
 	}
 	if primeiroPlano() == h {
+		centralizaCursor()
 		return nil
 	}
 	// O Windows só deixa trocar o primeiro plano de quem já está nele; ligar a
@@ -174,11 +178,37 @@ func (j *JanelaWindows) Foco() error {
 	pSetForegroundWindow.Call(h)
 	for i := 0; i < 20; i++ {
 		if primeiroPlano() == h {
+			centralizaCursor()
 			return nil
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 	return errors.New("não foi possível pôr a janela do jogo em primeiro plano; a tecla não foi enviada")
+}
+
+// margemCursor: fração da área do jogo, a partir de cada borda, em que o
+// cursor não pode ficar quando o jogo está na frente.
+const margemCursor = 0.15
+
+// centralizaCursor tira o cursor de perto das bordas da janela do jogo, pondo-o
+// no meio. Com o cursor numa borda o jogo arrasta a câmera sozinho e a trava no
+// jogador cai (visto em 2026-11-17: 32 tentativas de trava e 7 retravas em 140 s
+// de jogo). Só move o cursor: nenhum clique, nenhum botão.
+func centralizaCursor() {
+	area, err := areaCliente()
+	if err != nil || area.Empty() {
+		return
+	}
+	p := struct{ x, y int32 }{}
+	if ok, _, _ := pGetCursorPos.Call(uintptr(unsafe.Pointer(&p))); ok == 0 {
+		return
+	}
+	mx, my := int(float64(area.Dx())*margemCursor), int(float64(area.Dy())*margemCursor)
+	dentro := image.Rect(area.Min.X+mx, area.Min.Y+my, area.Max.X-mx, area.Max.Y-my)
+	if image.Pt(int(p.x), int(p.y)).In(dentro) {
+		return
+	}
+	pSetCursorPos.Call(uintptr(area.Min.X+area.Dx()/2), uintptr(area.Min.Y+area.Dy()/2))
 }
 
 func (j *JanelaWindows) Encerra() error {
@@ -287,8 +317,15 @@ type bitmapInfoHeader struct {
 	coresUsadas, coresImport uint32
 }
 
-// Captura copia da tela (GDI BitBlt) a área cliente da janela do jogo, ou a
-// região dada (coordenadas relativas à área cliente).
+// Captura copia a área cliente da janela do jogo, ou a região dada
+// (coordenadas relativas à área cliente).
+//
+// A imagem vem da própria janela (PrintWindow com PW_RENDERFULLCONTENT), não
+// da tela: assim outra janela por cima do jogo não entra na captura. Medido em
+// 2026-11-17 com a tela inteira coberta: imagem viva do replay em ~20 ms a
+// 2560×1440. Na partida 3304217746 um passe inteiro tinha lido o terminal que
+// estava na frente. Só se o PrintWindow falhar ou devolver tudo preto (janela
+// minimizada, driver que não entrega) cai na cópia da tela, como era antes.
 func (j *JanelaWindows) Captura(regiao image.Rectangle) (*image.RGBA, error) {
 	area, err := areaCliente()
 	if err != nil {
@@ -315,6 +352,12 @@ func (j *JanelaWindows) Captura(regiao image.Rectangle) (*image.RGBA, error) {
 		return nil, errors.New("CreateCompatibleDC falhou")
 	}
 	defer pDeleteDC.Call(mem)
+
+	// 1ª tentativa: a janela inteira (área cliente), recortada depois.
+	if img, ok := j.capturaJanela(tela, mem, area, alvo); ok {
+		return img, nil
+	}
+
 	bmp, _, _ := pCreateCompatibleBitmap.Call(tela, uintptr(w), uintptr(h))
 	if bmp == 0 {
 		return nil, errors.New("CreateCompatibleBitmap falhou")
@@ -327,6 +370,66 @@ func (j *JanelaWindows) Captura(regiao image.Rectangle) (*image.RGBA, error) {
 	if ok == 0 {
 		return nil, errors.New("BitBlt falhou")
 	}
+	return j.leBitmap(mem, bmp, w, h)
+}
+
+// capturaJanela pede a imagem à janela do jogo. ok = false se não deu (aí o
+// chamador copia da tela).
+func (j *JanelaWindows) capturaJanela(tela, mem uintptr, area, alvo image.Rectangle) (*image.RGBA, bool) {
+	hj, err := janela()
+	if err != nil {
+		return nil, false
+	}
+	if ic, _, _ := pIsIconic.Call(hj); ic != 0 {
+		return nil, false
+	}
+	wa, ha := area.Dx(), area.Dy()
+	bmp, _, _ := pCreateCompatibleBitmap.Call(tela, uintptr(wa), uintptr(ha))
+	if bmp == 0 {
+		return nil, false
+	}
+	defer pDeleteObject.Call(bmp)
+	antigo, _, _ := pSelectObject.Call(mem, bmp)
+	// PW_CLIENTONLY (1) | PW_RENDERFULLCONTENT (2): sem o 2 a janela do jogo
+	// (DirectX) vem preta.
+	ok, _, _ := pPrintWindow.Call(hj, mem, 3)
+	pSelectObject.Call(mem, antigo)
+	if ok == 0 {
+		return nil, false
+	}
+	img, err := j.leBitmap(mem, bmp, wa, ha)
+	if err != nil || tudoPreto(img) {
+		return nil, false
+	}
+	if alvo == area {
+		return img, true
+	}
+	// Recorte: copia para uma imagem própria (o buffer inteiro é reaproveitado).
+	rec := image.NewRGBA(image.Rect(0, 0, alvo.Dx(), alvo.Dy()))
+	dx, dy := alvo.Min.X-area.Min.X, alvo.Min.Y-area.Min.Y
+	for y := 0; y < rec.Rect.Dy(); y++ {
+		o := img.PixOffset(dx, dy+y)
+		copy(rec.Pix[y*rec.Stride:(y+1)*rec.Stride], img.Pix[o:o+rec.Stride])
+	}
+	return rec, true
+}
+
+// tudoPreto olha uma grade de pontos: captura que o Windows não conseguiu
+// compor vem com todos os pixels zerados.
+func tudoPreto(img *image.RGBA) bool {
+	for y := img.Rect.Min.Y; y < img.Rect.Max.Y; y += 16 {
+		for x := img.Rect.Min.X; x < img.Rect.Max.X; x += 16 {
+			o := img.PixOffset(x, y)
+			if img.Pix[o] != 0 || img.Pix[o+1] != 0 || img.Pix[o+2] != 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// leBitmap copia o bitmap para j.img (RGBA), reaproveitando o buffer.
+func (j *JanelaWindows) leBitmap(mem, bmp uintptr, w, h int) (*image.RGBA, error) {
 	if len(j.buf) != w*h*4 {
 		j.buf = make([]byte, w*h*4)
 		j.img = image.NewRGBA(image.Rect(0, 0, w, h))
