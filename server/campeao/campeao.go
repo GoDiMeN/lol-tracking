@@ -52,6 +52,7 @@ type DataDragon struct {
 	// carregou: já tentou ler o arquivo de cache nesta execução.
 	carregou bool
 	nomes    map[int]string
+	chaves   map[int]string // id → chave do Data Dragon ("MonkeyKing"), para a imagem
 	versao   string
 	// ultimaTentativa: quando foi a última ida à rede. Um id desconhecido (campeão
 	// novo, cache vazio) dispara uma atualização, mas no máximo uma a cada 10 min,
@@ -71,6 +72,7 @@ func NovoDataDragon(dirDados string) *DataDragon {
 type cache struct {
 	Versao string            `json:"versao"`
 	Nomes  map[string]string `json:"nomes"`
+	Chaves map[string]string `json:"chaves,omitempty"`
 }
 
 func (d *DataDragon) Nome(ctx context.Context, id int) string {
@@ -104,10 +106,15 @@ func (d *DataDragon) leCache() {
 	if json.Unmarshal(b, &c) != nil {
 		return
 	}
-	d.nomes = map[int]string{}
+	d.nomes, d.chaves = map[int]string{}, map[int]string{}
 	for k, v := range c.Nomes {
 		if id, err := strconv.Atoi(k); err == nil {
 			d.nomes[id] = v
+		}
+	}
+	for k, v := range c.Chaves {
+		if id, err := strconv.Atoi(k); err == nil {
+			d.chaves[id] = v
 		}
 	}
 	d.versao = c.Versao
@@ -142,6 +149,7 @@ func (d *DataDragon) atualiza(ctx context.Context) error {
 	}
 	var r struct {
 		Data map[string]struct {
+			ID   string `json:"id"`
 			Key  string `json:"key"`
 			Name string `json:"name"`
 		} `json:"data"`
@@ -149,18 +157,26 @@ func (d *DataDragon) atualiza(ctx context.Context) error {
 	if err := d.pegaJSON(ctx, d.base+"/cdn/"+versoes[0]+"/data/pt_BR/champion.json", &r); err != nil {
 		return err
 	}
-	nomes := map[int]string{}
-	c := cache{Versao: versoes[0], Nomes: map[string]string{}}
-	for _, ch := range r.Data {
+	nomes, chaves := map[int]string{}, map[int]string{}
+	c := cache{Versao: versoes[0], Nomes: map[string]string{}, Chaves: map[string]string{}}
+	for k, ch := range r.Data {
 		if id, err := strconv.Atoi(ch.Key); err == nil && ch.Name != "" {
 			nomes[id] = ch.Name
 			c.Nomes[ch.Key] = ch.Name
+			// A chave da imagem é o "id" do campeão no Data Dragon (o nome do
+			// objeto em data): "MonkeyKing" para o Wukong.
+			chave := ch.ID
+			if chave == "" {
+				chave = k
+			}
+			chaves[id] = chave
+			c.Chaves[ch.Key] = chave
 		}
 	}
 	if len(nomes) == 0 {
 		return fmt.Errorf("lista de campeões vazia")
 	}
-	d.nomes, d.versao = nomes, versoes[0]
+	d.nomes, d.chaves, d.versao = nomes, chaves, versoes[0]
 	if b, err := json.Marshal(c); err == nil {
 		os.MkdirAll(filepath.Dir(d.arquivo), 0o755)
 		if err := os.WriteFile(d.arquivo, b, 0o644); err != nil {

@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"loltracking/server/analise"
 	"loltracking/server/banco"
 	"loltracking/server/campeao"
 	"loltracking/server/estado"
+	"loltracking/server/estudo"
 	"loltracking/server/jogador"
 	"loltracking/server/lcu"
 	"loltracking/server/partida"
@@ -44,12 +46,15 @@ func main() {
 	// Tudo o que fala com o mundo de fora, escolhido uma vez.
 	var cliLCU lcu.Cliente
 	var nomes campeao.Nomes
+	// dd nil no modo teste: as imagens respondem 404 e nada sai para a rede.
+	var dd *campeao.DataDragon
 	if cfg.ModoTeste {
 		cliLCU = lcu.NovoFalso()
 		nomes = campeao.Fixo(lcu.CampeoesFalsos)
 	} else {
 		cliLCU = lcu.NovoReal(cfg.Lockfile)
-		nomes = campeao.NovoDataDragon(cfg.Dados)
+		dd = campeao.NovoDataDragon(cfg.Dados)
+		nomes = dd
 	}
 	chaveRiot := riot.Novo(cfg.TokenRiot, cfg.ModoTeste)
 
@@ -94,7 +99,7 @@ func main() {
 	}
 
 	// Ordem de migração = ordem de dependência lógica (não há FOREIGN KEY entre
-	// pacotes). Os próximos (analise, estudo) entram depois de rastreio.
+	// pacotes).
 	migracoes := []struct {
 		nome  string
 		migra func(*banco.DB) error
@@ -102,6 +107,8 @@ func main() {
 		{"jogador", jogador.Migra},
 		{"partida", partida.Migra},
 		{"rastreio", rastreio.Migra},
+		{"analise", analise.Migra},
+		{"estudo", estudo.Migra},
 	}
 	for _, m := range migracoes {
 		if err := m.migra(db); err != nil {
@@ -123,7 +130,13 @@ func main() {
 	estado.Registra(mux, cliLCU, chaveRiot, cfg.ModoTeste)
 	jogador.Registra(mux, db, cliLCU)
 	partida.Registra(mux, partida.Deps{DB: db, LCU: cliLCU, Campeoes: nomes}, hub)
-	rastreio.Registra(mux, rastreio.NovaFila(rastreio.Deps{DB: db, LCU: cliLCU, Replay: depsReplay, Hub: hub, Config: cfgRastreio}))
+	// A análise refaz a partida quando um passe fecha (em segundo plano).
+	depsAnalise := analise.Deps{DB: db, Riot: chaveRiot}
+	rastreio.Registra(mux, rastreio.NovaFila(rastreio.Deps{DB: db, LCU: cliLCU, Replay: depsReplay, Hub: hub, Config: cfgRastreio,
+		AoFecharPasse: analise.RecalculaEmSegundoPlano(depsAnalise)}))
+	analise.Registra(mux, depsAnalise)
+	estudo.Registra(mux, depsAnalise)
+	campeao.RegistraImagens(mux, campeao.NovasImagens(dd, cfg.Dados))
 
 	if cfg.Renderer != "" {
 		if _, err := os.Stat(cfg.Renderer); errors.Is(err, os.ErrNotExist) {
