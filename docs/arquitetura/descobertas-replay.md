@@ -245,3 +245,31 @@ abates, 310 indicadores).
 
 Uma partida de 39 min, um passe por jogador a 2× = 19,5 min por jogador, **~3 h 15 min** os 10. A 8× = ~49 min.
 A velocidade é configuração (padrão 2×, como pedido); a leitura da tela a 8× precisa ser validada antes de virar opção.
+
+## 6. Clones, saltos e dano à distância (aviso do dono, 2026-11-17)
+
+Campeões com **clone ou disfarce** (LeBlanc, Shaco, Neeko, Wukong) e com **salto que volta** (W da LeBlanc) enganam qualquer
+leitura feita de fora. A regra do projeto: **a posição de um jogador só vale quando vem do passe dele** (câmera travada nele
+pela tecla do jogador); nunca deduzir posição pelo que aparece no minimapa ou na tela de outro jogador.
+
+O que foi conferido no dado real (LeBlanc, partida 3304594274, abate das 4:16):
+- O "matador a 1 226 da vítima" **não era erro**. A amostra a amostra mostra o W dela: avança ~500 em 0,5 s (249,7 → 250,0 s),
+  volta ~435 num único passo (250,7 s) e o W entra em recarga de 11 s. O abate sai 5,5 s depois, com ela já se afastando;
+  a API da Riot lista o dano dela na vítima: Q, W, E (corrente, dano atrasado), ataque básico e Incendiar.
+- Nesse trecho a vida dela caiu a 8 (o clone da passiva dispara abaixo de 40%) e a câmera **continuou contínua**, sem pulo para
+  o clone. Vale para a LeBlanc nesta partida; **Shaco, Neeko e Wukong não foram testados**.
+
+Consequências para o código:
+- Distância grande entre matador e vítima é normal (dano atrasado, habilidade de longo alcance, salto de volta, Incendiar):
+  não tratar como erro nem descartar; o retrato deve dizer de onde veio o dano quando a Riot informa.
+- Salto de posição de centenas de unidades entre duas amostras é legítimo para campeões com deslocamento; não suavizar nem
+  descartar como ruído no bloco compactado. No replay virtual, não interpolar em linha reta um salto maior que o que a
+  velocidade de movimento permite: mostrar como teleporte.
+- **Shaco testado (2026-11-17, partida 3304217746, participante 2, min 5–20 a 4×):** passe concluído sem retrava
+  (10 amostras sem trava em 3 566), calibração de 12 pontos com erro mediano 17 e máximo 47, conferência com a Riot 36 de 36.
+  O motor detectou 2 usos do R (7:05 e 9:36). Na captura de 9:39 (`docs/calibracao/clone/shaco_0939_clone.png`) aparecem os dois:
+  o verdadeiro com nome, nível e contorno de seleção, e o clone colado atrás com uma barra de vida menor, **sem nome e sem nível**;
+  a câmera e o painel ficaram no verdadeiro. É **uma** ocorrência observada. O dono informa que o clone também leva o texto
+  "Clone" sobre a cabeça; nessa captura o texto não aparece (as barras estão sobrepostas).
+- Ainda a testar (Neeko, Wukong, e mais ocorrências do Shaco): a trava da câmera fica no campeão verdadeiro quando o clone nasce?
+  o `selectionName` e o painel continuam sendo do jogador? a Neeko disfarçada muda o retrato dos quadros laterais?
