@@ -77,18 +77,22 @@ var (
 var xIcones = [6][2]int{{72, 115}, {124, 167}, {175, 218}, {227, 270}, {293, 336}, {340, 383}}
 
 const (
-	yIcone0, yIcone1         = 1225, 1268
-	yRecarga0, yRecarga1     = 1236, 1259
-	yNivelHab0, yNivelHab1   = 1257, 1281
-	margemSaturacaoIcone int = 5
+	yIcone0, yIcone1           = 1225, 1268
+	yRecarga0, yRecarga1       = 1236, 1259
+	yNivelHab0, yNivelHab1     = 1257, 1281
+	margemSaturacaoIcone   int = 5
 )
 
 func rIcone(i int) ret {
 	return ret{x0: xIcones[i][0] + margemSaturacaoIcone, y0: yIcone0 + margemSaturacaoIcone,
 		x1: xIcones[i][1] - margemSaturacaoIcone, y1: yIcone1 - margemSaturacaoIcone}
 }
-func rRecarga(i int) ret  { return ret{x0: xIcones[i][0], y0: yRecarga0, x1: xIcones[i][1], y1: yRecarga1} }
-func rNivelHab(i int) ret { return ret{x0: xIcones[i][0], y0: yNivelHab0, x1: xIcones[i][1], y1: yNivelHab1} }
+func rRecarga(i int) ret {
+	return ret{x0: xIcones[i][0], y0: yRecarga0, x1: xIcones[i][1], y1: yRecarga1}
+}
+func rNivelHab(i int) ret {
+	return ret{x0: xIcones[i][0], y0: yNivelHab0, x1: xIcones[i][1], y1: yNivelHab1}
+}
 
 // --- Quadros laterais (5 à esquerda, 5 à direita, 137 px entre eles) ---
 

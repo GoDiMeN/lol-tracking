@@ -21,6 +21,7 @@ import (
 	"loltracking/server/rastreio"
 	"loltracking/server/replay"
 	"loltracking/server/riot"
+	"loltracking/server/visao"
 	"loltracking/server/web"
 )
 
@@ -78,6 +79,15 @@ func main() {
 			Tela: janela, GameCfg: replay.GameCfgDe(cfg.Lockfile)}
 	}
 	cfgRastreio := rastreio.Config{CapturaACadaS: cfg.CapturaACadaS}
+	if !cfg.ModoTeste {
+		// Leitura da tela por gabarito (tarefa 3). No modo teste a tela é falsa:
+		// fica o LeitorNulo e as colunas da tela saem nulas.
+		leitor, err := visao.Novo()
+		if err != nil {
+			log.Fatalf("gabaritos da leitura da tela: %v", err)
+		}
+		cfgRastreio.Leitor = leitor
+	}
 	if cfg.GuardaCapturas {
 		cfgRastreio.PastaCapturas = filepath.Join(cfg.Dados, "capturas")
 	}

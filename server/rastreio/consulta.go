@@ -174,6 +174,9 @@ type JogadorNoQuadro struct {
 	VidaMax        *float64   `json:"vida_max"`
 	Mana           *float64   `json:"mana"`
 	ManaMax        *float64   `json:"mana_max"`
+	// Recargas e atributos lidos da tela (só do jogador seguido no passe).
+	CD  Recargas  `json:"cd"`
+	Atr Atributos `json:"atributos"`
 }
 
 // Quadro é o estado dos 10 num instante.
@@ -280,6 +283,7 @@ func posicaoDasAmostras(j *JogadorNoQuadro, as []Amostra, t int64) {
 	j.Origem, j.Morto, j.Respawn, j.Nivel, j.CS = perto.Origem, perto.Morto, perto.Respawn, perto.Nivel, perto.CS
 	j.Abates, j.Mortes, j.Assistencias = perto.Abates, perto.Mortes, perto.Assistencias
 	j.Vida, j.VidaMax, j.Mana, j.ManaMax = perto.Vida, perto.VidaMax, perto.Mana, perto.ManaMax
+	j.CD, j.Atr = perto.CD, perto.Atr
 	if a != nil && b != nil && temPos(*a) && temPos(*b) && !a.Morto && !b.Morto && b.TMs > a.TMs {
 		f := float64(t-a.TMs) / float64(b.TMs-a.TMs)
 		x, y := *a.X+(*b.X-*a.X)*f, *a.Y+(*b.Y-*a.Y)*f

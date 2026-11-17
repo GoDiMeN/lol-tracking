@@ -12,7 +12,9 @@ import (
 // (0x131313). Na barra de vida, o pedaço vermelho (dano recente) e o branco
 // (escudo) não contam como vida.
 
-func verde(p []uint8) bool { return p[1] >= 90 && int(p[1]) >= int(p[0])+50 && int(p[1]) >= int(p[2])+25 }
+func verde(p []uint8) bool {
+	return p[1] >= 90 && int(p[1]) >= int(p[0])+50 && int(p[1]) >= int(p[2])+25
+}
 
 // recurso: qualquer cor viva (mana azul, energia amarela, fúria vermelha...).
 func recurso(p []uint8) bool {

@@ -112,8 +112,10 @@ type leituraJogo struct {
 	js      []replay.Jogador
 	img     *image.RGBA
 	tela    Leitura
+	errTela error
 	dur     time.Duration
 	durCapt time.Duration
+	durTela time.Duration
 }
 
 // le faz uma leitura: playback, (captura em paralelo) render, playerlist,
@@ -151,9 +153,13 @@ func (m *motor) le(ctx context.Context) (leituraJogo, error) {
 	}
 	l.img, l.durCapt = c.img, c.dur
 	if l.img != nil {
+		c := time.Now()
 		if lt, err := m.cfg.Leitor.Le(l.img, m.s.Largura, m.s.Altura); err == nil {
 			l.tela = lt
+		} else {
+			l.errTela = err
 		}
+		l.durTela = time.Since(c)
 	}
 	l.dur = time.Since(ini)
 	return l, nil
@@ -169,6 +175,7 @@ type EstatPasse struct {
 	TaxaJogo       float64 `json:"taxa"`
 	MsLeitura      float64 `json:"ms_leitura_mediana"`
 	MsCaptura      float64 `json:"ms_captura_mediana"`
+	MsTela         float64 `json:"ms_tela_mediana"`
 	TIniMs, TFimMs int64
 }
 
@@ -258,7 +265,9 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 	ultimaFase := m.d.Relogio.Agora()
 	errosSeguidos := 0
 	ultimoTempo, paradoDesde := -1.0, time.Time{}
-	var durLeitura, durCaptura []time.Duration
+	var durLeitura, durCaptura, durTela []time.Duration
+	san := novoSaneador()
+	avisouTela := false
 	intervalo := time.Duration(float64(time.Second) / cfg.AmostrasPorSegundo / cfg.Velocidade)
 
 	for {
@@ -342,6 +351,17 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 		}
 		if j == nil {
 			return st, fmt.Errorf("o jogador %q sumiu do playerlist", a.nome)
+		}
+		if l.errTela != nil && !avisouTela {
+			// A tela não é a que o leitor conhece (resolução, escala do HUD): avisa
+			// uma vez por passe e segue com as colunas da tela nulas.
+			avisouTela = true
+			log.Printf("rastreio: passe %d: %v", p.ID, l.errTela)
+			m.ex.Emite("aviso_tela", map[string]any{"passe_id": p.ID, "erro": l.errTela.Error()})
+		}
+		san.saneia(&l.tela, l.r.Selecao == a.nome, j.Morto, j.Nivel)
+		if l.img != nil {
+			durTela = append(durTela, l.durTela)
 		}
 		am := Amostra{TMs: tMs, Morto: j.Morto, Respawn: j.Renasce, Nivel: j.Nivel, CS: j.Placar.CS,
 			Abates: j.Placar.Abates, Mortes: j.Placar.Mortes, Assistencias: j.Placar.Assistencias, Ward: j.Placar.Ward,
@@ -453,7 +473,7 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 	if st.TFimMs > st.TIniMs {
 		st.TaxaJogo = float64(st.Amostras) / (float64(st.TFimMs-st.TIniMs) / 1000)
 	}
-	st.MsLeitura, st.MsCaptura = medianaDur(durLeitura), medianaDur(durCaptura)
+	st.MsLeitura, st.MsCaptura, st.MsTela = medianaDur(durLeitura), medianaDur(durCaptura), medianaDur(durTela)
 	return st, nil
 }
 
