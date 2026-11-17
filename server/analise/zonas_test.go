@@ -103,10 +103,10 @@ func TestZonasPontosReais(t *testing.T) {
 	// posição: aos 4 min todo rotador está na própria rota; aos 14 min a
 	// Seraphine e o Mestre Yi estão de passagem.
 	esperado := map[string]string{
-		"m04_p02": ZRioCima,           // Master Yi no rio de cima (perto do caranguejo)
-		"m04_p07": ZRotaTopo,          // Warwick saindo da base pela rota do topo (minimapa em m04_p07.jpg)
-		"m14_p02": ZSelvaAzulBaixo,    // Master Yi perto do vermelho dele
-		"m14_p05": ZRioCima,           // Seraphine no rio, encostada no meio
+		"m04_p02": ZRioCima,        // Master Yi no rio de cima (perto do caranguejo)
+		"m04_p07": ZRotaTopo,       // Warwick saindo da base pela rota do topo (minimapa em m04_p07.jpg)
+		"m14_p02": ZSelvaAzulBaixo, // Master Yi perto do vermelho dele
+		"m14_p05": ZRioCima,        // Seraphine no rio, encostada no meio
 		"m14_p07": ZSelvaVermelhaBaixo,
 	}
 	for _, p := range ps {

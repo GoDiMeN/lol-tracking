@@ -51,7 +51,7 @@ var RotaMeio = []Ponto{{3000, 3000}, {11820, 11910}}
 // faixa com os arbustos de rota). No meio é menor porque o rio encosta nele.
 var (
 	MeiaLarguraRotaLateral = 750.0
-	MeiaLarguraRotaMeio    = 750.0
+	MeiaLarguraRotaMeio    = 850.0
 )
 
 // O canto da rota lateral (o "triângulo" onde o rio desemboca na rota) é

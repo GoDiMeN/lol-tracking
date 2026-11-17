@@ -373,3 +373,46 @@ func AmostrasDoPasse(db *banco.DB, p Passe) ([]Amostra, error) {
 	as, _, err := amostrasDoPasse(db, p)
 	return as, err
 }
+
+// MelhorPasse é o passe que representa o jogador na partida (ver melhorPasse).
+func MelhorPasse(db *banco.DB, gameID int64, pid int) (Passe, bool, error) {
+	return melhorPasse(db, gameID, pid)
+}
+
+// PassesCompactados são os passes fechados (com bloco) da partida.
+func PassesCompactados(db *banco.DB, gameID int64) ([]Passe, error) {
+	return lePasses(db, `WHERE p.game_id = ? AND EXISTS (SELECT 1 FROM passes_compactos c WHERE c.passe_id = p.id)
+		ORDER BY p.id`, gameID)
+}
+
+// EstadosDaPartida junta o estado dos 10 gravado em todos os passes da partida
+// (cada passe grava os 10 a ~1 s na janela dele), por participante e em ordem
+// de tempo. Instante repetido (dois passes no mesmo trecho) fica uma vez só, o
+// do passe concluído mais recente.
+func EstadosDaPartida(db *banco.DB, gameID int64) (map[int][]EstadoJogador, error) {
+	todos, err := lePasses(db, `WHERE p.game_id = ? AND p.amostras > 0 ORDER BY (p.estado = 'concluido') DESC, p.id DESC`, gameID)
+	if err != nil {
+		return nil, err
+	}
+	r := map[int][]EstadoJogador{}
+	visto := map[[2]int64]bool{}
+	for _, ps := range todos {
+		es, err := estadosDoPasse(db, ps)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range es {
+			k := [2]int64{int64(e.ParticipanteID), e.TMs / 500}
+			if visto[k] {
+				continue
+			}
+			visto[k] = true
+			r[e.ParticipanteID] = append(r[e.ParticipanteID], e)
+		}
+	}
+	for k := range r {
+		s := r[k]
+		sort.SliceStable(s, func(a, b int) bool { return s[a].TMs < s[b].TMs })
+	}
+	return r, nil
+}

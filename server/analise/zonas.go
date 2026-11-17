@@ -15,20 +15,20 @@ type Ponto struct{ X, Y float64 }
 
 // Vocabulário das zonas (fixo; documentado em docs/arquitetura/dados.md).
 const (
-	ZBaseAzul          = "base_azul"
-	ZBaseVermelha      = "base_vermelha"
-	ZRotaTopo          = "rota_topo"
-	ZRotaMeio          = "rota_meio"
-	ZRotaBaixo         = "rota_baixo"
-	ZRioCima           = "rio_cima"
-	ZRioBaixo          = "rio_baixo"
-	ZCovaBarao         = "cova_barao"
-	ZCovaDragao        = "cova_dragao"
-	ZSelvaAzulCima     = "selva_azul_cima"
-	ZSelvaAzulBaixo    = "selva_azul_baixo"
-	ZSelvaVermelhaCima = "selva_vermelha_cima"
+	ZBaseAzul           = "base_azul"
+	ZBaseVermelha       = "base_vermelha"
+	ZRotaTopo           = "rota_topo"
+	ZRotaMeio           = "rota_meio"
+	ZRotaBaixo          = "rota_baixo"
+	ZRioCima            = "rio_cima"
+	ZRioBaixo           = "rio_baixo"
+	ZCovaBarao          = "cova_barao"
+	ZCovaDragao         = "cova_dragao"
+	ZSelvaAzulCima      = "selva_azul_cima"
+	ZSelvaAzulBaixo     = "selva_azul_baixo"
+	ZSelvaVermelhaCima  = "selva_vermelha_cima"
 	ZSelvaVermelhaBaixo = "selva_vermelha_baixo"
-	ZForaDoMapa        = "fora_do_mapa"
+	ZForaDoMapa         = "fora_do_mapa"
 )
 
 // Subzonas.
@@ -318,13 +318,13 @@ var GruposRelativos = []string{"rota_propria", "outra_rota", "rio", "covas", "se
 // geometria: Linhas[i][j] é o índice (em Codigos) da zona no centro da célula
 // da coluna j e da linha i, a linha 0 embaixo (y mínimo).
 type Grade struct {
-	Origem   Ponto    `json:"origem"`
-	Celula   float64  `json:"celula"`
-	Colunas  int      `json:"colunas"`
-	NLinhas  int      `json:"n_linhas"`
-	Codigos  []string `json:"codigos"`
-	Linhas   []string `json:"linhas"`
-	Legenda  string   `json:"legenda"`
+	Origem  Ponto    `json:"origem"`
+	Celula  float64  `json:"celula"`
+	Colunas int      `json:"colunas"`
+	NLinhas int      `json:"n_linhas"`
+	Codigos []string `json:"codigos"`
+	Linhas  []string `json:"linhas"`
+	Legenda string   `json:"legenda"`
 }
 
 // GeraGrade monta a grade com células de `celula` unidades. Cada caractere de

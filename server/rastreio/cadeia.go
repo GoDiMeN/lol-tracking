@@ -37,6 +37,18 @@ type ContextoCadeia struct {
 	Linha   LinhaDoTempo
 	// ToleranciaTrajeto é a do Douglas-Peucker, em unidades do mapa.
 	ToleranciaTrajeto float64
+
+	// O resto vem de completaContexto (contexto.go); pode vir vazio (testes).
+	// Posicao do jogador na partida: TOP JUNGLE MIDDLE BOTTOM UTILITY.
+	Posicao string
+	// Times e Posicoes dos 10 (participante → 100/200; → posição).
+	Times    map[int]int
+	Posicoes map[int]string
+	// Outros: as amostras dos outros jogadores já rastreados nesta partida
+	// (o melhor passe de cada um).
+	Outros map[int][]Amostra
+	// Extra: o que outros pacotes acrescentam (RegistraContexto), por nome.
+	Extra map[string]any
 }
 
 // Gerador produz itens da cadeia.
@@ -440,6 +452,7 @@ func contextoDoPasse(db *banco.DB, p Passe) (*ContextoCadeia, error) {
 		}
 	}
 	db.QueryRow(`SELECT time FROM participantes WHERE game_id = ? AND participante_id = ?`, p.GameID, p.ParticipanteID).Scan(&c.Time)
+	completaContexto(db, c)
 	return c, nil
 }
 

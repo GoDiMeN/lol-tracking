@@ -23,6 +23,10 @@ type Deps struct {
 	Replay replay.Deps
 	Hub    *web.Hub
 	Config Config
+	// AoFecharPasse é chamado depois que um passe da partida fecha (concluído
+	// ou cancelado com amostras): a análise refaz o que depende dele. Roda na
+	// goroutine do rastreio; quem pendura decide se faz em segundo plano.
+	AoFecharPasse func(gameID int64)
 }
 
 // Fila roda um rastreio por vez. Um rastreio = até 10 passes em sequência,
@@ -300,6 +304,8 @@ func (f *Fila) encerraPasses(ctx context.Context, rastreioID, gameID int64, base
 		}
 		if _, err := finalizaPasse(f.d.DB, p, lt, timeDe(f.d.DB, gameID, p.ParticipanteID), base, Cancelado, ""); err != nil {
 			log.Printf("rastreio: fechar o passe %d: %v", p.ID, err)
+		} else if f.d.AoFecharPasse != nil {
+			f.d.AoFecharPasse(gameID)
 		}
 	}
 }
@@ -436,6 +442,9 @@ func (f *Fila) corre(ctx context.Context, c *corrida) {
 			"amostras": res.Amostras, "taxa": res.Taxa, "bytes": res.Bytes, "bytes_time": res.BytesTime, "cadeia": res.Cadeia,
 			"calibracao": map[string]any{"modo": res.Calibracao.Modo, "pontos": res.Calibracao.Pontos,
 				"erro_mediano": res.Calibracao.ErroMediano, "erro_maximo": res.Calibracao.ErroMaximo}})
+		if f.d.AoFecharPasse != nil {
+			f.d.AoFecharPasse(r.GameID)
+		}
 	}
 	mudaEstadoRastreio(f.d.DB, id, Concluido, "")
 	ex.Emite("concluido", map[string]any{"rastreio_id": id})

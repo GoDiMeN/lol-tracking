@@ -118,8 +118,10 @@ func finalizaPasse(db *banco.DB, p Passe, lt LinhaDoTempo, time int, base Calibr
 	if err != nil {
 		return r, fmt.Errorf("conferir o bloco do estado dos 10: %w", err)
 	}
-	itens := GeraCadeia(&ContextoCadeia{GameID: p.GameID, ParticipanteID: p.ParticipanteID, Time: time,
-		Amostras: AmostrasDoBloco(ba), Estados: EstadosDoBloco(be), Linha: lt})
+	ctxCadeia := &ContextoCadeia{GameID: p.GameID, ParticipanteID: p.ParticipanteID, Time: time,
+		Amostras: AmostrasDoBloco(ba), Estados: EstadosDoBloco(be), Linha: lt}
+	completaContexto(db, ctxCadeia)
+	itens := GeraCadeia(ctxCadeia)
 	r.Cadeia = len(itens)
 
 	semTrava := 0
