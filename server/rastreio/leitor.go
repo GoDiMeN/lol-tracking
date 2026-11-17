@@ -1,6 +1,9 @@
 package rastreio
 
-import "image"
+import (
+	"image"
+	"math"
+)
 
 // LeitorDeTela é o ponto de extensão da tarefa 3 (pacote visao): a cada
 // amostra o motor captura a área do jogo e chama Le. O que vier preenchido
@@ -65,3 +68,38 @@ type QuadroLateral struct {
 type LeitorNulo struct{}
 
 func (LeitorNulo) Le(*image.RGBA, int, int) (Leitura, error) { return Leitura{}, nil }
+
+// LeitorFalso é o leitor do modo teste (LOL_TESTE=1). A captura do jogo falso
+// (replay.Falso.Captura) pinta a imagem com o segundo de jogo módulo 256 no
+// canal vermelho; daqui sai uma tela inventada mas coerente com o tempo
+// (vida que desce e sobe, recargas que correm, barras dos 10). Serve para a
+// interface mostrar a "última leitura" e o mapa com play sem o jogo de
+// verdade. Puro: o mesmo pixel dá a mesma leitura.
+type LeitorFalso struct{}
+
+func (LeitorFalso) Le(img *image.RGBA, _, _ int) (Leitura, error) {
+	if img == nil || img.Bounds().Empty() {
+		return Leitura{}, nil
+	}
+	t := float64(img.RGBAAt(img.Bounds().Min.X, img.Bounds().Min.Y).R)
+	f := func(v float64) *float64 { return &v }
+	// recarga: pronta na primeira parte do ciclo, depois descendo até 0.
+	recarga := func(ciclo, pronta float64) *float64 {
+		fase := math.Mod(t, ciclo)
+		if fase < pronta {
+			return f(0)
+		}
+		return f(ciclo - fase)
+	}
+	lt := Leitura{PainelPresente: true,
+		Vida: f(math.Round(1000 * (0.55 + 0.45*math.Cos(t*2*math.Pi/64)))), VidaMax: f(1000),
+		Mana: f(math.Round(500 * (0.3 + 0.7*math.Mod(t, 128)/128))), ManaMax: f(500),
+		CD:  Recargas{Q: recarga(10, 4), W: recarga(16, 6), E: recarga(22, 10), R: recarga(90, 30), D: recarga(256, 200), F: recarga(64, 40)},
+		Atr: Atributos{AD: f(80), AP: f(0), Armadura: f(40), RM: f(32), VelAtaque: f(0.72), VelMov: f(345)}}
+	for k := range lt.Quadros {
+		v := math.Round(10*(55+40*math.Cos((t+float64(k)*20)/30))) / 10
+		m := math.Round(10*(60+30*math.Sin((t+float64(k)*15)/40))) / 10
+		lt.Quadros[k] = QuadroLateral{VidaPct: f(v), ManaPct: f(m)}
+	}
+	return lt, nil
+}

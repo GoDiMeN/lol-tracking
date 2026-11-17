@@ -27,6 +27,7 @@ Eventos comuns a toda execução: `erro {"texto"}` (seguido de `fim`), `aviso {"
 
 | Método | Rota | Resposta |
 |---|---|---|
+| GET | `/api/dados` | `{"pasta" (absoluta), "banco" (arquivo), "bytes": {"banco" (com -wal/-shm), "imagens", "capturas", "outros", "total"}}`: onde o app guarda tudo e quanto ocupa (tela Configurações). 500 se a pasta não pôde ser lida. |
 | GET | `/api/estado` | `{"lcu": {"conectado", "erro"?}, "invocador": {"puuid","nome","tag"} \| null, "versao_jogo": "16.22.834.8910", "patch": "16.22", "fase": "None", "regiao": "BR", "replays_habilitados": bool, "pasta_replays": "...", "chave_riot": {"configurada", "valida": bool\|null, "detalhe"?, "verificada_em"?}, "modo_teste": bool}`. Sempre 200: cliente fechado vira `conectado: false` com a frase. |
 
 ## Jogadores — tarefa 1
@@ -73,10 +74,12 @@ ao terminar, pausar, cancelar, falhar ou estourar (regra 5).
 | POST | `/api/rastreios/{id}/cancelar` | 204. Passe começado é fechado (compactado) como `cancelado`; os pendentes viram `cancelado`. 409 se já concluiu. O `/api/execucoes/{id}/cancelar` da execução faz o mesmo. |
 | GET | `/api/rastreios/{id}/eventos` | SSE da execução mais recente do rastreio (o mesmo de `/api/execucoes/{id}/eventos`). 404 se não houve execução neste processo. |
 
+No modo teste (`LOL_TESTE=1`) a leitura da tela é o `rastreio.LeitorFalso`: vida, recurso, recargas e barras inventadas a partir do tempo do jogo falso, para a interface ter o que mostrar sem o jogo.
+
 Eventos SSE: `abrindo_replay {rastreio_id, game_id}`, `replay_aberto {duracao_ms, largura, altura}`,
 `passe_inicio {passe_id, participante_id, nome, t_inicio_ms, t_fim_ms, duracao_ms}`, `trava {passe_id, tentativas, ok, motivo?}`,
-`amostra {passe_id, participante_id, t_ms, x?, y?, origem, morto, selecao, amostras, retravas, ms_leitura}` (no máximo 1 por
-segundo real), `passe_fim {passe_id, participante_id, amostras, taxa, bytes, bytes_time, cadeia, calibracao {modo, pontos,
+`amostra {passe_id, participante_id, t_ms, x?, y?, origem, morto, trava_perdida, selecao, amostras, retravas, ms_leitura, nivel, cs, vida, vida_max, mana, mana_max, cd {q,w,e,r,d,f}}` (no máximo 1 por
+segundo real; o que a tela não leu vem `null`: é a "última leitura" da tela de rastreio), `passe_fim {passe_id, participante_id, amostras, taxa, bytes, bytes_time, cadeia, calibracao {modo, pontos,
 erro_mediano, erro_maximo}, estatisticas}` (`estatisticas.ms_tela_mediana` = custo da leitura da tela), `aviso_tela {passe_id, erro}` (uma vez por
 passe: a tela não é a que a leitura conhece — resolução diferente de 2560×1440 ou escala do HUD diferente da padrão; as colunas
 da tela ficam nulas), `conferencia_riot {passe_id, n, iguais, maior_dif, campos}` (só com chave da Riot válida), `pausado {rastreio_id, motivo?}`, `concluido {rastreio_id}`, `fechando_replay`,

@@ -2,6 +2,7 @@ package rastreio
 
 import (
 	"context"
+	"encoding/json"
 	"image"
 	"math"
 	"strings"
@@ -112,5 +113,59 @@ func TestConferenciaComRiot(t *testing.T) {
 	bruto2 := []byte(strings.Replace(string(bruto), `"level":2`, `"level":3`, 1))
 	if c, _ := ConfereComRiot(bruto2, 3, as); c.Minutos != 0 {
 		t.Fatalf("quadro com nível diferente deveria ser pulado: %+v", c)
+	}
+}
+
+// O leitor do modo teste lê o tempo pintado pelo jogo falso: a tela muda com o
+// jogo, a "última leitura" sai no evento amostra e as colunas chegam ao bloco.
+func TestLeitorFalsoDoModoTeste(t *testing.T) {
+	antes := IntervaloEventoSSE
+	IntervaloEventoSSE = 0
+	t.Cleanup(func() { IntervaloEventoSSE = antes })
+	a := prepara(t, func(j *replay.Falso, c *Config) { c.Leitor = LeitorFalso{} })
+	r, exID, err := a.fila.Cria(context.Background(), partidaTeste, Pedido{Jogadores: []int{3}, TFimMs: 40000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.fila.Espera()
+	if r, _ = LeRastreio(a.db, r.ID); r.Estado != Concluido {
+		t.Fatalf("rastreio %s %s", r.Estado, r.Erro)
+	}
+	ex, ok := a.hub.Busca(exID)
+	if !ok {
+		t.Fatal("execução sumiu")
+	}
+	achou := false
+	for _, ev := range ex.Eventos() {
+		if ev.Tipo != "amostra" {
+			continue
+		}
+		var d map[string]any
+		json.Unmarshal(ev.Dados, &d)
+		cd, _ := d["cd"].(map[string]any)
+		// A primeira leitura do passe ainda não confirmou o máximo (saneador):
+		// basta uma amostra com a tela inteira.
+		if d["vida_max"] == 1000.0 && d["mana_max"] == 500.0 && cd != nil && cd["q"] != nil && d["nivel"] != nil {
+			achou = true
+		}
+	}
+	if !achou {
+		t.Fatal("nenhum evento amostra trouxe a leitura da tela")
+	}
+	_, m := a.pede(t, "GET", "/api/partidas/"+itoa(partidaTeste)+"/amostras?participante=3&de=10&ate=30", "")
+	vidas := map[float64]bool{}
+	for _, x := range m["amostras"].([]any) {
+		if v, ok := x.(map[string]any)["vida"].(float64); ok {
+			vidas[v] = true
+		}
+	}
+	if len(vidas) < 5 {
+		t.Fatalf("a vida do leitor falso deveria variar com o tempo: %v", vidas)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	l1, _ := LeitorFalso{}.Le(img, 4, 4)
+	l2, _ := LeitorFalso{}.Le(img, 4, 4)
+	if *l1.Vida != *l2.Vida || *l1.CD.Q != *l2.CD.Q {
+		t.Fatal("o leitor falso tem de ser puro")
 	}
 }

@@ -84,7 +84,11 @@ func main() {
 			Tela: janela, GameCfg: replay.GameCfgDe(cfg.Lockfile)}
 	}
 	cfgRastreio := rastreio.Config{CapturaACadaS: cfg.CapturaACadaS}
-	if !cfg.ModoTeste {
+	if cfg.ModoTeste {
+		// Tela inventada a partir do tempo do jogo falso: a interface mostra a
+		// "última leitura" e o mapa com play sem o jogo de verdade.
+		cfgRastreio.Leitor = rastreio.LeitorFalso{}
+	} else {
 		// Leitura da tela por gabarito (tarefa 3). No modo teste a tela é falsa:
 		// fica o LeitorNulo e as colunas da tela saem nulas.
 		leitor, err := visao.Novo()
@@ -128,6 +132,7 @@ func main() {
 
 	web.RegistraExecucoes(mux, hub)
 	estado.Registra(mux, cliLCU, chaveRiot, cfg.ModoTeste)
+	estado.RegistraDados(mux, cfg.Dados, arquivoBanco)
 	jogador.Registra(mux, db, cliLCU)
 	partida.Registra(mux, partida.Deps{DB: db, LCU: cliLCU, Campeoes: nomes}, hub)
 	// A análise refaz a partida quando um passe fecha (em segundo plano).

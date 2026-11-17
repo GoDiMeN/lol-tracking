@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -39,5 +40,29 @@ func TestEstadoClienteFechado(t *testing.T) {
 	e := pedeEstado(t, f)
 	if e.LCU.Conectado || e.LCU.Erro == "" || e.Invocador != nil || e.ChaveRiot.Detalhe == "" {
 		t.Fatalf("%+v", e)
+	}
+}
+
+func TestDadosSomaPorTipo(t *testing.T) {
+	dir := t.TempDir()
+	escreve := func(rel string, n int) {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, make([]byte, n), 0o644)
+	}
+	escreve("lol.db", 100)
+	escreve("lol.db-wal", 20)
+	escreve("imagens/campeao/166.png", 7)
+	escreve("capturas/1/a.png", 5)
+	escreve("campeoes.json", 3)
+	mux := http.NewServeMux()
+	RegistraDados(mux, dir, "lol.db")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/dados", nil))
+	var d Dados
+	json.Unmarshal(rec.Body.Bytes(), &d)
+	if rec.Code != 200 || d.Bytes.Banco != 120 || d.Bytes.Imagens != 7 || d.Bytes.Capturas != 5 || d.Bytes.Outros != 3 ||
+		d.Bytes.Total != 135 || d.Banco != "lol.db" || !filepath.IsAbs(d.Pasta) {
+		t.Fatalf("%d %+v", rec.Code, d)
 	}
 }

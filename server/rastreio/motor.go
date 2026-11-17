@@ -462,6 +462,10 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 			if am.X != nil {
 				ev["x"], ev["y"] = math.Round(*am.X), math.Round(*am.Y)
 			}
+			// A "última leitura" da tela de rastreio: o que a tela leu agora
+			// (nulo = não lido) e o placar do playerlist.
+			ev["trava_perdida"], ev["nivel"], ev["cs"] = am.TravaPerdida, am.Nivel, am.CS
+			ev["vida"], ev["vida_max"], ev["mana"], ev["mana_max"], ev["cd"] = am.Vida, am.VidaMax, am.Mana, am.ManaMax, am.CD
 			m.ex.Emite("amostra", ev)
 		}
 		// Ritmo: no máximo AmostrasPorSegundo por segundo de jogo.
