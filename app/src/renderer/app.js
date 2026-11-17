@@ -1,240 +1,140 @@
-// A tela Jogadores: busca por Riot ID, lista de partidas com o estado do replay e o download com
-// progresso ao vivo. As outras telas chegam nas próximas tarefas.
-//
-// Todo texto que vem do servidor entra por textContent: nome de jogador é texto livre de terceiros.
+// Arranque: barra de título (estado do cliente do LoL), rota no hash e a tela de cada rota.
+// Cada tela é um módulo em views/ com `desenha(raiz, rota, ctx)`, que pode devolver a função que
+// limpa o que ela ligou (SSE, intervalos, teclado) ao sair.
 
-import { api, acompanha } from './api.js';
-import { duracao, dataCurta, kda, titulo, pilulaReplay, contagem, plural } from './formato.js';
+import { api } from './api.js';
+import { lerRota, montaRota, itemDoMenu } from './rota.js';
+import { $, el, preferencia, aplicaTema } from './ui.js';
+import { desenha as jogadores } from './views/jogadores.js';
+import { desenha as rastreio } from './views/rastreio.js';
+import { desenha as partidas } from './views/partidas.js';
+import { desenha as partida } from './views/partida.js';
+import { desenha as estudo } from './views/estudo.js';
+import { desenha as replay } from './views/replay.js';
+import { desenha as configuracoes } from './views/configuracoes.js';
 
-const POR_PAGINA = 20;
-const $ = (id) => document.getElementById(id);
+const VISTAS = { jogadores, rastreio, partidas, partida, estudo, replay, configuracoes };
 
-const estado = { jogador: null, partidas: [], inicio: 0, temMais: false, carregando: false };
+// O estado do cliente é de todas as telas: a barra de título, o botão Rastrear, as Configurações.
+let ultimoEstado = null;
+const ouvintesEstado = new Set();
 
-function el(tag, classe, texto) {
-  const e = document.createElement(tag);
-  if (classe) e.className = classe;
-  if (texto !== undefined) e.textContent = texto;
-  return e;
-}
-
-function avisa(texto, erro = false) {
-  const a = $('aviso');
-  a.hidden = !texto;
-  a.textContent = texto || '';
-  a.classList.toggle('erro', erro);
-}
-
-// --- Barra de título -------------------------------------------------------------------------
+const ctx = {
+  estado: () => ultimoEstado,
+  // aoMudarEstado(fn) → função que desliga.
+  aoMudarEstado(fn) {
+    ouvintesEstado.add(fn);
+    return () => ouvintesEstado.delete(fn);
+  },
+  atualizaEstado: () => atualizaStatus(),
+  navega(rota, { substitui = false } = {}) {
+    const hash = montaRota(rota);
+    if (substitui) {
+      history.replaceState(null, '', hash);
+      roteia();
+    } else if (location.hash === hash) {
+      roteia();
+    } else {
+      location.hash = hash;
+    }
+  },
+  // Só troca o endereço (a tela já mostra aquilo): o "voltar" continua funcionando.
+  marca(rota) {
+    history.replaceState(null, '', montaRota(rota));
+  },
+  atualizaSeloRastreio: () => atualizaSelo(),
+};
 
 async function atualizaStatus() {
+  const ponto = $('statusPonto');
+  const texto = $('statusTexto');
   try {
     const e = await api.estado();
-    const ponto = $('statusPonto');
+    ultimoEstado = e;
     if (e.lcu.conectado) {
       ponto.className = 'ponto ok';
       const quem = e.invocador ? `${e.invocador.nome}#${e.invocador.tag}` : '';
       const partes = ['cliente do LoL conectado', quem, e.patch];
-      if (e.fase && e.fase !== 'None') partes.push(e.fase);
+      if (e.fase && e.fase !== 'None') partes.push(e.fase === 'WatchInProgress' ? 'assistindo replay' : 'em partida ou fila');
       if (e.modo_teste) partes.push('modo teste');
-      $('statusTexto').textContent = partes.filter(Boolean).join(' · ');
+      texto.textContent = partes.filter(Boolean).join(' · ');
     } else {
       ponto.className = 'ponto cr';
-      $('statusTexto').textContent = e.lcu.erro || 'cliente do LoL desconectado';
+      texto.textContent = e.modo_teste ? 'modo teste · cliente falso fechado' : 'cliente do LoL fechado';
+      texto.title = e.lcu.erro || '';
     }
   } catch (err) {
-    $('statusPonto').className = 'ponto cr';
-    $('statusTexto').textContent = err.message;
+    ultimoEstado = null;
+    ponto.className = 'ponto cr';
+    texto.textContent = err.status === 0 ? 'o servidor do LoL Tracking não respondeu' : err.message;
   }
+  for (const fn of ouvintesEstado) fn(ultimoEstado);
 }
 
-// --- Recentes --------------------------------------------------------------------------------
-
-async function carregaRecentes() {
-  const caixa = $('recentes');
+// O selo no menu: há rastreio rodando?
+async function atualizaSelo() {
+  const selo = $('seloRastreio');
   try {
-    const { jogadores } = await api.recentes();
-    caixa.replaceChildren(
-      ...jogadores.map((j) => {
-        const b = el('button', 'btn', j.riot_id);
-        b.type = 'button';
-        b.addEventListener('click', () => {
-          $('busca').value = j.riot_id;
-          busca(j.riot_id);
-        });
-        return b;
-      }),
-    );
+    const { rastreios } = await api.rastreios(5);
+    const rodando = rastreios.find((r) => r.estado === 'rodando');
+    selo.hidden = !rodando;
+    selo.textContent = rodando ? `${Math.round((rodando.progresso || 0) * 100)}%` : '';
+    selo.title = rodando ? 'rastreio em andamento' : '';
   } catch {
-    caixa.replaceChildren();
+    selo.hidden = true;
   }
 }
 
-// --- Lista de partidas -----------------------------------------------------------------------
+let limpa = null;
+let geracao = 0;
 
-function desenhaResumo() {
-  const r = $('resumo');
-  if (!estado.jogador) {
-    r.hidden = true;
-    return;
+async function roteia() {
+  const rota = lerRota(location.hash);
+  const minha = ++geracao;
+  if (typeof limpa === 'function') {
+    try {
+      limpa();
+    } catch {
+      /* a tela que sai não pode travar a que entra */
+    }
   }
-  const c = contagem(estado.partidas);
-  const partes = [el('b', '', estado.jogador.riot_id), el('span', '', plural(c.total, 'partida', 'partidas'))];
-  if (c.daParaVer) partes.push(el('span', 'pill ok', `${c.daParaVer} dá para ver`));
-  if (c.antigas) partes.push(el('span', 'pill n', `${c.antigas} de patch antigo`));
-  r.replaceChildren(...partes);
-  r.hidden = false;
-}
+  limpa = null;
 
-function linhaPartida(p) {
-  const linha = el('div', `partida ${p.venceu ? 'v' : 'd'}`);
-  linha.dataset.id = String(p.game_id);
-  linha.append(el('i'));
+  const cheia = rota.vista === 'replay';
+  document.body.classList.toggle('modo-cheia', cheia);
+  $('janela').hidden = cheia;
+  $('cheia').hidden = !cheia;
+  const raiz = cheia ? $('cheia') : $('conteudo');
+  $('conteudo').replaceChildren();
+  $('cheia').replaceChildren();
 
-  const meio = el('div');
-  meio.append(el('div', 't', titulo(p)));
-  meio.append(el('div', 'm', [p.fila_nome, duracao(p.duracao_s), dataCurta(p.criada_em)].join(' · ')));
-  linha.append(meio);
-
-  linha.append(el('div', 'm m2', `${kda(p)} · ${p.cs} CS`));
-
-  const acoes = el('div', 'linha acoes');
-  const pil = pilulaReplay(p.replay, p.patch);
-  const pilula = el('span', `pill ${pil.classe}`, pil.texto);
-  if (p.replay?.detalhe) pilula.title = p.replay.detalhe;
-  acoes.append(pilula);
-  if (p.replay?.estado === 'baixando') {
-    const barra = el('div', 'barra');
-    barra.setAttribute('role', 'progressbar');
-    barra.setAttribute('aria-label', 'download do replay');
-    barra.setAttribute('aria-valuemin', '0');
-    barra.setAttribute('aria-valuemax', '100');
-    barra.setAttribute('aria-valuenow', String(Math.round(p.replay.progresso || 0)));
-    const b = el('b');
-    b.style.width = `${Math.min(100, p.replay.progresso || 0)}%`;
-    barra.append(b);
-    acoes.append(barra);
-  } else if (p.replay?.estado === 'baixavel') {
-    const botao = el('button', 'btn', 'Baixar');
-    botao.type = 'button';
-    botao.addEventListener('click', () => baixa(p));
-    acoes.append(botao);
+  for (const a of document.querySelectorAll('.menu a[data-menu]')) {
+    const on = a.dataset.menu === itemDoMenu(rota.vista);
+    a.classList.toggle('on', on);
+    if (on) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
   }
-  linha.append(acoes);
-  return linha;
-}
 
-function desenhaLista() {
-  const lista = $('lista');
-  if (!estado.jogador) {
-    lista.hidden = true;
-    return;
-  }
-  lista.hidden = false;
-  if (!estado.partidas.length) {
-    lista.replaceChildren(el('div', 'vazio', estado.carregando ? 'Carregando partidas…' : 'Nenhuma partida encontrada.'));
-  } else {
-    lista.replaceChildren(...estado.partidas.map(linhaPartida));
-  }
-  $('maisLinha').hidden = !estado.temMais;
-  $('botaoMais').disabled = estado.carregando;
-  desenhaResumo();
-}
-
-// Troca uma partida na lista e redesenha só a linha dela.
-function trocaPartida(gameId, muda) {
-  const i = estado.partidas.findIndex((p) => p.game_id === gameId);
-  if (i < 0) return;
-  estado.partidas[i] = muda(estado.partidas[i]);
-  const velha = $('lista').querySelector(`[data-id="${gameId}"]`);
-  if (velha) velha.replaceWith(linhaPartida(estado.partidas[i]));
-  desenhaResumo();
-}
-
-async function carregaPartidas(maisUma = false) {
-  if (!estado.jogador || estado.carregando) return;
-  estado.carregando = true;
-  if (!maisUma) {
-    estado.partidas = [];
-    estado.inicio = 0;
-  }
-  desenhaLista();
   try {
-    const pag = await api.partidas(estado.jogador.puuid, estado.inicio, POR_PAGINA);
-    estado.partidas = estado.partidas.concat(pag.partidas);
-    estado.inicio = pag.inicio + pag.quantidade;
-    estado.temMais = pag.tem_mais;
-    avisa(pag.aviso || '');
-  } catch (err) {
-    avisa(err.message, true);
-  } finally {
-    estado.carregando = false;
-    desenhaLista();
-  }
-}
-
-async function busca(texto) {
-  avisa('');
-  $('botaoBuscar').disabled = true;
-  try {
-    const { jogador } = await api.busca(texto);
-    estado.jogador = jogador;
-    carregaRecentes();
-    await carregaPartidas();
-  } catch (err) {
-    avisa(err.message, true);
-  } finally {
-    $('botaoBuscar').disabled = false;
-  }
-}
-
-// --- Download ---------------------------------------------------------------------------------
-
-async function baixa(p) {
-  trocaPartida(p.game_id, (x) => ({ ...x, replay: { ...x.replay, estado: 'baixando', progresso: 0 } }));
-  let execucao;
-  try {
-    ({ execucao } = await api.baixa(p.game_id));
-  } catch (err) {
-    // 409: já há um download desta partida; acompanha o que existe.
-    if (err.status === 409 && err.corpo?.execucao?.id) {
-      execucao = err.corpo.execucao;
-    } else {
-      avisa(err.message, true);
-      trocaPartida(p.game_id, (x) => ({ ...x, replay: p.replay }));
+    const r = await VISTAS[rota.vista](raiz, rota, ctx);
+    if (minha !== geracao) {
+      // O usuário já foi para outra tela enquanto esta carregava.
+      if (typeof r === 'function') r();
       return;
     }
+    limpa = r;
+  } catch (err) {
+    if (minha !== geracao) return;
+    raiz.replaceChildren(el('div', 'estado-tela erro', [el('p', '', `Esta tela não abriu: ${err.message}`), el('p', 'sub', 'Recarregue com Ctrl+R.')]));
+    console.error(err);
   }
-  let terminou = false;
-  acompanha(execucao.id, {
-    progresso: (r) => trocaPartida(p.game_id, (x) => ({ ...x, replay: r })),
-    concluido: (d) => {
-      terminou = true;
-      trocaPartida(p.game_id, (x) => ({ ...x, replay: d.replay, tem_linha_do_tempo: d.linha_do_tempo }));
-    },
-    aviso: (d) => avisa(d.texto),
-    erro: (d) => {
-      terminou = true;
-      avisa(`Partida ${p.game_id}: ${d.texto}`, true);
-      trocaPartida(p.game_id, (x) => ({ ...x, replay: p.replay }));
-    },
-    fim: () => {
-      // Fim sem conclusão nem erro (cancelado): volta ao estado anterior.
-      if (!terminou) trocaPartida(p.game_id, (x) => ({ ...x, replay: p.replay }));
-    },
-  });
 }
 
-// --- Arranque ---------------------------------------------------------------------------------
+aplicaTema(preferencia('tema', 'auto'));
 
-$('formBusca').addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  const texto = $('busca').value.trim();
-  if (texto) busca(texto);
-});
-$('botaoMais').addEventListener('click', () => carregaPartidas(true));
-
-atualizaStatus();
-carregaRecentes();
+window.addEventListener('hashchange', roteia);
+atualizaStatus().then(roteia);
+atualizaSelo();
 // O cliente do LoL abre e fecha enquanto o app está aberto: a barra de título acompanha.
 setInterval(atualizaStatus, 15000);
+setInterval(atualizaSelo, 10000);
