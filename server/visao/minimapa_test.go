@@ -203,8 +203,10 @@ func TestVisibilidadeNasCapturas(t *testing.T) {
 		esperado   map[string]string
 		aliados    [2]int
 	}{
+		// Aliados: a Leona está a ~1 000 unidades da fonte azul e fica fora da
+		// conferência (rastreio.FonteConferencia): 2 de 2.
 		{"1-F1_mini.png", 100, map[string]string{"Garen": rastreio.VisVisivel, "Orianna": rastreio.VisVisivel,
-			"Vi": rastreio.VisFora, "Senna": rastreio.VisFora}, [2]int{3, 3}},
+			"Vi": rastreio.VisFora, "Senna": rastreio.VisFora}, [2]int{2, 2}},
 		{"2-F2_mini.png", 200, map[string]string{"Diana": rastreio.VisVisivel, "Yunara": rastreio.VisVisivel,
 			"Leona": rastreio.VisFora}, [2]int{3, 4}},
 	}

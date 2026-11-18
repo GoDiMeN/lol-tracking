@@ -29,6 +29,10 @@ func Registra(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("GET /api/partidas/{id}/fases", c.fases)
 	mux.HandleFunc("GET /api/partidas/{id}/ondas", c.ondas)
 	mux.HandleFunc("GET /api/partidas/{id}/sentinelas", c.sentinelas)
+	mux.HandleFunc("GET /api/partidas/{id}/resumo", c.resumo)
+	mux.HandleFunc("GET /api/partidas/{id}/contexto-ia", c.contextoIA)
+	mux.HandleFunc("GET /api/resumos", c.buscaResumos)
+	mux.HandleFunc("GET /api/resumos/contexto-ia", c.contextoVarias)
 }
 
 // GET /api/partidas/{id}/fases
@@ -59,7 +63,7 @@ func (c *controller) erro(w http.ResponseWriter, err error, acao string) {
 		web.WriteErr(w, http.StatusBadRequest, ep.msg)
 	case errors.Is(err, partida.ErrNaoEncontrada):
 		web.WriteErr(w, http.StatusNotFound, "partida não encontrada")
-	case errors.Is(err, ErrSemLinhaDoTempo):
+	case errors.Is(err, ErrSemLinhaDoTempo), errors.Is(err, ErrSemResumo):
 		web.WriteErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrNaoAnalisada):
 		web.WriteErr(w, http.StatusNotFound, "abate não encontrado (a partida foi analisada?)")
@@ -318,4 +322,125 @@ func (c *controller) sentinelas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.WriteJSON(w, http.StatusOK, s)
+}
+
+// --- Base de fatos (fatos*.go) ----------------------------------------------------
+
+// GET /api/partidas/{id}/resumo — a base de fatos da partida (gerada na hora,
+// uma vez, se a partida foi analisada antes de ela existir).
+func (c *controller) resumo(w http.ResponseWriter, r *http.Request) {
+	id, err := idPartida(r)
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	if err := garanteFatos(r.Context(), c.d, id); err != nil {
+		c.erro(w, err, "gerar a base de fatos")
+		return
+	}
+	res, err := LeFatos(c.d.DB, id)
+	if err != nil {
+		c.erro(w, err, "ler a base de fatos")
+		return
+	}
+	web.WriteJSON(w, http.StatusOK, map[string]any{"resumo": res})
+}
+
+// GET /api/partidas/{id}/contexto-ia?participante=N — o pacote de contexto.
+func (c *controller) contextoIA(w http.ResponseWriter, r *http.Request) {
+	id, err := idPartida(r)
+	var pid int
+	if err == nil {
+		pid, err = participante(r)
+	}
+	if err == nil && pid == 0 {
+		err = &erroPedido{"informe ?participante= (1 a 10): o jogador em foco"}
+	}
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	if err := garanteFatos(r.Context(), c.d, id); err != nil {
+		c.erro(w, err, "gerar a base de fatos")
+		return
+	}
+	ctx, err := ContextoDaPartida(c.d.DB, id, pid)
+	if err != nil {
+		c.erro(w, err, "montar o contexto")
+		return
+	}
+	web.WriteJSON(w, http.StatusOK, ctx)
+}
+
+// Vocabulários aceitos nos filtros da busca.
+var (
+	funcoesValidas  = map[string]bool{"TOP": true, "JUNGLE": true, "MIDDLE": true, "BOTTOM": true, "UTILITY": true}
+	TiposDeMomento  = []string{"abate", "luta", "objetivo", "torre", "inibidor", "freeze", "janela_perdida", "janela_aproveitada"}
+	resultadosAceit = map[string]bool{"vitoria": true, "derrota": true}
+)
+
+func filtroDaQuery(r *http.Request) (FiltroResumos, error) {
+	q := r.URL.Query()
+	f := FiltroResumos{Campeao: strings.TrimSpace(q.Get("campeao")), Funcao: strings.ToUpper(strings.TrimSpace(q.Get("funcao"))),
+		Resultado: q.Get("resultado"), Puuid: q.Get("puuid"), Tipo: q.Get("tipo"), Tag: q.Get("tag"), Texto: strings.TrimSpace(q.Get("texto"))}
+	if f.Funcao != "" && !funcoesValidas[f.Funcao] {
+		return f, &erroPedido{"funcao precisa ser TOP, JUNGLE, MIDDLE, BOTTOM ou UTILITY"}
+	}
+	if f.Resultado != "" && !resultadosAceit[f.Resultado] {
+		return f, &erroPedido{"resultado precisa ser vitoria ou derrota"}
+	}
+	if f.Tipo != "" {
+		ok := false
+		for _, t := range TiposDeMomento {
+			ok = ok || t == f.Tipo
+		}
+		if !ok {
+			return f, &erroPedido{"tipo precisa ser um de: " + strings.Join(TiposDeMomento, ", ")}
+		}
+	}
+	if q.Get("ate") != "" {
+		ms, err := segundos(r, "ate", 0)
+		if err != nil {
+			return f, err
+		}
+		f.AteMs = ms
+	}
+	if s := q.Get("limite"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 || n > 200 {
+			return f, &erroPedido{"limite precisa ser de 1 a 200"}
+		}
+		f.Limite = n
+	}
+	return f, nil
+}
+
+// GET /api/resumos?campeao=&funcao=&resultado=&puuid=&tipo=&tag=&texto=&ate=&limite=
+func (c *controller) buscaResumos(w http.ResponseWriter, r *http.Request) {
+	f, err := filtroDaQuery(r)
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	l, err := BuscaResumos(c.d.DB, f)
+	if err != nil {
+		c.erro(w, err, "buscar na base de fatos")
+		return
+	}
+	web.WriteLista(w, "resumos", l, nil)
+}
+
+// GET /api/resumos/contexto-ia?<os filtros da busca> — o contexto de várias partidas.
+func (c *controller) contextoVarias(w http.ResponseWriter, r *http.Request) {
+	f, err := filtroDaQuery(r)
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	ctx, err := ContextoDeVariasPartidas(c.d.DB, f)
+	if err != nil {
+		c.erro(w, err, "montar o contexto")
+		return
+	}
+	web.WriteJSON(w, http.StatusOK, ctx)
 }

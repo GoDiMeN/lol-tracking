@@ -72,10 +72,17 @@ type MorteFalsa struct {
 // todo seek conta como saída. Assim o teste simula "perdeu na primeira vez e a
 // repescagem (que volta o replay) consegue". A contagem é por jogador e vale
 // para o processo inteiro (não zera ao reabrir: a repescagem depois reabre).
+//
+// Escondido: em vez de a câmera soltar, o JOGO esconde o campeão (teleporte,
+// Arauto do Vale; descobertas 8): a seleção e a câmera continuam nele, o
+// screenPositionCenter dele vem 3.4e38 e a tecla dupla não prende (seleciona
+// e solta a câmera, que fica onde estava). Acabado o trecho, se a câmera
+// ainda estava presa ele volta à tela sozinho.
 type PerdaTravaFalsa struct {
-	Indice  int
-	De, Ate float64
-	Vezes   int
+	Indice    int
+	De, Ate   float64
+	Vezes     int
+	Escondido bool
 }
 
 // SentinelaFalsa: uma sentinela do time Time (100/200) em (X, Y), de De a Ate
@@ -304,6 +311,20 @@ func (f *Falso) perdaAtiva(i int, t float64) bool {
 	return ativa
 }
 
+// escondido diz se, no tempo t, o jogo esconde o campeão i (perda Escondido
+// ativa nesta passagem; quem conta a passagem é perdaAtiva).
+func (f *Falso) escondido(i int, t float64) bool {
+	for k, p := range f.PerdasTrava {
+		if !p.Escondido || (p.Indice >= 0 && p.Indice != i) || t < p.De || t >= p.Ate {
+			continue
+		}
+		if p.Vezes == 0 || f.passagens[k][i] <= p.Vezes {
+			return true
+		}
+	}
+	return false
+}
+
 // saiDasPerdas: o seek tira o replay de qualquer passagem (a próxima entrada
 // no trecho conta como outra).
 func (f *Falso) saiDasPerdas() {
@@ -378,7 +399,7 @@ func (f *Falso) coefs() (a1, b1 float64) {
 // atualiza aplica as regras de morte/renascimento à seleção.
 func (f *Falso) atualiza(t float64) {
 	if f.seguindo && f.selecao != "" && len(f.PerdasTrava) > 0 {
-		if i := f.indice(f.selecao); i >= 0 && f.perdaAtiva(i, t) {
+		if i := f.indice(f.selecao); i >= 0 && f.perdaAtiva(i, t) && !f.escondido(i, t) {
 			// Perdeu a trava: a câmera fica onde estava e a seleção cai.
 			lx, ly := f.alvoCamera(t)
 			f.camFixa = [2]float64{lx, ly}
@@ -493,7 +514,7 @@ func (f *Falso) Jogadores(ctx context.Context) ([]Jogador, error) {
 		sx, sy := w/2+(x-lx)/a1, h/2-(y-ly)/b1
 		centro := Ponto{X: sx, Y: sy, Valido: true}
 		texto := fmt.Sprintf("%.3f,%.3f", sx, sy)
-		if sx < 0 || sy < 0 || sx > w || sy > h {
+		if sx < 0 || sy < 0 || sx > w || sy > h || (len(f.PerdasTrava) > 0 && f.escondido(i, t)) {
 			centro, texto = Ponto{}, "340000000000000000000000000000000000000.000,340000000000000000000000000000000000000.000"
 		}
 		j := Jogador{Nome: jf.Nome, Tag: "br1", Invocador: jf.Nome, Campeao: jf.Campeao, Time: jf.Time,

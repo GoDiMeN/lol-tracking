@@ -19,9 +19,9 @@ export const MINUTOS_POR_PASSE_A_4X = 7.5;
 export const JOGADORES_POR_ELO = 10;
 
 // estimativaColeta: passes e segundos de uma coleta nova (antes de descobrir os jogadores).
-export function estimativaColeta({ elos, partidasPorJogador = 1, quem = 'jogador', velocidade = 4 }) {
+export function estimativaColeta({ elos, partidasPorJogador = 1, quem = 'jogador', velocidade = 4, jogadoresPorElo = JOGADORES_POR_ELO }) {
   const n = Array.isArray(elos) ? elos.length : Number(elos) || 0;
-  const passes = n * JOGADORES_POR_ELO * partidasPorJogador * (quem === 'todos' ? 10 : 1);
+  const passes = n * (Number(jogadoresPorElo) || JOGADORES_POR_ELO) * partidasPorJogador * (quem === 'todos' ? 10 : 1);
   const segundos = passes * MINUTOS_POR_PASSE_A_4X * 60 * (4 / (Number(velocidade) || 4));
   return { passes, segundos };
 }

@@ -24,14 +24,21 @@ import (
 // Padrões do passe de visão.
 const (
 	// VelocidadeVisaoPadrao: só o minimapa importa e ele não depende da
-	// câmera, então o replay pode correr. A 8× uma leitura (2 playback + a
-	// captura + a leitura do minimapa, ~3 ms) cabe no ciclo de 31 ms.
-	VelocidadeVisaoPadrao = 8.0
+	// câmera, então o replay pode correr — até onde o ciclo deixa. Era 8×,
+	// contando com um ciclo de ~31 ms; no jogo de verdade (3305449546,
+	// descobertas 9) o ciclo a 8× deu ~57 ms (mediana; 2 playback ~9 ms, o
+	// PrintWindow da janela inteira ~20 ms + ~3 ms de conversão e recorte, a
+	// leitura ~3 ms, o resto não medido sem o jogo) e a taxa caiu para 2,25
+	// capturas por segundo de jogo. A 4× o ciclo pedido é de 62,5 ms: cabe,
+	// e a taxa volta às 4 por segundo planejadas (não medido no jogo: a
+	// primeira passada a 4× confere, pelo log do fim do passe).
+	VelocidadeVisaoPadrao = 4.0
 	// CapturasPorSegundoVisao: capturas por segundo de JOGO. A 4 por segundo
 	// (uma a cada 250 ms de jogo) uma aparição de meio segundo (um inimigo
 	// cruzando a borda de uma sentinela, um Flash para fora do mato) cai em
 	// pelo menos duas capturas, e a entrada/saída da visão fica com erro de
-	// até 125 ms. Mais que isso a 8× passaria do que a leitura aguenta.
+	// até 125 ms. Com o ciclo de ~57 ms medido, 4 por segundo só cabem até
+	// 4× (VelocidadeVisaoPadrao).
 	CapturasPorSegundoVisao = 4.0
 )
 
@@ -74,21 +81,29 @@ type leituraVisao struct {
 	img   *image.RGBA
 	lt    LeituraMinimapa
 	errLe error // a captura ou a leitura não deu (a tela não é a conhecida)
+	// Onde o tempo do ciclo foi (tempo real): os dois playback, a captura e a
+	// leitura do minimapa (descobertas 9: a 8× o ciclo deu ~57 ms).
+	durAPI, durCapt, durLe time.Duration
 }
 
 // capturaVisao captura o recorte e lê o minimapa. O tempo é a média dos dois
 // playback em volta da captura (como nas amostras). Erro = a Replay API.
 func (m *motor) capturaVisao(ctx context.Context) (leituraVisao, error) {
 	var l leituraVisao
+	t0 := time.Now()
 	p1, err := m.d.API.Playback(ctx)
 	if err != nil {
 		return l, err
 	}
+	t1 := time.Now()
 	reg := m.regiaoVisao()
 	img, errCapt := m.d.Tela.Captura(reg)
+	t2 := time.Now()
 	if l.pb, err = m.d.API.Playback(ctx); err != nil {
 		return l, err
 	}
+	t3 := time.Now()
+	l.durAPI, l.durCapt = t1.Sub(t0)+t3.Sub(t2), t2.Sub(t1)
 	l.tMs = int64(math.Round((p1.Tempo + l.pb.Tempo) / 2 * 1000))
 	if errCapt != nil {
 		l.errLe = errCapt
@@ -96,6 +111,7 @@ func (m *motor) capturaVisao(ctx context.Context) (leituraVisao, error) {
 	}
 	l.img = img
 	l.lt, l.errLe = m.cfg.Minimapa.LeMinimapa(img, reg, m.s.Largura, m.s.Altura)
+	l.durLe = time.Since(t3)
 	return l, nil
 }
 
@@ -249,7 +265,7 @@ func (m *motor) rodaPasseVisao(ctx context.Context, p PasseVisao) (EstatPasse, e
 	avisouTela := false
 	var semModoDesde int64 = -1
 	ultimoTempo, paradoDesde := -1.0, m.d.Relogio.Agora()
-	var durLeitura []time.Duration
+	var durLeitura, durAPI, durCapt, durLe []time.Duration
 	retratosInimigos := 0
 	ultimaCaptura := int64(-1 << 40)
 
@@ -283,6 +299,10 @@ func (m *motor) rodaPasseVisao(ctx context.Context, p PasseVisao) (EstatPasse, e
 		}
 		errosSeguidos = 0
 		durLeitura = append(durLeitura, time.Since(ini))
+		durAPI, durCapt = append(durAPI, l.durAPI), append(durCapt, l.durCapt)
+		if l.img != nil {
+			durLe = append(durLe, l.durLe)
+		}
 		if pb.Pausado {
 			m.d.API.MudaPlayback(ctx, replay.MudaPlayback{Pausado: replay.Ptr(false)})
 		}
@@ -369,6 +389,8 @@ func (m *motor) rodaPasseVisao(ctx context.Context, p PasseVisao) (EstatPasse, e
 	if st.TFimMs > st.TIniMs {
 		st.TaxaJogo = float64(st.Amostras) / (float64(st.TFimMs-st.TIniMs) / 1000)
 	}
-	st.MsLeitura = medianaDur(durLeitura)
+	st.MsLeitura, st.MsAPI, st.MsCaptura, st.MsTela = medianaDur(durLeitura), medianaDur(durAPI), medianaDur(durCapt), medianaDur(durLe)
+	log.Printf("rastreio: passe de visão %d a %g×: %.2f capturas por segundo de jogo; ciclo mediano %.1f ms (playback %.1f, captura %.1f, leitura do minimapa %.1f)",
+		p.ID, vel, st.TaxaJogo, st.MsLeitura, st.MsAPI, st.MsCaptura, st.MsTela)
 	return st, nil
 }

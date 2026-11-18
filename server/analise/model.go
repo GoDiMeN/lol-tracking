@@ -14,6 +14,7 @@ import (
 
 	"loltracking/server/arquivo"
 	"loltracking/server/banco"
+	"loltracking/server/campeao"
 	"loltracking/server/partida"
 	"loltracking/server/rastreio"
 	"loltracking/server/riot"
@@ -27,6 +28,9 @@ func Migra(db *banco.DB) error {
 		return fmt.Errorf("converter a análise para o formato de arquivos: %w", err)
 	}
 	if err := migraQualidade(db); err != nil {
+		return err
+	}
+	if err := migraFatos(db); err != nil {
 		return err
 	}
 	return banco.Executa(db,
@@ -56,9 +60,11 @@ func Migra(db *banco.DB) error {
 }
 
 // Deps é o mundo de fora da análise. Riot é opcional (nil = sem a API da Riot).
+// Estaticos também (nil = a base de fatos sai sem nome e custo dos itens).
 type Deps struct {
-	DB   *banco.DB
-	Riot rastreio.FonteRiot
+	DB        *banco.DB
+	Riot      rastreio.FonteRiot
+	Estaticos campeao.FonteEstaticos
 }
 
 // ErrSemLinhaDoTempo: a partida não tem a linha do tempo do LCU guardada.
@@ -195,6 +201,9 @@ func Recalcula(ctx context.Context, d Deps, gameID int64) (Resumo, error) {
 			return r, err
 		}
 	}
+	// 4. A base de fatos (fatos.go): calculada aqui, com os dados já carregados, e
+	// gravada depois do commit (é derivada; se falhar, a análise continua valendo).
+	fatos := geraFatos(ctx, d, dp, retratos)
 	r.Ms = time.Since(inicio).Milliseconds()
 	if _, err := tx.Exec(`INSERT INTO analises (game_id, calculada_em, rastreados, passes, riot, abates, indicadores, avisos, ms)
 		VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (game_id) DO UPDATE SET calculada_em = excluded.calculada_em,
@@ -203,7 +212,13 @@ func Recalcula(ctx context.Context, d Deps, gameID int64) (Resumo, error) {
 		gameID, agora, jsonTexto(r.Rastreados), r.Passes, r.Riot, r.Abates, r.Indicadores, jsonTexto(r.Avisos), r.Ms); err != nil {
 		return r, err
 	}
-	return r, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return r, err
+	}
+	if err := gravaFatos(db, fatos); err != nil {
+		log.Printf("base de fatos da partida %d: %v", gameID, err)
+	}
+	return r, nil
 }
 
 // RecalculaEmSegundoPlano é o que o rastreio chama ao fechar um passe: não
@@ -458,7 +473,8 @@ func carrega(db *banco.DB, gameID int64) (*dadosPartida, error) {
 		dp.riot = leAbatesRiot(rb)
 		dp.quadrosRiot = leQuadrosRiot(rb)
 		dp.wards = leWardsRiot(rb)
-		dp.eventosSentinela = sentinelasDosEventos(eventosRiot(rb))
+		dp.eventosRiot = eventosRiot(rb)
+		dp.eventosSentinela = sentinelasDosEventos(dp.eventosRiot)
 	}
 	if v, ok, err := rastreio.LeVisao(db, gameID); err != nil {
 		return nil, err

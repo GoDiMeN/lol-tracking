@@ -41,7 +41,12 @@ func (m *motor) repesca(ctx context.Context, p Passe, a alvo, bs []Buraco, quand
 			continue
 		}
 		ok, motivo := false, ""
-		for tent := 1; tent <= 1+TentativasExtrasRepescagem && !ok; tent++ {
+		// Buraco em que o jogo tira o jogador da tela (teleporte, ou já
+		// regravado e repetido: ClassificaBuracos) tem UMA tentativa: às vezes
+		// a retravada pega mais cedo e o trecho fica abaixo do limiar, mas
+		// insistir regrava o mesmo vazio.
+		naoSel := b.Tipo == BuracoNaoSelecionavel
+		for tent := 1; tent <= 1+TentativasExtrasRepescagem && !ok && !(naoSel && tent > 1); tent++ {
 			as, es, err := m.regrava(ctx, p, a, b)
 			var fase *replay.ErroFase
 			switch {
@@ -61,8 +66,12 @@ func (m *motor) repesca(ctx context.Context, p Passe, a alvo, bs []Buraco, quand
 					} else {
 						ok = true
 					}
+				} else if naoSel || repetiu(as, b) {
+					// A perda voltou com a seleção nele: é o jogo (descobertas 8).
+					naoSel = true
+					motivo = fmt.Sprintf("o trecho regravado ficou de novo %.1f s sem a câmera no jogador: o jogo o tira da tela aqui (teleporte, Arauto do Vale); não é defeito", float64(pior)/1000)
 				} else {
-					motivo = fmt.Sprintf("o trecho regravado ainda ficou %.1f s sem a câmera no jogador", float64(pior)/1000)
+					motivo = fmt.Sprintf("o trecho regravado continuou %.1f s sem a câmera no jogador", float64(pior)/1000)
 				}
 			}
 			ev := map[string]any{"passe_id": p.ID, "participante_id": a.pid, "n": k + 1, "de_ms": b.DeMs, "ate_ms": b.AteMs,
@@ -79,6 +88,9 @@ func (m *motor) repesca(ctx context.Context, p Passe, a alvo, bs []Buraco, quand
 			res.Recuperados++
 		} else {
 			b.Motivo = motivo
+			if naoSel && parou == "" {
+				b.Tipo = BuracoNaoSelecionavel
+			}
 			res.Restantes = append(res.Restantes, b)
 		}
 	}
@@ -117,6 +129,7 @@ func (m *motor) repescaNoFim(ctx context.Context, p Passe, a alvo) (ResumoRepesc
 		return ResumoRepescagem{}, err
 	}
 	bs := Buracos(as, LimiarRepescagemMs)
+	ClassificaBuracos(as, bs, a.time, nil)
 	res := ResumoRepescagem{Quando: "fim_do_passe", Restantes: []Buraco{}, FeitaEm: banco.Agora()}
 	if len(bs) > 0 {
 		if res, err = m.repesca(ctx, p, a, bs, "fim_do_passe"); err != nil {

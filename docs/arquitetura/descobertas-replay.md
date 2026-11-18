@@ -311,6 +311,52 @@ Consequências para o código:
   polling sai antes se ela chega antes de 600 ms). A Orianna 2:29 e o Garen 13:06 saem da fonte e aparecem a 8 600–9 500
   unidades em 4–7 s: é teleporte (o mapa não interpola esses).
 
+### 8.1 O que o jogo esconde (2026-11-18, partida 3305449546, os 10 passes a 4×; medido no DADO gravado, não no jogo)
+
+Primeiro teste completo com o jogo de verdade: a repescagem recuperou 2 de 8 buracos. Os 6 que sobraram, todos com o motivo
+"o trecho regravado ainda ficou N s sem a câmera" e N ≈ a duração original, têm a mesma assinatura nas amostras: **a seleção
+continua no jogador** (`selecao_ok` em todas as primeiras amostras sem trava; a conferência falha por "fora da tela") e é o
+**jogo** que tira o campeão da tela. A repescagem regravou o mesmo vazio porque ele se repete a cada passagem do replay.
+
+| jogador | instante | buraco | o que fazia (amostras e linha do tempo) | causa |
+|---|---|---|---|---|
+| Warwick (1) | 41:04 | 4,4 s | renasceu 41:00 na fonte azul; Q/W/E/R ilegíveis (ícone cinza sem número) parado na fonte de 41:01,9 a 41:04,6; some 2,8 s depois de começar; reaparece em (13 522, 9 380), a 15 800 unidades | teleporte |
+| Master Yi (2) | 17:30 | 4,2 s | `ITEM_DESTROYED` do Olho do Arauto (3513) às 17:23,7; parado 4,4 s em (13 797, 6 419), a rota de baixo vermelha logo depois da torre externa cair (17:20); Q/W/E/D ilegíveis; some e anda devagar (vel. 182–224) 1 580 unidades até (13 431, 7 957), na direção da torre interna; o Q fica ilegível o tempo todo (não é a Investida Alfa, que mostraria a recarga). Ícones ilegíveis 0,75 s antes de sumir | montado no Arauto do Vale (hipótese pela linha do tempo; não visto na tela) |
+| Ashe (3) | 3:21 | 6,3 s | na fonte azul; ícones ilegíveis 2,8 s parada; reaparece no meio (5 798, 6 566), a 7 500 unidades, com o D em 299 s | Teleporte (D) |
+| Morgana (6) | 15:42 | 4,0 s | na rota de cima (1 772, 10 709), o F saindo da recarga (5…0) e logo ilegível 2,75 s parada; reaparece em (13 758, 4 567), a 13 500 unidades | teleporte |
+| Azir (8) | 4:07 | 6,4 s | na fonte vermelha; ícones ilegíveis 3,0 s; reaparece no meio (8 485, 8 221), D em 299 s | Teleporte (D) |
+| Azir (8) | 12:30 | 6,7 s | renasceu 12:27; ícones ilegíveis 3,0 s; reaparece no meio (8 796, 8 891), D em 246 s; a tecla da retravada no meio do teleporte deixou a seleção **vazia** (10 amostras) até a tecla seguinte | Teleporte (D) |
+
+- **Teleporte**: o campeão some da tela ~2,75–3,0 s depois de os ícones ficarem ilegíveis (a canalização) e reaparece a
+  7 500–15 800 unidades. Teclas apertadas enquanto ele está sumido não prendem (em todos os 5 casos a primeira tecla, ~1 s
+  depois de sumir, falhou; a que prendeu foi a de depois de ele reaparecer). Os teleportes mais curtos da partida ficaram
+  abaixo do limiar (Ashe 11:08 e 18:37 com 2,9 s, Morgana 26:42 com 2,6 s): o tempo sumido em si já passa de ~2,5 s, então um
+  teleporte quase nunca fecha abaixo dos 3 s mesmo com a retravada na hora. Warwick e Morgana (depois dos 14 min) não mostraram
+  recarga no F depois do salto: o ícone do Teleporte Liberado não foi conferido.
+- **As 407 amostras sem trava do passe 2 (Master Yi)**: 4 delas são do Arauto; o resto são ~100 trechos de 3–4 amostras
+  (1,0–1,3 s), a cada 10–30 s o jogo inteiro, nos campos da selva e nas lutas. **Todos começam no instante em que o Q sai de
+  pronto para 16–20 s de recarga com a mana caindo 50–68: é a Investida Alfa**, em que o Yi fica intocável e some. A seleção fica
+  nele e a câmera **volta sozinha** quando ele reaparece (nenhuma tecla: a retravada só começa com 1 s sem trava). O mapa
+  interpola esses trechos (andou pouco).
+- **Mudanças no código** (`rastreio/buracos.go`, `repescagem.go`, `repescagem_fila.go`, `motor.go`, `analise/qualidade.go`):
+  - `ClassificaBuracos` marca o buraco como `nao_selecionavel` quando as 3 primeiras amostras sem a câmera ainda têm a seleção
+    nele e (a) as leituras boas das pontas estão mais longe do que se anda (a mesma conta de `PodeInterpolar`) sem a de depois
+    ser a fonte (teleporte), ou (b) uma repescagem já regravou o trecho e a perda voltou (inclusive pelo motivo antigo, que é
+    o caso dos 6 desta partida). Os 6 saem `nao_selecionavel` no dado gravado (5 pelas duas regras, o Arauto só pela (b)).
+  - A repescagem dá **uma** tentativa a esse buraco; se a perda volta com a seleção nele, para (sem a tentativa extra) e grava o
+    restante com o tipo e o motivo "o jogo o tira da tela aqui". O plano da repescagem de passe gravado não inclui mais o que
+    já foi regravado e repetiu (nesta partida o plano fica vazio).
+  - Na checagem de qualidade vira `nao_selecionavel`, informativo, fora do total (nesta partida o total cai de 8 para 2: os
+    dois `salto` que sobram são o teleporte curto da Morgana às 26:42 e um salto de 2 986 unidades em 2,7 s da Kai'Sa às 8:37,
+    não investigado). O mapa liga as pontas quando `PodeInterpolar` deixa (o Arauto, sim; teleporte, não: mostra o salto).
+  - Retravada mais cedo: se depois da tecla a seleção sai do jogador (o caso do Azir às 12:30), o motor aperta de novo depois de
+    `EsperaMinimaTrava` em vez de esperar o resto de `EsperaTrava` (a câmera não chega sozinha sem a seleção). No Azir seriam até
+    ~2 s de jogo a menos; nos outros teleportes a seleção ficou nele e nada muda.
+- **Não verificado no jogo**: o Arauto (só pela linha do tempo e pela velocidade); se a tecla apertada com o campeão sumido
+  sempre limpa a seleção ou só às vezes (1 de 5 aqui); se apertar de novo logo depois da seleção cair não gasta as 5
+  tentativas antes de o teleporte terminar; se a câmera volta sozinha depois do teleporte com a seleção mantida (no Warwick e
+  na Morgana voltou 1,3–1,8 s depois da primeira tecla, sem a segunda: não dá para separar).
+
 ## 9. Visão de time: névoa por time e o minimapa (2026-11-17/18; 3 capturas do jogo, o resto NÃO verificado no jogo)
 
 Medido pelo dono em 2026-11-17 na partida 3304217746, 2560×1440, com uma sonda PowerShell (scancodes `0x3B`/`0x3C`/`0x3D`,
@@ -327,7 +373,7 @@ captura por `PrintWindow`): replay em 10:00 a 1×, 3 s rodando, pausado; uma cap
   só as sentinelas do time aparecem. Retrato = imagem redonda com um anel de ~2 px na cor do time (azul `0099e0`, vermelho
   `e83d3d`), raio 14,5 px; as torres e inibidores têm outras cores (azul `389bba`, vermelho `7c2221`) e formas; as tropas são
   pontos de ~4 px. A captura foi em **10:03,0** (não 10:00: o seek a 1× andou 3 s), confirmado pelo melhor ajuste.
-- **Geometria** (`server/replay/minimapa.go`): `px = 2206,79 + 0,022681·x`, `py = 1423,53 − 0,023068·y` (tela 2560×1440),
+- **Geometria** (a primeira; **substituída em 9.1**): `px = 2206,79 + 0,022681·x`, `py = 1423,53 − 0,023068·y` (tela 2560×1440),
   ajustada nos 6 retratos achados contra as posições rastreadas: erro quadrático médio **1,05 px** (máximo 2,0 px, o da Diana,
   meio coberto pela Orianna); 1 px ≈ 44 unidades. Os limites do mapa 11 do map11.png esticados no quadrado preto do minimapa
   (x 2206–2546, y 1083–1423) dão 2,9 px (máximo 4,1): o minimapa do jogo tem a escala vertical ~1,7% maior.
@@ -349,8 +395,76 @@ captura por `PrintWindow`): replay em 10:00 a 1×, 3 s rodando, pausado; uma cap
   retrato da Vi e um marcador vermelho de outro desenho no rio de cima (tipo não identificado). Em "todos", a azul do rio de
   baixo some embaixo da vermelha. Duas tropas encostadas também parecem o marcador na tolerância de 1 px: o tamanho (12–14 px)
   é o que separa.
-- **NÃO verificado no jogo** (o passe de visão foi feito e testado só com o jogo falso): se o painel aparece e muda com o replay
+- **NÃO verificado no jogo (até 2026-11-17; ver 9.1)** (o passe de visão foi feito e testado só com o jogo falso): se o painel aparece e muda com o replay
   rodando a 8×; se a névoa sobrevive ao seek; se apertar F1 duas vezes continua em "Blue"; se o minimapa a 8× desenha os retratos
   no lugar certo (atraso de desenho); a confiabilidade da leitura em mais situações (lutas com 3+ retratos encostados, base,
   borda do mapa, sentinela de controle e outros marcadores, retrato do Shaco/clone, Neeko); o erro da geometria longe dos 6
   pontos medidos (cantos do mapa).
+
+### 9.1 Os dois passes de visão da 3305449546 (2026-11-18; refeito no DADO, sem o jogo)
+
+Os passes a 8× (5 533 capturas na visão azul, 5 557 na vermelha, 41 min) com os 10 rastreados a 4×. O painel conferiu a névoa
+em 98% das capturas (as outras ~110 de cada passe, com o painel ilegível). Tudo abaixo é o bruto (`visao-p<n>-capturas.tsv`)
+refeito com as posições rastreadas, sem abrir o replay.
+
+- **Geometria refeita** com todos os pares "anel do próprio time achado ↔ posição rastreada daquele aliado no mesmo instante"
+  (casados a ≤ 8 px, iterando o ajuste; fora a 2 500 unidades das fontes, onde a posição "base" é a fonte fixa): **38 480
+  pares** (18 368 azuis, 20 112 vermelhos), o mapa inteiro. Por mínimos quadrados, eixo a eixo:
+  `px = 2205,37 + 0,022861·x`, `py = 1422,54 − 0,022893·y` (era `2206,79 + 0,022681·x`, `1423,53 − 0,023068·y`). As duas
+  escalas saem iguais a 0,1% (o minimapa é quadrado); a velha errava ~0,8% em cada eixo (até ~3 px nos cantos), por ter vindo
+  de 6 pontos perto do centro de uma captura.
+  - Resíduo nos mesmos pares: **nova 1,68 px (rms), mediana 0,71, 95% abaixo de 3,5**; a velha 1,93 / 1,20 / 3,7 — e 2,45 /
+    1,81 / 4,5 como era usada (sem a correção do atraso, abaixo).
+  - **É linear**: o resíduo médio em cada nono do mapa (grade de 5 000 unidades) fica entre −0,2 e +0,7 px (o maior, +0,7 px
+    vertical, no canto da base azul); um ajuste com termos quadráticos e cruzados baixa o rms só de 1,68 para 1,66 px.
+  - Nas 3 capturas pausadas de 2026-11-17 (sem atraso nenhum), a geometria nova põe os 6 retratos a 0,4–1,7 px das posições
+    rastreadas (os testes de `visao` continuam passando).
+- **Atraso**: deslocando o instante da posição rastreada de −1 s a +1 s, o erro é mínimo com a posição de **175–200 ms de
+  jogo ANTES** do carimbo da captura (mediana 0,71 px contra 1,54 px sem deslocar; ±100 ms em volta do mínimo pioram 0,1–0,2
+  px; só os pares de quem andava: 0,73 contra 1,85). A 8× isso é ~22 ms reais, pouco mais de um quadro a 60 Hz: o PrintWindow
+  devolve o último quadro composto. Fica `replay.AtrasoMinimapaMs` = 22 ms reais × a velocidade do passe (hipótese: tempo real;
+  só 8× foi medido) e a decisão usa as posições daquele instante.
+- **Aliados achados e indeterminado** (visão azul / vermelha):
+
+  | | aliados achados | indeterminado |
+  |---|---|---|
+  | antes (geometria velha, sem atraso) | 78,4% / 86,6% | 14,5% / 13,3% |
+  | geometria nova + atraso | 78,5% / 87,0% | 12,2% / 13,1% |
+  | + aliados conferíveis e oclusão a 20 px (o que ficou) | **96,2% / 95,3%** | **10,7% / 16,6%** |
+
+  A geometria quase não mexeu nos aliados: o que faltava não era geometria. Dos aliados vivos com posição não achados, a
+  maioria tinha **outro campeão encostado**: achados por distância do vizinho mais perto (azul / vermelho): 0–12 px 57–62% /
+  69–89%, 12–16 px 67% / 81%, 16–20 px 77% / 90%, 20–24 px 90% / 95%, ≥ 24 px 94–98%; a menos de 2 500 da própria fonte, 48% /
+  66% (a posição "base" é a fonte fixa e os retratos se juntam). Sem vizinho e longe da fonte, só ~1–1,7% sem anel nenhum. Por
+  isso a conferência passou a contar só os aliados **conferíveis** (sem outro campeão a < 20 px, longe da fonte) e a oclusão
+  ("coberto") passou de 12 para 20 px, contando também o lugar dos aliados do observador (desenhados sempre, achados ou não):
+  com 12 px, um inimigo a 12–20 px de outro retrato e sem anel saía "fora" quando 10–33% das vezes o anel estava só embaixo.
+  O motivo `aliados` caiu de 7,4% / 4,0% para 1,0% / 1,4% do tempo; `borda` de 2,1% para 0,2% (a geometria velha punha as
+  posições perto demais da borda); `coberto` subiu de 4,3% / 7,6% para 9,0% / 13,3% (a Kai'Sa, sempre junto da Nami e na
+  frente da dupla vermelha, ficou 28,5% indeterminada para o vermelho). Menos "fora" errado em troca de mais indeterminado.
+- **Taxa** (2,25 capturas por segundo de jogo nos dois, não 4): o intervalo entre capturas foi de **454 ms de jogo** na
+  mediana (10% abaixo de 399, 10% acima de 494) = **~57 ms reais por ciclo** a 8×, regular (não são paradas soltas). O que dá
+  para pôr no ciclo sem o jogo: os dois `playback` ~9 ms (4.1), o PrintWindow da janela inteira ~20 ms (7), a conversão
+  BGRA→RGBA da janela inteira + o recorte 3,3 ms (benchmark), a leitura do minimapa 2,8 ms (benchmark): ~35 ms; os ~20 ms que
+  faltam não dá para medir sem o jogo (provavelmente a captura mais lenta com o jogo a 8×: em 4.1 a leitura a 8× já era 5 ms
+  mais lenta que a 4×). A 8× o ciclo pedido é de 31 ms: não cabe nem sem a leitura. **O padrão passou para 4×**
+  (`VelocidadeVisaoPadrao`; ciclo pedido de 62,5 ms, acima dos ~57 medidos: deve dar ~3,9–4 por segundo), o dobro do tempo do
+  passe (~10 min por time numa partida de 41 min, em vez de ~5). O passe agora mede e loga no fim o ciclo e as partes
+  (`playback`, captura, leitura) e manda no `visao_fim`.
+- **Três casos conferidos no dado** (com o que ficou):
+  1. **Gank do Master Yi na rota de baixo (abate na Yunara às 5:52)**, visão vermelha: de 5:30 a 5:40 ele está no rio/selva de
+     baixo, a 1 500–2 100 da dupla vermelha e a ~4 000 da sentinela vermelha mais perto: **"fora"** em todas as capturas
+     (nenhum anel azul a menos de 30 px dele). Às 5:41 aparece 1 s (anel a 1,7 px; a 1 100 da Poppy) e volta a "fora"; da
+     aproximação ao abate (5:43–5:54) fica **indeterminado**: anel encostado na Poppy/Yunara (`coberto`), a Investida Alfa às 5:49
+     (`sem_posicao`) e um anel azul sem dono do outro lado do mapa (`anel_sem_dono`). Coerente: estava fora antes de aparecer,
+     e o mergulho em si não dá para decidir pelo minimapa.
+  2. **Inimigo perto de sentinela**: a ≤ 600 unidades de uma sentinela do observador lida no minimapa, os inimigos ficaram
+     visíveis em 100 de 128 segundos (visão azul) e 105 de 166 (vermelha); "fora" em 15 e 29 (8 deles no último segundo da
+     sentinela: o inimigo chegou e ela sumiu, quase sempre limpa por ele), o resto indeterminado. "Fora" ao lado de uma
+     sentinela pode ser legítimo (mato: a sentinela fora do mato não vê dentro), não conferido na tela.
+  3. **Azir renascendo e teleportando (12:27–12:42)**, visão azul: na fonte vermelha, "fora" (12:28 e 12:30; 12:29
+     indeterminado por um anel vermelho sem dono); durante o teleporte (12:31–12:36) indeterminado por `sem_posicao` (é o buraco
+     `nao_selecionavel` da 8.1); ao chegar no meio (8 796, 8 891) às 12:37, **"visível"** (anel a 0,3–0,9 px) mesmo com o azul mais
+     perto a 2 400 e a sentinela azul a 2 600 — provavelmente as tropas azuis da rota (não conferido).
+- **NÃO verificado no jogo**: a taxa a 4× (a próxima passada loga o ciclo); se o atraso do minimapa é tempo real (a 4× seriam
+  ~88 ms de jogo) ou de jogo; os ~20 ms do ciclo a 8× que não aparecem nas partes medidas; os casos 2 e 3 na tela.

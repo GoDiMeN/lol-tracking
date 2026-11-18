@@ -27,11 +27,18 @@ type PlanoRepescagem struct {
 	ParticipanteID int      `json:"participante_id"`
 	Buracos        []Buraco `json:"buracos"`
 	passe          Passe
+	// jaRegravados: buracos que uma repescagem anterior já regravou e em que
+	// o jogo tirou o jogador da tela de novo (BuracoNaoSelecionavel): não
+	// entram no plano, mas voltam ao resumo novo (senão a prova se perde e a
+	// próxima repescagem tentaria de novo).
+	jaRegravados []Buraco
 }
 
 // PlanoDeRepescagem acha, para cada participante (todos ou os pedidos), o
 // passe que vale na partida (o concluído mais recente, com bloco) e os buracos
-// dele maiores que LimiarRepescagemMs. Só entram passes com buraco.
+// dele maiores que LimiarRepescagemMs. Só entram passes com buraco. Buraco que
+// uma repescagem já regravou e em que o jogo tirou o jogador da tela de novo
+// (ClassificaBuracos) não entra: regravar daria o mesmo vazio.
 func PlanoDeRepescagem(db *banco.DB, gameID int64, participantes []int) ([]PlanoRepescagem, error) {
 	pt, err := partida.Le(db, gameID)
 	if err != nil {
@@ -57,8 +64,19 @@ func PlanoDeRepescagem(db *banco.DB, gameID int64, participantes []int) ([]Plano
 		if err != nil {
 			return nil, err
 		}
-		if bs := Buracos(as, LimiarRepescagemMs); len(bs) > 0 {
-			planos = append(planos, PlanoRepescagem{PasseID: p.ID, ParticipanteID: p.ParticipanteID, Buracos: bs, passe: p})
+		bs := Buracos(as, LimiarRepescagemMs)
+		ClassificaBuracos(as, bs, timeDe(db, gameID, p.ParticipanteID), p.Repescagem)
+		pl := PlanoRepescagem{PasseID: p.ID, ParticipanteID: p.ParticipanteID, Buracos: []Buraco{}, passe: p}
+		for _, b := range bs {
+			if b.Tipo == BuracoNaoSelecionavel && reproduzido(b, p.Repescagem) {
+				b.Motivo = "já regravado antes: o jogo tira o jogador da tela aqui; não é defeito"
+				pl.jaRegravados = append(pl.jaRegravados, b)
+				continue
+			}
+			pl.Buracos = append(pl.Buracos, b)
+		}
+		if len(pl.Buracos) > 0 {
+			planos = append(planos, pl)
 		}
 	}
 	sort.Slice(planos, func(a, b int) bool { return planos[a].ParticipanteID < planos[b].ParticipanteID })
@@ -253,6 +271,9 @@ func (f *Fila) correRepescagem(ctx context.Context, c *corrida, pt partida.Parti
 		} else {
 			descartaTrabalho(f.d.DB, p.ID)
 		}
+		tentados := res.Restantes
+		// O resumo gravado guarda também os que ficaram de fora do plano.
+		res.Restantes = append(append([]Buraco{}, tentados...), pl.jaRegravados...)
 		res.Sobraram = len(res.Restantes)
 		if errR == nil || res.Recuperados > 0 {
 			if err := gravaResumoRepescagem(f.d.DB, p.ID, res); err != nil {
@@ -261,7 +282,7 @@ func (f *Fila) correRepescagem(ctx context.Context, c *corrida, pt partida.Parti
 		}
 		tot.Buracos += res.Buracos
 		tot.Recuperados += res.Recuperados
-		tot.Restantes = append(tot.Restantes, res.Restantes...)
+		tot.Restantes = append(tot.Restantes, tentados...)
 		if errR != nil {
 			falha(errR)
 			return

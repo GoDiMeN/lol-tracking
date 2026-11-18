@@ -630,6 +630,41 @@ func partidasNoBanco(db *banco.DB, puuid string) ([]int64, error) {
 	return ids, linhas.Err()
 }
 
+// JogoGuardado é uma partida guardada vista por um jogador (o contexto do
+// jogador na base de fatos da análise: função principal, sequência).
+type JogoGuardado struct {
+	GameID     int64  `json:"game_id"`
+	CriadaEmMs int64  `json:"criada_em_ms"`
+	Fila       int    `json:"fila"`
+	Campeao    string `json:"campeao"`
+	Posicao    string `json:"posicao"`
+	Venceu     bool   `json:"venceu"`
+}
+
+// HistoricoGuardado lista as partidas guardadas do puuid criadas antes de
+// antesDeMs (a mais nova primeiro). Só o banco: nenhum pedido ao LCU.
+func HistoricoGuardado(db *banco.DB, puuid string, antesDeMs int64) ([]JogoGuardado, error) {
+	l := []JogoGuardado{}
+	if puuid == "" {
+		return l, nil
+	}
+	linhas, err := db.Query(`SELECT p.game_id, p.criada_em_ms, p.fila, pt.campeao, pt.posicao, pt.venceu
+		FROM partidas p JOIN participantes pt ON pt.game_id = p.game_id
+		WHERE pt.puuid = ? AND p.criada_em_ms < ? ORDER BY p.criada_em_ms DESC`, puuid, antesDeMs)
+	if err != nil {
+		return nil, err
+	}
+	defer linhas.Close()
+	for linhas.Next() {
+		var j JogoGuardado
+		if err := linhas.Scan(&j.GameID, &j.CriadaEmMs, &j.Fila, &j.Campeao, &j.Posicao, &j.Venceu); err != nil {
+			return nil, err
+		}
+		l = append(l, j)
+	}
+	return l, linhas.Err()
+}
+
 func b2i(b bool) int {
 	if b {
 		return 1

@@ -34,8 +34,19 @@ const NomeVisao = "visao.json"
 
 func nomeCapturasVisao(passeID int64) string { return fmt.Sprintf("visao-p%d-capturas.tsv", passeID) }
 
+// prefixoGeometria abre a primeira linha do arquivo de capturas: a geometria
+// do minimapa com que as marcas viraram posição do mapa
+// ("#geometria \t x0 \t x_px \t y0 \t y_px"). Arquivo sem ela é de antes de
+// 2026-11-18 (replay.GeometriaMinimapa20261117). Ao ler, as marcas voltam ao
+// pixel pela geometria do arquivo e viram posição pela atual: o bruto não
+// muda e a geometria nova vale para as capturas velhas.
+const prefixoGeometria = "#geometria"
+
 func textoCapturas(cs []CapturaVisao) []byte {
 	var b bytes.Buffer
+	g := replay.GeometriaMinimapaAtual
+	fmt.Fprintf(&b, "%s\t%s\t%s\t%s\t%s\n", prefixoGeometria, strconv.FormatFloat(g.X0, 'f', -1, 64), strconv.FormatFloat(g.XPx, 'f', -1, 64),
+		strconv.FormatFloat(g.Y0, 'f', -1, 64), strconv.FormatFloat(g.YPx, 'f', -1, 64))
 	for _, c := range cs {
 		b.WriteString(strconv.FormatInt(c.TMs, 10))
 		b.WriteByte('\t')
@@ -51,11 +62,27 @@ func textoCapturas(cs []CapturaVisao) []byte {
 
 func capturasDoTexto(texto []byte) ([]CapturaVisao, error) {
 	var cs []CapturaVisao
+	g := replay.GeometriaMinimapa20261117
 	for n, linha := range bytes.Split(texto, []byte{'\n'}) {
 		if len(linha) == 0 {
 			continue
 		}
 		p := bytes.Split(linha, []byte{'\t'})
+		if string(p[0]) == prefixoGeometria {
+			var v [4]float64
+			if len(p) != 5 {
+				return nil, fmt.Errorf("capturas da visão: linha %d: geometria fora do formato", n+1)
+			}
+			for k := range v {
+				x, err := strconv.ParseFloat(string(p[k+1]), 64)
+				if err != nil || (k%2 == 1 && x == 0) {
+					return nil, fmt.Errorf("capturas da visão: linha %d: geometria fora do formato", n+1)
+				}
+				v[k] = x
+			}
+			g = replay.GeometriaMinimapa{X0: v[0], XPx: v[1], Y0: v[2], YPx: v[3]}
+			continue
+		}
 		if len(p) != 4 {
 			return nil, fmt.Errorf("capturas da visão: linha %d fora do formato", n+1)
 		}
@@ -70,9 +97,20 @@ func capturasDoTexto(texto []byte) ([]CapturaVisao, error) {
 		if c.Sentinelas, err = marcasDoTexto(string(p[3])); err != nil {
 			return nil, fmt.Errorf("capturas da visão: linha %d: %w", n+1, err)
 		}
+		if g != replay.GeometriaMinimapaAtual {
+			reprojeta(c.Retratos, g)
+			reprojeta(c.Sentinelas, g)
+		}
 		cs = append(cs, c)
 	}
 	return cs, nil
+}
+
+// reprojeta leva as marcas da geometria g para a atual (mesmo pixel).
+func reprojeta(ms []MarcaMinimapa, g replay.GeometriaMinimapa) {
+	for i := range ms {
+		ms[i].X, ms[i].Y = g.ParaAtual(ms[i].X, ms[i].Y)
+	}
 }
 
 // VisaoDaPartida é o visao.json (e a resposta de GET .../visao).
@@ -356,6 +394,7 @@ func deduzVisaoDoTime(pv PasseVisao, cs []CapturaVisao, f fonteDePosicoes) Visao
 	}
 	modo := ModoDoTime(pv.Time)
 	modoOK, aliVivos, aliAchados := 0, 0, 0
+	atraso := atrasoMinimapaJogoMs(pv.Velocidade)
 	for k, c := range cs {
 		lo, hi := c.TMs-500, c.TMs+500
 		if k > 0 {
@@ -371,9 +410,11 @@ func deduzVisaoDoTime(pv PasseVisao, cs []CapturaVisao, f fonteDePosicoes) Visao
 		if ok {
 			modoOK++
 		}
+		// O minimapa da captura mostra o jogo de AtrasoMinimapaMs (tempo real)
+		// antes do carimbo: as posições rastreadas são as daquele instante.
 		js := make([]PosicaoNoInstante, 0, len(todos))
 		for _, pid := range todos {
-			js = append(js, f.noInstante(pid, c.TMs))
+			js = append(js, f.noInstante(pid, c.TMs-atraso))
 		}
 		r := ClassificaCaptura(LeituraMinimapa{Modo: c.Modo, Retratos: c.Retratos, Sentinelas: c.Sentinelas}, ok, pv.Time, js)
 		aliVivos += r.AliadosVivos
@@ -413,6 +454,15 @@ func deduzVisaoDoTime(pv PasseVisao, cs []CapturaVisao, f fonteDePosicoes) Visao
 	}
 	v.Sentinelas = acompanhaSentinelas(cs, pv.Time, modo)
 	return v
+}
+
+// atrasoMinimapaJogoMs é replay.AtrasoMinimapaMs (tempo real) em ms de jogo
+// à velocidade vel do passe de visão (0 = a padrão).
+func atrasoMinimapaJogoMs(vel float64) int64 {
+	if vel <= 0 {
+		vel = VelocidadeVisaoPadrao
+	}
+	return int64(math.Round(replay.AtrasoMinimapaMs * vel))
 }
 
 // juntaIntervalo acrescenta [lo, hi), emendando no último se encostar.

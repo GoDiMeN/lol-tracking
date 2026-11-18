@@ -22,6 +22,8 @@ test('aprendizado: estimativa de 7,5 min por passe a 4×', () => {
   // Os 10 de cada partida, 2 partidas, a 8×: 2 elos × 10 × 2 × 10 = 400 passes, metade do tempo cada.
   assert.deepEqual(estimativaColeta({ elos: 2, partidasPorJogador: 2, quem: 'todos', velocidade: 8 }), { passes: 400, segundos: 400 * 225 });
   assert.equal(estimativaColeta({ elos: [] }).passes, 0);
+  // Por amostragem pedindo 1 jogador por elo: Platina, Ouro e Prata = 3 passes.
+  assert.equal(estimativaColeta({ elos: 3, jogadoresPorElo: 1 }).passes, 3);
 });
 
 test('aprendizado: destaques por elo, filtro por função e números da liga', () => {

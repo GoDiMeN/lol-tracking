@@ -32,6 +32,11 @@ const (
 	QArquivo       = "arquivo_ilegivel"  // passe registrado sem o arquivo legível em dados/partidas/<id>/
 	QSemBloco      = "passe_sem_bloco"   // passe concluído com amostras e nenhum arquivo registrado
 
+	// QNaoSelecionavel: buraco em que o jogo tira o jogador da tela (teleporte, Arauto do Vale;
+	// rastreio.ClassificaBuracos). Informativo: entra na lista e na contagem, NÃO no total
+	// (não é defeito da captura).
+	QNaoSelecionavel = rastreio.BuracoNaoSelecionavel
+
 	// Checagens da ANÁLISE (qualidade_analise.go): o dado pode estar bom e a dedução, não.
 	QEtiquetaImpossivel = "etiqueta_impossivel"  // ex.: farmando morto; na base longe da base
 	QEtiquetaPiscando   = "etiqueta_piscando"    // a atividade troca várias vezes em poucos segundos
@@ -99,8 +104,19 @@ func ConfereQualidade(p rastreio.Passe, time int, as []rastreio.Amostra) Qualida
 	paradoAnotado := false
 	// Buraco: a mesma regra da repescagem (rastreio.Buracos): jogador vivo sem a
 	// posição de verdade, seja sem amostra nenhuma, seja com a trava perdida (o
-	// motor agora grava o trecho marcado em vez de deixá-lo vazio).
-	for _, b := range rastreio.Buracos(as, BuracoMs) {
+	// motor agora grava o trecho marcado em vez de deixá-lo vazio). O que o jogo esconde
+	// (teleporte...) sai como nao_selecionavel, informativo.
+	bs := rastreio.Buracos(as, BuracoMs)
+	rastreio.ClassificaBuracos(as, bs, time, p.Repescagem)
+	for _, b := range bs {
+		if b.Tipo == rastreio.BuracoNaoSelecionavel {
+			q.Contagem[QNaoSelecionavel]++
+			if len(q.Pontos) < MaxPontosQualidade {
+				q.Pontos = append(q.Pontos, PontoQualidade{Tipo: QNaoSelecionavel, TMs: b.DeMs, Texto: fmt.Sprintf(
+					"%.1f s com o jogador fora da tela por causa do jogo (teleporte, Arauto do Vale): não é defeito, o mapa liga as pontas quando dá", float64(b.DuracaoMs())/1000)})
+			}
+			continue
+		}
 		texto := fmt.Sprintf("%.1f s sem amostra", float64(b.DuracaoMs())/1000)
 		if b.Amostras > 0 {
 			texto = fmt.Sprintf("%.1f s sem a câmera no jogador (%d amostras sem posição de verdade)", float64(b.DuracaoMs())/1000, b.Amostras)

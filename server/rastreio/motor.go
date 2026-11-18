@@ -43,7 +43,8 @@ type Config struct {
 	// Minimapa: a leitura do minimapa do passe de visão de time (pacote
 	// visao). Nil = os passes de visão são recusados.
 	Minimapa LeitorDeMinimapa
-	// VelocidadeVisao: a velocidade do replay nos passes de visão (padrão 8).
+	// VelocidadeVisao: a velocidade do replay nos passes de visão (padrão
+	// VelocidadeVisaoPadrao, 4).
 	VelocidadeVisao float64
 }
 
@@ -178,15 +179,17 @@ func (m *motor) le(ctx context.Context) (leituraJogo, error) {
 
 // EstatPasse é o resumo de uma execução de passe (para o SSE e a sonda).
 type EstatPasse struct {
-	Amostras       int     `json:"amostras"`
-	Retravas       int     `json:"retravas"`
-	Tentativas     int     `json:"tentativas_trava"`
-	SemTrava       int     `json:"amostras_sem_trava"`
-	Mortes         int     `json:"mortes_vistas"`
-	TaxaJogo       float64 `json:"taxa"`
-	MsLeitura      float64 `json:"ms_leitura_mediana"`
-	MsCaptura      float64 `json:"ms_captura_mediana"`
-	MsTela         float64 `json:"ms_tela_mediana"`
+	Amostras   int     `json:"amostras"`
+	Retravas   int     `json:"retravas"`
+	Tentativas int     `json:"tentativas_trava"`
+	SemTrava   int     `json:"amostras_sem_trava"`
+	Mortes     int     `json:"mortes_vistas"`
+	TaxaJogo   float64 `json:"taxa"`
+	MsLeitura  float64 `json:"ms_leitura_mediana"`
+	MsCaptura  float64 `json:"ms_captura_mediana"`
+	MsTela     float64 `json:"ms_tela_mediana"`
+	// MsAPI: os pedidos à Replay API do ciclo (só no passe de visão).
+	MsAPI          float64 `json:"ms_api_mediana,omitempty"`
 	TIniMs, TFimMs int64
 }
 
@@ -269,8 +272,9 @@ type retrava struct {
 }
 
 // passoRetrava avança a retravada depois de uma leitura: ok = a leitura já
-// conferiu a trava; morto = o jogador morreu (a câmera volta sozinha ao renascer).
-func (m *motor) passoRetrava(ctx context.Context, rt *retrava, p Passe, a alvo, ok, morto bool, pr *progresso) error {
+// conferiu a trava; morto = o jogador morreu (a câmera volta sozinha ao
+// renascer); selOK = a seleção do replay está no jogador.
+func (m *motor) passoRetrava(ctx context.Context, rt *retrava, p Passe, a alvo, ok, morto, selOK bool, pr *progresso) error {
 	if !rt.ativa {
 		return nil
 	}
@@ -283,8 +287,16 @@ func (m *motor) passoRetrava(ctx context.Context, rt *retrava, p Passe, a alvo, 
 		rt.ativa = false
 		return nil
 	}
-	if rt.esperando && m.d.Relogio.Agora().Sub(rt.teclaEm) < replay.EsperaTrava {
-		return nil
+	if rt.esperando {
+		// Espera a câmera chegar até EsperaTrava. Mas se a seleção saiu do
+		// jogador depois da tecla, ela não vai chegar sozinha: aperta de novo
+		// já (na 3305449546 a tecla no meio do teleporte do Azir, 12:31,
+		// deixou a seleção vazia até a tecla seguinte, 2,3 s de jogo depois;
+		// descobertas 8).
+		passou := m.d.Relogio.Agora().Sub(rt.teclaEm)
+		if passou < replay.EsperaTrava && (selOK || passou < replay.EsperaMinimaTrava) {
+			return nil
+		}
 	}
 	if rt.tentativas >= replay.MaxTentativasTrava {
 		rt.ativa = false
@@ -527,7 +539,7 @@ func (m *motor) segue(ctx context.Context, tr trecho) (EstatPasse, error) {
 				}
 			}
 		}
-		if err := m.passoRetrava(ctx, &rt, p, a, am.Origem == OrigemCamera, j.Morto, pr); err != nil {
+		if err := m.passoRetrava(ctx, &rt, p, a, am.Origem == OrigemCamera, j.Morto, am.SelecaoOK, pr); err != nil {
 			return st, err
 		}
 		estavaMorto = j.Morto

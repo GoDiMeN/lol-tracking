@@ -86,7 +86,7 @@ func TestRealDescoberta(t *testing.T) {
 	var id int64
 	db.QueryRow(`SELECT id FROM aprendizado_coletas WHERE fase = 'descoberta' ORDER BY id DESC LIMIT 1`).Scan(&id)
 	if id == 0 {
-		if id, err = criaColeta(db, "BR1", elos, 1, QuemJogador, 4); err != nil {
+		if id, err = criaColeta(db, novaColeta{regiao: "BR1", elos: elos, ppj: 1, quem: QuemJogador, vel: 4}); err != nil {
 			t.Fatal(err)
 		}
 	} else {

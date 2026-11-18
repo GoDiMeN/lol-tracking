@@ -135,6 +135,118 @@ func TestRepescagemNoFimDoPasse(t *testing.T) {
 	}
 }
 
+// O jogo esconde o campeão com a seleção nele (teleporte, Arauto do Vale;
+// descobertas 8) em toda passagem: a repescagem tenta UMA vez, vê que a perda
+// se repete com a seleção nele e marca o trecho como nao_selecionavel, que
+// não volta ao plano de repescagem nem conta como buraco na qualidade.
+func TestRepescagemNaoSelecionavel(t *testing.T) {
+	a := prepara(t, func(j *replay.Falso, c *Config) {
+		j.PerdasTrava = []replay.PerdaTravaFalsa{{Indice: 2, De: 150, Ate: 158, Escondido: true}}
+	})
+	r, exID, err := a.fila.Cria(context.Background(), partidaTeste, Pedido{Jogadores: []int{3}, Velocidade: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.fila.Espera()
+	p := a.passes(t, r.ID)[0]
+	if p.Estado != Concluido || p.Repescagem == nil || p.Repescagem.Buracos != 1 || p.Repescagem.Recuperados != 0 ||
+		len(p.Repescagem.Restantes) != 1 || p.Repescagem.Restantes[0].Tipo != BuracoNaoSelecionavel ||
+		!strings.Contains(p.Repescagem.Restantes[0].Motivo, "não é defeito") {
+		t.Fatalf("passe %s resumo %+v", p.Estado, p.Repescagem)
+	}
+	if n, _ := tiposDe(t, a.hub, exID); n["repescagem_trecho"] != 1 {
+		t.Fatalf("tentativas: %v", n)
+	}
+	// As amostras do trecho estão marcadas e com a seleção no jogador.
+	pg, _ := ListaAmostras(a.db, partidaTeste, 3, 150500, 152000, 0, 1000)
+	sel := 0
+	for _, am := range pg.Amostras {
+		if am.TravaPerdida && am.SelecaoOK {
+			sel++
+		}
+	}
+	if sel < 3 {
+		t.Fatalf("só %d amostras perdidas com a seleção nele", sel)
+	}
+	planos, err := PlanoDeRepescagem(a.db, partidaTeste, nil)
+	if err != nil || len(planos) != 0 {
+		t.Fatalf("plano: %+v %v", planos, err)
+	}
+	teclasPermitidas(t, a.jogo.Teclas)
+	if a.jogo.Aberto() {
+		t.Fatal("o replay ficou aberto")
+	}
+}
+
+// Classificação pelo dado: teleporte (salto maior que o que se anda, seleção
+// nele no começo), repetido numa repescagem anterior (motivo antigo ou tipo)
+// e o buraco comum (a seleção caiu).
+func TestClassificaBuracos(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	am := func(tms int64, x, y float64, perdida, sel bool) Amostra {
+		a := Amostra{TMs: tms, X: f(x), Y: f(y), Origem: OrigemCamera, SelecaoOK: sel}
+		if perdida {
+			a.Origem, a.TravaPerdida = OrigemInterpolada, true
+		}
+		return a
+	}
+	// 0–1 s parado na fonte azul, 1,25–5 s sem a câmera, 5,25 s no meio do mapa.
+	var as []Amostra
+	for t := int64(0); t <= 1000; t += 250 {
+		as = append(as, am(t, 400, 600, false, true))
+	}
+	for t := int64(1250); t <= 5000; t += 250 {
+		as = append(as, am(t, 400, 600, true, true))
+	}
+	as = append(as, am(5250, 7400, 7400, false, true))
+	bs := Buracos(as, LimiarRepescagemMs)
+	ClassificaBuracos(as, bs, 100, nil)
+	if len(bs) != 1 || bs[0].Tipo != BuracoNaoSelecionavel {
+		t.Fatalf("teleporte: %+v", bs)
+	}
+	// A seleção caiu logo no começo: buraco comum, mesmo com o salto.
+	semSel := append([]Amostra(nil), as...)
+	semSel[6].SelecaoOK = false
+	bs = Buracos(semSel, LimiarRepescagemMs)
+	ClassificaBuracos(semSel, bs, 100, nil)
+	if bs[0].Tipo != "" {
+		t.Fatalf("seleção caiu: %+v", bs)
+	}
+	// Chegando à fonte (volta à base): não é teleporte.
+	volta := append([]Amostra(nil), as...)
+	for i := range volta {
+		if !volta[i].TravaPerdida {
+			x, y := 7400.0, 7400.0
+			if volta[i].TMs == 5250 {
+				x, y = 400, 600
+			}
+			volta[i].X, volta[i].Y = &x, &y
+		}
+	}
+	bs = Buracos(volta, LimiarRepescagemMs)
+	ClassificaBuracos(volta, bs, 100, nil)
+	if bs[0].Tipo != "" {
+		t.Fatalf("volta à base: %+v", bs)
+	}
+	// Sem salto (andou), mas a repescagem anterior repetiu: pelo motivo antigo e pelo tipo.
+	anda := append([]Amostra(nil), as...)
+	x, y := 1200.0, 1400.0
+	anda[len(anda)-1].X, anda[len(anda)-1].Y = &x, &y
+	bs = Buracos(anda, LimiarRepescagemMs)
+	ClassificaBuracos(anda, bs, 100, nil)
+	if bs[0].Tipo != "" {
+		t.Fatalf("andando, sem repescagem: %+v", bs)
+	}
+	for _, r := range []Buraco{{DeMs: 1000, AteMs: 5250, Motivo: "o trecho regravado ainda ficou 4.2 s sem a câmera no jogador"},
+		{DeMs: 900, AteMs: 5000, Tipo: BuracoNaoSelecionavel}} {
+		bs = Buracos(anda, LimiarRepescagemMs)
+		ClassificaBuracos(anda, bs, 100, &ResumoRepescagem{Restantes: []Buraco{r}})
+		if bs[0].Tipo != BuracoNaoSelecionavel {
+			t.Fatalf("repetido (%+v): %+v", r, bs)
+		}
+	}
+}
+
 // A perda acontece em toda passagem: a repescagem tenta duas vezes (uma a
 // mais), não fecha, e o buraco fica registrado com o motivo. O passe conclui.
 func TestRepescagemQueNaoFecha(t *testing.T) {

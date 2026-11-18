@@ -25,6 +25,9 @@ type dadosPartida struct {
 	sentCache        *cacheSentinelas
 	// visao: o resultado dos passes de visão de time (nil = não rodaram).
 	visao *rastreio.VisaoDaPartida
+	// eventosRiot: todos os eventos da linha do tempo da Riot (compras de item,
+	// placas), já lidos; nil sem ela.
+	eventosRiot []rastreio.EventoLT
 }
 
 func (d *dadosPartida) participante(pid int) *partida.Participante {
@@ -357,6 +360,8 @@ type abateRiot struct {
 	quem, emQuem       int
 	recebido, causado  []DanoRiot
 	bounty, killStreak int
+	// shutdown: o ouro a mais por encerrar a sequência da vítima (shutdownBounty).
+	shutdown int
 }
 
 type statsRiot struct {
@@ -387,6 +392,7 @@ func leAbatesRiot(bruto []byte) []abateRiot {
 				VictimID   int         `json:"victimId"`
 				Bounty     int         `json:"bounty"`
 				KillStreak int         `json:"killStreakLength"`
+				Shutdown   int         `json:"shutdownBounty"`
 				Recebido   []danoBruto `json:"victimDamageReceived"`
 				Causado    []danoBruto `json:"victimDamageDealt"`
 			}
@@ -394,7 +400,7 @@ func leAbatesRiot(bruto []byte) []abateRiot {
 				continue
 			}
 			lista = append(lista, abateRiot{tMs: e.Timestamp, quem: e.KillerID, emQuem: e.VictimID, bounty: e.Bounty,
-				killStreak: e.KillStreak, recebido: converteDano(e.Recebido), causado: converteDano(e.Causado)})
+				killStreak: e.KillStreak, shutdown: e.Shutdown, recebido: converteDano(e.Recebido), causado: converteDano(e.Causado)})
 		}
 	}
 	return lista

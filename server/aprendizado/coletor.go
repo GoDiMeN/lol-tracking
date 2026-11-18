@@ -84,7 +84,16 @@ type Pedido struct {
 	// Funcao (TOP, JUNGLE, MIDDLE, BOTTOM, UTILITY; vazio = qualquer): só entra quem tem essa
 	// função principal (para achar "o caçador que mais sobe" sem esgotar a vaga com outros).
 	Funcao string `json:"funcao"`
+	// Amostragem: qualquer jogador do meio do elo com partida rastreável no
+	// patch instalado, sem os filtros de subida (amostragem.go). Para logo
+	// depois de uma troca de patch.
+	Amostragem bool `json:"amostragem"`
+	// JogadoresPorElo: quantos jogadores procurar em cada elo (0 = 10).
+	JogadoresPorElo int `json:"jogadores_por_elo"`
 }
+
+// MaxJogadoresPorElo: o teto de jogadores_por_elo no pedido.
+const MaxJogadoresPorElo = 20
 
 // valida completa os padrões e confere os limites.
 func (p *Pedido) valida() (riot.Regiao, error) {
@@ -130,6 +139,12 @@ func (p *Pedido) valida() (riot.Regiao, error) {
 	p.Funcao = strings.ToUpper(strings.TrimSpace(p.Funcao))
 	if p.Funcao != "" && nomeFuncao[p.Funcao] == "" {
 		return reg, &ErroPedido{"funcao precisa ser TOP, JUNGLE, MIDDLE, BOTTOM ou UTILITY (ou vazia)"}
+	}
+	if p.JogadoresPorElo == 0 {
+		p.JogadoresPorElo = JogadoresPorElo
+	}
+	if p.JogadoresPorElo < 1 || p.JogadoresPorElo > MaxJogadoresPorElo {
+		return reg, &ErroPedido{fmt.Sprintf("jogadores_por_elo precisa ser de 1 a %d", MaxJogadoresPorElo)}
 	}
 	if p.Velocidade == 0 {
 		p.Velocidade = 4
@@ -205,7 +220,7 @@ func (k *Coletor) Cria(ctx context.Context, p Pedido) (Coleta, string, error) {
 		return Coleta{}, "", err
 	}
 	id, err := criaColeta(k.d.DB, novaColeta{regiao: reg.Codigo, elos: p.Elos, ppj: p.PartidasPorJogador, quem: p.Quem,
-		vel: p.Velocidade, soDescobrir: p.SoDescobrir, funcao: p.Funcao})
+		vel: p.Velocidade, soDescobrir: p.SoDescobrir, funcao: p.Funcao, amostragem: p.Amostragem, jogadoresPorElo: p.JogadoresPorElo})
 	if err != nil {
 		k.mu.Unlock()
 		return Coleta{}, "", err
@@ -465,7 +480,11 @@ func (k *Coletor) descobre(ctx context.Context, c *corridaColeta, col Coleta, re
 		if e.Estado == EloPronto {
 			continue
 		}
-		if err := k.descobreElo(ctx, c, col, reg, e, patch); err != nil {
+		descobre := k.descobreElo
+		if col.Amostragem {
+			descobre = k.descobreEloAmostragem
+		}
+		if err := descobre(ctx, c, col, reg, e, patch); err != nil {
 			return err
 		}
 	}

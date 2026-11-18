@@ -37,6 +37,7 @@ import {
 } from '../ui.js';
 import { MARGEM, escala, serieCS, csNoInstante, perdidasDoJogador, tetoRedondo } from '../grafico-tempo.js';
 import { adversarioDeRota } from '../atributos.js';
+import { rotuloTipo, classeTipo, ouroCurto, momentosChave, segundoNoMapa, jogadoresChave, textoContexto } from '../fatos.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}) => {
@@ -324,6 +325,14 @@ export async function desenha(raiz, rota, ctx) {
   const secAbates = el('div', 'grade-abate');
   partes.push(secAbates);
 
+  // --- Momentos-chave e jogadores-chave (base de fatos, sem IA): chegam depois, sem segurar a tela.
+  const secFatos = el('div', 'grade-2 fatos');
+  partes.push(secFatos);
+  api
+    .resumo(gameId)
+    .then(({ resumo }) => secFatos.replaceChildren(cartaoMomentos(resumo, gameId), cartaoJogadoresChave(resumo, pid, gameId, ctx)))
+    .catch((err) => secFatos.replaceChildren(cartao('Momentos-chave', null, erroNaTela(err))));
+
   // --- Vida, saídas, cadeia, indicadores, CS: por jogador ---
   const secVida = el('div', 'graficos-tempo');
   const secSaidas = el('div');
@@ -387,6 +396,68 @@ export async function desenha(raiz, rota, ctx) {
   }
   secInd.append(ind.status === 'fulfilled' ? indicadores(ind.value.indicadores, gameId) : cartao('Indicadores', null, erroNaTela(ind.reason)));
   secCS.append(cs.status === 'fulfilled' ? conferenciaCS(cs.value.jogadores.find((j) => j.participante_id === pid)) : cartao('CS conferido', null, erroNaTela(cs.reason)));
+}
+
+// --- Base de fatos: momentos-chave e jogadores-chave -------------------------------------------
+
+function cartaoMomentos(resumo, gameId) {
+  const lista = momentosChave(resumo);
+  if (!lista.length) {
+    return cartao('Momentos-chave', null, el('div', 'estado-tela vazio', 'Nenhum momento com impacto que entre na lista curta.'));
+  }
+  const ul = el('ol', 'momentos-chave');
+  for (const m of lista) {
+    const tempo = link(relogio(m.t_ms), `#replay/${gameId}/${segundoNoMapa(m.t_ms)}`, 'num tempo');
+    tempo.title = 'ver no mapa com play';
+    const li = el('li', '', [
+      el('div', 'mc-cab', [
+        tempo,
+        pilula(rotuloTipo(m.tipo, m.subtipo), classeTipo(m.tipo, m.subtipo)),
+        el('span', 'sub', `impacto ~${ouroCurto(m.impacto)}${m.estimado ? ' (estimado)' : ''}`),
+      ]),
+      link(m.frase, `#replay/${gameId}/${segundoNoMapa(m.t_ms)}`, 'mc-frase'),
+    ]);
+    ul.append(li);
+  }
+  return cartao('Momentos-chave', 'por impacto, em ouro equivalente · clique leva ao mapa com play', [
+    el('p', 'sub pad', 'Custo estimado por regra (sem IA): abate = ouro do abate + o que a vítima deixou de ganhar morta; objetivo e torre = valor fixo do app.'),
+    ul,
+  ]);
+}
+
+function cartaoJogadoresChave(resumo, pid, gameId, ctx) {
+  const tab = el('table', 'tabela compacta jogadores-chave');
+  tab.append(el('thead', '', [el('tr', '', ['#', 'Jogador', 'Nota', 'Componentes'].map((h) => el('th', '', h)))]));
+  const tb = el('tbody');
+  for (const j of jogadoresChave(resumo)) {
+    const nome = el('button', `link-jogador ${j.time === 100 ? 'azul' : 'vermelho'}`, `${j.campeao}${j.funcao ? ` · ${posicao(j.funcao)}` : ''}`);
+    nome.type = 'button';
+    nome.title = `${j.nome} · ${j.abates}/${j.mortes}/${j.assistencias}`;
+    nome.addEventListener('click', () => ctx.navega({ vista: 'partida', gameId, participante: j.participante_id }));
+    const comp = el(
+      'div',
+      'componentes',
+      j.componentes.map((c) => {
+        const x = el('span', `comp ${c.valor < 0 ? 'neg' : 'pos'}`, `${c.rotulo} ${ouroCurto(c.valor, true)}`);
+        x.title = c.detalhe;
+        return x;
+      }),
+    );
+    const contexto = textoContexto(j.contexto, j.funcao, posicao);
+    tb.append(
+      el('tr', j.participante_id === pid ? 'destacado' : '', [
+        el('td', 'num', String(j.posicao_nota)),
+        el('td', '', [nome, contexto ? el('div', 'sub', contexto) : null]),
+        el('td', 'num', ouroCurto(j.nota, true)),
+        el('td', '', [comp]),
+      ]),
+    );
+  }
+  tab.append(tb);
+  return cartao('Jogadores-chave', 'nota de impacto (ouro equivalente), não só o placar', [
+    el('p', 'sub pad', 'Abates e objetivos repartidos entre quem participou, menos o custo das próprias mortes e das mortes caras, mais a participação nos momentos-chave e a vantagem de rota aos 15.'),
+    el('div', 'rolar', [tab]),
+  ]);
 }
 
 // --- Abates ------------------------------------------------------------------------------------

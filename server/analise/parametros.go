@@ -154,6 +154,91 @@ type Parametros struct {
 	// raio (ao longo da rota) da posição da onda, vivo e na rota, perdeu a onda.
 	JanelaPresencaOndaMs int64
 	RaioPresencaOnda     float64
+
+	// --- Base de fatos (fatos*.go): o resumo pesquisável, os momentos-chave, as
+	// janelas de oportunidade e a nota de impacto. Sem IA: regra e limiar daqui.
+	// Os valores em ouro são EQUIVALENTES escolhidos à mão para pôr abate,
+	// objetivo e torre na mesma régua; não são o ouro exato que o jogo pagou
+	// (esse só existe para o abate, com a linha do tempo da Riot).
+
+	// SaldoAntesMs e SaldoDepoisMs: a vantagem de ouro (azul − vermelho, quadros
+	// de minuto interpolados) é lida esse tempo antes do começo e depois do fim
+	// do momento. Quadro de minuto: com outros momentos perto, o saldo mistura
+	// os dois (por isso o custo estimado vem à parte).
+	SaldoAntesMs  int64
+	SaldoDepoisMs int64
+	// OuroAbatePadrao: o ouro de um abate sem a linha do tempo da Riot (base do
+	// abate no jogo; com a Riot vale bounty + shutdownBounty do evento).
+	OuroAbatePadrao int
+	// MorteEstimadaMs: o tempo morto quando o estado dos 10 não cobre o instante.
+	MorteEstimadaMs int64
+	// RitmoOuroJanelaMs: o ritmo de ouro do jogador (para o ouro que ele deixou
+	// de ganhar morto) é o dos quadros nesse tempo antes da morte.
+	RitmoOuroJanelaMs int64
+	// Valor equivalente em ouro de cada objetivo para o time que o perde.
+	OuroDragao, OuroAnciao, OuroBarao, OuroArauto, OuroVastilarva, OuroAtakhan int
+	OuroTorre, OuroInibidor, OuroPlaca                                         int
+	// JanelaLutaTimeMs e AbatesLutaTime: abates seguidos a menos disso um do
+	// outro, com ao menos AbatesLutaTime abates no total, são uma luta de time.
+	JanelaLutaTimeMs int64
+	AbatesLutaTime   int
+	// MomentosChave: quantos momentos vão para a lista curta (os de maior
+	// impacto). ImpactoMinimoChave: abaixo disso não entra nem se sobrar lugar.
+	MomentosChave      int
+	ImpactoMinimoChave int
+	// DistanciaSozinho: morte com o aliado mais perto além disso (ou nenhum
+	// aliado com posição a menos dela) é "morreu sozinho, longe dos aliados".
+	DistanciaSozinho float64
+	// JanelaMorteObjetivoMs e PesoObjetivoNaMorte: o inimigo levou objetivo ou
+	// torre até esse tempo depois da morte = "morreu antes do objetivo"; o custo
+	// da morte ganha essa fração do valor do objetivo.
+	JanelaMorteObjetivoMs int64
+	PesoObjetivoNaMorte   float64
+	// JanelaAtividadePreviaMs: a "atividade prévia" de uma morte é a última
+	// etiqueta fora de briga (não lutando/trocando/dive/morto) até esse tempo
+	// antes dela: é o que diz "morreu gankando", "morreu invadindo".
+	JanelaAtividadePreviaMs int64
+	// OuroPorCS: valor médio de uma tropa (para pôr o farm do freeze em ouro).
+	OuroPorCS float64
+
+	// Janelas de oportunidade (fatos_janelas.go). JanelaMinimaMs: janela mais
+	// curta que isso não conta. JanelaMaximaMs: teto de uma janela. VoltaSelvaMs
+	// e VoltaRotaMs: sem o rastreio do inimigo, a volta dele à selva/rota é
+	// estimada em renascer + isso (da fonte até lá andando).
+	JanelaMinimaMs int64
+	JanelaMaximaMs int64
+	// InicioJanelasMs: antes disso não há janela (os acampamentos nascem a
+	// 1:30 e todos começam na base).
+	InicioJanelasMs int64
+	VoltaSelvaMs    int64
+	VoltaRotaMs     int64
+	// UsoMinimoJanelaMs: tempo mínimo invadindo / em torre / em objetivo dentro
+	// da janela para ela contar como aproveitada.
+	UsoMinimoJanelaMs int64
+	// IntervaloOndasMs e OuroOnda: para o valor da janela de rota (ondas que
+	// chegam na janela); OuroOnda é estimativa (6 tropas, sem o canhão).
+	IntervaloOndasMs int64
+	OuroOnda         int
+	// LimpezaAcampamentoMs: usos de habilidade perto do mesmo acampamento a
+	// menos disso um do outro são a mesma limpeza.
+	LimpezaAcampamentoMs int64
+
+	// Nota de impacto (fatos_impacto.go): pesos dos componentes (todos em ouro
+	// equivalente). PenalidadeMorteCara: a mais por morte cara.
+	// PesoMomentoChave: fração do impacto de cada momento-chave de que ele
+	// participou (+ se o time dele ganhou o momento, − se perdeu).
+	// PesoVantagemRota: fração da diferença de ouro aos 15 contra o adversário.
+	PenalidadeMorteCara int
+	PesoMomentoChave    float64
+	PesoVantagemRota    float64
+	// MinPartidasContexto: partidas guardadas do jogador (fora esta) para dizer
+	// a função principal; com menos, o campo fica vazio.
+	MinPartidasContexto int
+	// CustoItemCompleto: item com custo total a partir disso é "item completo"
+	// (as botas de nível 2 custam ~1 100; os componentes, até ~1 300).
+	CustoItemCompleto int
+	// LimiteContextoIA: tamanho máximo (caracteres) do pacote de contexto.
+	LimiteContextoIA int
 }
 
 // Param são os parâmetros em uso.
@@ -205,6 +290,45 @@ var Param = Parametros{
 	DeslocamentoFreeze:    400,
 	JanelaPresencaOndaMs:  25000,
 	RaioPresencaOnda:      1800,
+
+	SaldoAntesMs:            30000,
+	SaldoDepoisMs:           60000,
+	OuroAbatePadrao:         300,
+	MorteEstimadaMs:         20000,
+	RitmoOuroJanelaMs:       180000,
+	OuroDragao:              500,
+	OuroAnciao:              1500,
+	OuroBarao:               1500,
+	OuroArauto:              400,
+	OuroVastilarva:          150,
+	OuroAtakhan:             600,
+	OuroTorre:               550,
+	OuroInibidor:            500,
+	OuroPlaca:               125,
+	JanelaLutaTimeMs:        15000,
+	AbatesLutaTime:          3,
+	MomentosChave:           12,
+	ImpactoMinimoChave:      300,
+	DistanciaSozinho:        2500,
+	JanelaMorteObjetivoMs:   60000,
+	PesoObjetivoNaMorte:     0.5,
+	JanelaAtividadePreviaMs: 30000,
+	OuroPorCS:               21,
+	JanelaMinimaMs:          15000,
+	JanelaMaximaMs:          90000,
+	InicioJanelasMs:         90000,
+	VoltaSelvaMs:            20000,
+	VoltaRotaMs:             30000,
+	UsoMinimoJanelaMs:       10000,
+	IntervaloOndasMs:        30000,
+	OuroOnda:                120,
+	LimpezaAcampamentoMs:    20000,
+	PenalidadeMorteCara:     150,
+	PesoMomentoChave:        0.1,
+	PesoVantagemRota:        0.25,
+	MinPartidasContexto:     5,
+	CustoItemCompleto:       2000,
+	LimiteContextoIA:        12000,
 }
 
 // Fase do instante: "rotas", "meio" ou "final".

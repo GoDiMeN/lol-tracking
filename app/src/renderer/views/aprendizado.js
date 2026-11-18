@@ -178,9 +178,10 @@ export function montaCartao(ctx) {
     const fase = c.fase === 'descoberta' ? 'procurando jogadores' : c.fase === 'rastreio' ? 'rastreando partidas' : 'fim';
     const nomesElos = c.elos.map(nomeElo).join(', ');
     const soFuncao = c.funcao ? ` · só ${posicao(c.funcao)}` : '';
+    const amostra = c.amostragem ? ` · por amostragem, ${plural(c.jogadores_por_elo, 'jogador', 'jogadores')} por elo` : '';
     const opcoes = c.so_descobrir
-      ? `${nomesElos}${soFuncao} · só descobrir jogadores (nada é rastreado) · ${c.regiao_nome}`
-      : `${c.elos.length} elos · ${plural(c.partidas_por_jogador, 'partida', 'partidas')} por jogador · ${c.quem === 'todos' ? 'os 10 de cada partida' : 'só o jogador'} · ${numero(c.velocidade)}× · ${c.regiao_nome}`;
+      ? `${nomesElos}${soFuncao}${amostra} · só descobrir jogadores (nada é rastreado) · ${c.regiao_nome}`
+      : `${c.elos.length} elos${amostra} · ${plural(c.partidas_por_jogador, 'partida', 'partidas')} por jogador · ${c.quem === 'todos' ? 'os 10 de cada partida' : 'só o jogador'} · ${numero(c.velocidade)}× · ${c.regiao_nome}`;
     partes.push(el('div', 'linha pad', [el('b', '', `Coleta nº ${c.id}`), pilula(est.texto, est.classe), el('span', 'sub', `${fase} · ${opcoes}`), acoes]));
     if (!c.so_descobrir) {
       partes.push(
@@ -227,16 +228,18 @@ function tabelaElos(d) {
   const tab = el('table', 'tabela compacta');
   tab.append(el('thead', '', [el('tr', '', [el('th', '', 'Elo'), el('th', '', 'Situação'), el('th', 'num', 'Jogadores'), el('th', 'num', 'Partidas'), el('th', '', 'Deixados de fora')])]));
   const tb = el('tbody');
+  const alvo = d.coleta.jogadores_por_elo || 10;
   for (const e of d.elos) {
     const s = ESTADOS_ELO[e.estado] || { classe: 'n', texto: e.estado };
     const fora = textoDescartes(e.descartes);
+    const olhados = e.candidatos_vistos ? `${e.candidatos_vistos} olhados${e.paginas_vistas ? ` em ${plural(e.paginas_vistas, 'página', 'páginas')}` : ''}` : '';
     tb.append(
       el('tr', '', [
         el('td', '', [el('b', '', e.nome), e.exige_mono ? el('small', 'sub', ' · um campeão só') : null]),
         el('td', '', [pilula(s.texto, s.classe), e.aviso ? el('small', 'tx-at', ` ${e.aviso}`) : null]),
-        el('td', 'num', `${e.jogadores}/10`),
+        el('td', 'num', `${e.jogadores}/${alvo}`),
         el('td', 'num', `${e.partidas_concluidas}/${e.partidas_total}`),
-        el('td', 'sub', fora ? `${fora} (de ${e.candidatos_vistos} olhados)` : e.candidatos_vistos ? `${e.candidatos_vistos} olhados` : ''),
+        el('td', 'sub', fora ? `${fora} (de ${olhados})` : olhados),
       ]),
     );
   }
@@ -501,11 +504,32 @@ function abreDialogo(ctx, aoComecar) {
   funcaoSel.setAttribute('aria-label', 'Só jogadores desta função');
   funcaoSel.append(Object.assign(el('option', '', 'qualquer função'), { value: '' }));
   for (const [v, t] of FUNCOES) funcaoSel.append(Object.assign(el('option', '', `só ${t}`), { value: v }));
+  // Por amostragem: qualquer jogador do meio do elo com partida no patch atual (para depois de uma troca de patch).
+  let amostragem = false;
+  const amLab = el('label', 'opcao');
+  const amCb = el('input');
+  amCb.type = 'checkbox';
+  const jpe = el('select', 'campo');
+  jpe.setAttribute('aria-label', 'Jogadores por elo');
+  for (const n of [1, 3, 5, 10]) jpe.append(Object.assign(el('option', '', `${plural(n, 'jogador', 'jogadores')} por elo`), { value: String(n) }));
+  jpe.value = '1';
+  jpe.addEventListener('change', atualiza);
+  const jpeLab = el('label', 'campo-rotulado', [el('span', 'sub', 'Quantos procurar'), jpe]);
+  jpeLab.hidden = true;
+  amCb.addEventListener('change', () => {
+    amostragem = amCb.checked;
+    jpeLab.hidden = !amostragem;
+    atualiza();
+  });
+  amLab.append(amCb, el('span', '', 'Por amostragem (qualquer jogador do meio do elo que tenha partida no patch atual)'));
   soFs.append(
     el('legend', '', 'O que fazer'),
     soLab,
     el('label', 'campo-rotulado', [el('span', 'sub', 'Função principal dos jogadores'), funcaoSel]),
     el('p', 'sub', 'Bom para escolher um jogador e criar um estudo dele: a lista mostra os números da liga, a função e quantas partidas dá para rastrear.'),
+    amLab,
+    jpeLab,
+    el('p', 'sub', 'Use logo depois de uma troca de patch, quando os primeiros de cada divisão ainda não jogaram no patch novo (o replay só abre no patch instalado): começa no meio do elo e pega quem já jogou, sem o critério de "está subindo". Rastreia a partida mais recente de cada um.'),
   );
 
   const estimativa = el('p', 'dlg-estimativa');
@@ -526,10 +550,11 @@ function abreDialogo(ctx, aoComecar) {
     estimativa.classList.remove('ruim');
     confirmar.disabled = false;
     if (soDescobrir) {
-      estimativa.textContent = `Só procura os jogadores de ${plural(marcados.size, 'elo', 'elos')} (até 60 olhados em cada): alguns minutos, sem abrir o jogo.`;
+      estimativa.textContent = `Só procura os jogadores de ${plural(marcados.size, 'elo', 'elos')} (até ${amostragem ? 200 : 60} olhados em cada): alguns minutos, sem abrir o jogo.`;
       return;
     }
-    const { passes, segundos } = estimativaColeta({ elos: [...marcados], partidasPorJogador: Number(ppj.value), quem, velocidade });
+    const jogadoresPorElo = amostragem ? Number(jpe.value) : 10;
+    const { passes, segundos } = estimativaColeta({ elos: [...marcados], partidasPorJogador: Number(ppj.value), quem, velocidade, jogadoresPorElo });
     estimativa.textContent = `Até ${plural(passes, 'jogador rastreado', 'jogadores rastreados')}: leva ${tempoHumano(segundos)} (~${numero(7.5 * (4 / velocidade))} min cada), com o jogo aberto.`;
   }
 
@@ -546,6 +571,8 @@ function abreDialogo(ctx, aoComecar) {
         velocidade,
         so_descobrir: soDescobrir,
         funcao: funcaoSel.value,
+        amostragem,
+        jogadores_por_elo: amostragem ? Number(jpe.value) : 10,
       });
       dlg.close();
       toast(soDescobrir ? 'Procurando os jogadores de cada elo (nada será rastreado).' : 'Coleta começou: primeiro ela procura os jogadores de cada elo.');

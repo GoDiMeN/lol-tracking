@@ -115,6 +115,11 @@ func Migra(db *banco.DB) error {
 		{"aprendizado_jogadores", "fracao_funcao", "REAL NOT NULL DEFAULT 0"},
 		{"aprendizado_jogadores", "vitorias_rastreaveis", "INTEGER NOT NULL DEFAULT 0"},
 		{"aprendizado_jogadores", "derrotas_rastreaveis", "INTEGER NOT NULL DEFAULT 0"},
+		// amostragem: descoberta por amostragem do meio do elo (amostragem.go).
+		{"aprendizado_coletas", "amostragem", "INTEGER NOT NULL DEFAULT 0"},
+		{"aprendizado_coletas", "jogadores_por_elo", fmt.Sprintf("INTEGER NOT NULL DEFAULT %d", JogadoresPorElo)},
+		{"aprendizado_elos", "paginas_vistas", "INTEGER NOT NULL DEFAULT 0"},
+		{"aprendizado_elos", "pedidos_liga", "INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, n := range novas {
 		if err := banco.AdicionaColuna(db, n.tabela, n.coluna, n.def); err != nil {
@@ -203,6 +208,8 @@ type Coleta struct {
 	SoDescobrir         bool     `json:"so_descobrir"`
 	EstudoID            int64    `json:"estudo_id"`
 	Funcao              string   `json:"funcao"`
+	Amostragem          bool     `json:"amostragem"`
+	JogadoresPorElo     int      `json:"jogadores_por_elo"`
 	Estado              string   `json:"estado"`
 	Fase                string   `json:"fase"`
 	PausaPedida         bool     `json:"pausa_pedida"`
@@ -236,6 +243,8 @@ type EloDaColeta struct {
 	ExigeMono          bool           `json:"exige_mono"`
 	Estado             string         `json:"estado"`
 	CandidatosVistos   int            `json:"candidatos_vistos"`
+	PaginasVistas      int            `json:"paginas_vistas"`
+	PedidosLiga        int            `json:"pedidos_liga"`
 	Jogadores          int            `json:"jogadores"`
 	Descartes          map[string]int `json:"descartes"`
 	Aviso              string         `json:"aviso"`
@@ -340,6 +349,9 @@ type novaColeta struct {
 	vel         float64
 	soDescobrir bool
 	funcao      string
+	amostragem  bool
+	// jogadoresPorElo: 0 = JogadoresPorElo.
+	jogadoresPorElo int
 	// estudoID > 0: a coleta do estudo começa direto no rastreio, com estas partidas.
 	estudoID int64
 	partidas []PartidaDaColeta
@@ -360,9 +372,14 @@ func criaColeta(db *banco.DB, n novaColeta) (int64, error) {
 	if n.estudoID > 0 {
 		fase = FaseRastreio
 	}
+	if n.jogadoresPorElo <= 0 {
+		n.jogadoresPorElo = JogadoresPorElo
+	}
 	res, err := tx.Exec(`INSERT INTO aprendizado_coletas (regiao, elos, partidas_por_jogador, quem, velocidade, estado, fase,
-		so_descobrir, estudo_id, funcao, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.regiao, string(lista), n.ppj, n.quem, n.vel, Pausado, fase, b2i(n.soDescobrir), n.estudoID, n.funcao, agora, agora)
+		so_descobrir, estudo_id, funcao, amostragem, jogadores_por_elo, criado_em, atualizado_em)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.regiao, string(lista), n.ppj, n.quem, n.vel, Pausado, fase, b2i(n.soDescobrir), n.estudoID, n.funcao,
+		b2i(n.amostragem), n.jogadoresPorElo, agora, agora)
 	if err != nil {
 		return 0, err
 	}
@@ -412,6 +429,13 @@ func mudaElo(db *banco.DB, coletaID int64, elo, estado string, vistos int, desca
 	d, _ := json.Marshal(descartes)
 	_, err := db.Exec(`UPDATE aprendizado_elos SET estado = ?, candidatos_vistos = ?, descartes = ?, aviso = ?
 		WHERE coleta_id = ? AND elo = ?`, estado, vistos, string(d), aviso, coletaID, elo)
+	return err
+}
+
+// mudaPaginas grava quantas páginas da liga deram candidatos e quantos pedidos à liga o elo gastou.
+func mudaPaginas(db *banco.DB, coletaID int64, elo string, paginas, pedidos int) error {
+	_, err := db.Exec(`UPDATE aprendizado_elos SET paginas_vistas = ?, pedidos_liga = ? WHERE coleta_id = ? AND elo = ?`,
+		paginas, pedidos, coletaID, elo)
 	return err
 }
 
@@ -496,7 +520,7 @@ func Recupera(db *banco.DB) error {
 // --- Leitura --------------------------------------------------------------------
 
 const colunasColeta = `id, regiao, elos, partidas_por_jogador, quem, velocidade, estado, fase, pausa_pedida, erro,
-	criado_em, atualizado_em, terminado_em, so_descobrir, estudo_id, funcao`
+	criado_em, atualizado_em, terminado_em, so_descobrir, estudo_id, funcao, amostragem, jogadores_por_elo`
 
 func leColetas(db *banco.DB, filtro string, args ...any) ([]Coleta, error) {
 	linhas, err := db.Query(`SELECT `+colunasColeta+` FROM aprendizado_coletas `+filtro, args...)
@@ -508,12 +532,16 @@ func leColetas(db *banco.DB, filtro string, args ...any) ([]Coleta, error) {
 	for linhas.Next() {
 		var c Coleta
 		var elos string
-		var pausa, so int
+		var pausa, so, amostra int
 		if err := linhas.Scan(&c.ID, &c.Regiao, &elos, &c.PartidasPorJogador, &c.Quem, &c.Velocidade, &c.Estado, &c.Fase,
-			&pausa, &c.Erro, &c.CriadoEm, &c.AtualizadoEm, &c.TerminadoEm, &so, &c.EstudoID, &c.Funcao); err != nil {
+			&pausa, &c.Erro, &c.CriadoEm, &c.AtualizadoEm, &c.TerminadoEm, &so, &c.EstudoID, &c.Funcao, &amostra,
+			&c.JogadoresPorElo); err != nil {
 			return nil, err
 		}
-		c.PausaPedida, c.SoDescobrir = pausa == 1, so == 1
+		c.PausaPedida, c.SoDescobrir, c.Amostragem = pausa == 1, so == 1, amostra == 1
+		if c.JogadoresPorElo <= 0 {
+			c.JogadoresPorElo = JogadoresPorElo
+		}
 		json.Unmarshal([]byte(elos), &c.Elos)
 		l = append(l, c)
 	}
@@ -533,7 +561,7 @@ func LeColeta(db *banco.DB, id int64) (Coleta, error) {
 }
 
 func leElos(db *banco.DB, coletaID int64) ([]EloDaColeta, error) {
-	linhas, err := db.Query(`SELECT elo, ordem, estado, candidatos_vistos, descartes, aviso,
+	linhas, err := db.Query(`SELECT elo, ordem, estado, candidatos_vistos, descartes, aviso, paginas_vistas, pedidos_liga,
 		(SELECT COUNT(*) FROM aprendizado_jogadores j WHERE j.coleta_id = e.coleta_id AND j.elo = e.elo),
 		(SELECT COUNT(*) FROM aprendizado_partidas p WHERE p.coleta_id = e.coleta_id AND p.elo = e.elo),
 		(SELECT COUNT(*) FROM aprendizado_partidas p WHERE p.coleta_id = e.coleta_id AND p.elo = e.elo AND p.estado = 'concluida')
@@ -546,7 +574,7 @@ func leElos(db *banco.DB, coletaID int64) ([]EloDaColeta, error) {
 	for linhas.Next() {
 		var e EloDaColeta
 		var desc string
-		if err := linhas.Scan(&e.Elo, &e.ordem, &e.Estado, &e.CandidatosVistos, &desc, &e.Aviso, &e.Jogadores,
+		if err := linhas.Scan(&e.Elo, &e.ordem, &e.Estado, &e.CandidatosVistos, &desc, &e.Aviso, &e.PaginasVistas, &e.PedidosLiga, &e.Jogadores,
 			&e.PartidasTotal, &e.PartidasConcluidas); err != nil {
 			return nil, err
 		}

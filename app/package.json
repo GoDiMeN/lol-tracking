@@ -7,7 +7,7 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test src/main/servidor.test.mjs src/main/preferencias.test.mjs src/renderer/formato.test.mjs src/renderer/tarefa5.test.mjs src/renderer/aprendizado.test.mjs src/renderer/placar.test.mjs src/renderer/ondas.test.mjs src/renderer/valida-desenho.test.mjs src/renderer/atributos.test.mjs src/renderer/grafico-tempo.test.mjs src/renderer/sentinelas.test.mjs src/renderer/visao.test.mjs",
+    "test": "node --test src/main/servidor.test.mjs src/main/preferencias.test.mjs src/renderer/formato.test.mjs src/renderer/tarefa5.test.mjs src/renderer/aprendizado.test.mjs src/renderer/placar.test.mjs src/renderer/ondas.test.mjs src/renderer/valida-desenho.test.mjs src/renderer/atributos.test.mjs src/renderer/grafico-tempo.test.mjs src/renderer/sentinelas.test.mjs src/renderer/visao.test.mjs src/renderer/fatos.test.mjs",
     "valida-replay": "node scripts/valida-replay.mjs"
   },
   "devDependencies": {

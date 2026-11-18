@@ -81,6 +81,12 @@ func (k *Coletor) Detalhe(id int64) (Detalhe, error) {
 	}
 	js := d.Jogadores
 	sort.SliceStable(js, func(a, b int) bool { return ordem[js[a].Elo] < ordem[js[b].Elo] })
+	if col.Amostragem {
+		// Achado por amostragem não é "quem está subindo".
+		for i := range js {
+			js[i].Motivo = MotivoAmostragem(js[i])
+		}
+	}
 	if d.Partidas, err = lePartidas(k.d.DB, `WHERE p.coleta_id = ?`+ordemDasPartidas, id); err != nil {
 		return d, err
 	}
@@ -131,7 +137,7 @@ func (k *Coletor) Detalhe(id int64) (Detalhe, error) {
 		if e.Estado == EloPronto || col.SoDescobrir {
 			continue
 		}
-		faltam := max(0, JogadoresPorElo-e.Jogadores) * col.PartidasPorJogador * ppp
+		faltam := max(0, col.JogadoresPorElo-e.Jogadores) * col.PartidasPorJogador * ppp
 		c.PassesTotal += faltam
 		restanteS += float64(faltam) * (SegundosPorPasseRef/col.Velocidade + SobraPorPasseS)
 	}
@@ -219,7 +225,7 @@ func (k *Coletor) EspacoDe(id int64) (Espaco, error) {
 	partidas := d.Coleta.PartidasTotal
 	for _, el := range d.Elos {
 		if el.Estado != EloPronto && !d.Coleta.SoDescobrir {
-			partidas += max(0, JogadoresPorElo-el.Jogadores) * d.Coleta.PartidasPorJogador
+			partidas += max(0, d.Coleta.JogadoresPorElo-el.Jogadores) * d.Coleta.PartidasPorJogador
 		}
 	}
 	e.EstimativaTotal = porPasse*int64(d.Coleta.PassesTotal) + porPartida*int64(partidas)

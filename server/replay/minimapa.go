@@ -6,32 +6,72 @@ import (
 )
 
 // Geometria do minimapa e do painel "Fog of War" do replay, na tela de
-// referência 2560×1440 com o HUD e o minimapa na escala padrão. Medida em
-// 2026-11-17 na partida 3304217746 (10:03 de jogo, pausado; capturas do
-// minimapa com a névoa em "todos", azul e vermelho): os centros de 6 retratos
-// achados na captura contra as posições rastreadas dos 6 no mesmo instante
-// (amostras dos passes, ~4 por segundo) deram, por mínimos quadrados,
+// referência 2560×1440 com o HUD e o minimapa na escala padrão.
 //
-//	px = 2206,79 + 0,022681·x      py = 1423,53 − 0,023068·y
+// A primeira medida (2026-11-17, partida 3304217746, 10:03 pausado) ajustou
+// px = 2206,79 + 0,022681·x, py = 1423,53 − 0,023068·y com 6 retratos de UMA
+// captura (GeometriaMinimapa20261117): 1,05 px de erro ali, mas o ajuste com
+// poucos pontos perto do centro errava as escalas (~0,8% em cada eixo, até
+// ~3 px nos cantos).
 //
-// com erro quadrático médio de 1,05 px (máximo 2,0 px, no retrato meio coberto
-// por outro) — 1 px ≈ 44 unidades do mapa. Os limites do mapa 11 que o projeto
-// usa para desenhar o map11.png ((−120,−120)–(14870,14980)) esticados no
-// quadrado preto do minimapa (x 2206–2546, y 1083–1423) dão 2,9 px de erro
-// médio no mesmo conjunto: o minimapa do jogo não é exatamente o map11.png
-// (a escala vertical é ~1,7% maior). Só 2560×1440 foi medido.
+// Refeita em 2026-11-18 (descobertas 9) com os passes de visão da partida
+// 3305449546 a 8×: ~38 mil pares "anel aliado achado ↔ posição rastreada do
+// mesmo jogador", os dois times, o mapa inteiro (fora a 2 500 unidades das
+// fontes, onde a posição "base" é a fonte fixa e não a de verdade), com a
+// posição rastreada tomada AtrasoMinimapaMs antes do carimbo da captura:
+//
+//	px = 2205,37 + 0,022861·x      py = 1422,54 − 0,022893·y
+//
+// Erro quadrático médio 1,68 px, mediana 0,71 px, 95% abaixo de 3,5 px; a
+// geometria velha nos mesmos pares: 1,93 / 1,20 / 3,7 (e 2,45 / 1,81 / 4,5
+// sem a correção do atraso). É linear: o resíduo médio em cada nono do mapa
+// fica abaixo de 0,8 px, e um ajuste com termos quadráticos e cruzados só
+// baixa o erro de 1,68 para 1,66 px. As escalas dos dois eixos saem iguais a
+// 0,1% (o minimapa é quadrado): 1 px ≈ 43,7 unidades. Só 2560×1440 foi medido.
 //
 // Esta geometria fica no pacote replay porque o jogo falso (falso.go) desenha
 // o minimapa com ela para os testes; quem LÊ é o pacote visao.
 const (
-	MinimapaX0  = 2206.79
-	MinimapaXPx = 0.022681
-	MinimapaY0  = 1423.53
-	MinimapaYPx = 0.023068
+	MinimapaX0  = 2205.37
+	MinimapaXPx = 0.022861
+	MinimapaY0  = 1422.54
+	MinimapaYPx = 0.022893
 	// RaioRetratoMinimapa: raio do anel colorido em volta do retrato do
 	// campeão (centro da linha do anel), em pixels; a linha tem ~2 px.
 	RaioRetratoMinimapa = 14.5
+	// AtrasoMinimapaMs: o minimapa capturado mostra os campeões onde estavam
+	// tanto tempo REAL antes do carimbo da captura (a média dos dois playback
+	// em volta dela). Medido em 2026-11-18 (descobertas 9) a 8×: o erro dos
+	// ~38 mil pares é mínimo com a posição rastreada 175 ms de jogo antes
+	// (mediana 0,71 px; 1,54 px sem deslocar; ±100 ms de jogo em volta do
+	// mínimo pioram de 0,1–0,2 px), ~22 ms reais — pouco mais de um quadro a
+	// 60 Hz: é o quadro que o PrintWindow devolve, já composto. Tomado como
+	// tempo real (a captura e o desenho andam no relógio da máquina); só a
+	// 8× foi medido: a outra velocidade é hipótese.
+	AtrasoMinimapaMs = 22.0
 )
+
+// GeometriaMinimapa são os coeficientes de MapaParaMinimapa (referência
+// 2560×1440): px = X0 + XPx·x, py = Y0 − YPx·y.
+type GeometriaMinimapa struct{ X0, XPx, Y0, YPx float64 }
+
+var (
+	// GeometriaMinimapaAtual é a que MapaParaMinimapa usa.
+	GeometriaMinimapaAtual = GeometriaMinimapa{MinimapaX0, MinimapaXPx, MinimapaY0, MinimapaYPx}
+	// GeometriaMinimapa20261117 é a primeira medida (6 pontos de uma captura).
+	// As capturas de visão gravadas com ela (arquivo sem a linha da geometria)
+	// guardam as marcas em posições do mapa calculadas por ela.
+	GeometriaMinimapa20261117 = GeometriaMinimapa{2206.79, 0.022681, 1423.53, 0.023068}
+)
+
+// ParaAtual leva uma posição do mapa calculada com a geometria g para a
+// posição que a geometria atual dá ao MESMO pixel do minimapa (as marcas
+// lidas são pixels; o arquivo as guarda já convertidas).
+func (g GeometriaMinimapa) ParaAtual(x, y float64) (float64, float64) {
+	px, py := g.X0+g.XPx*x, g.Y0-g.YPx*y
+	a := GeometriaMinimapaAtual
+	return (px - a.X0) / a.XPx, (a.Y0 - py) / a.YPx
+}
 
 // Regiões de referência (2560×1440).
 var (

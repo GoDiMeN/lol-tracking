@@ -28,9 +28,22 @@ const (
 	// da posição rastreada (mediana 17–30 unidades, máximo ~100 ≈ 2,3 px) e o
 	// do instante da captura (±0,1 s de jogo a 8×, ~1 px a 400 unidades/s).
 	ToleranciaRetratoPx = 6.0
-	// OclusaoPx: outro retrato achado a menos disto do lugar do jogador cobre
-	// boa parte do anel dele (o de cima esconde o de baixo).
-	OclusaoPx = 12.0
+	// OclusaoPx: outro retrato (achado, ou de um aliado do observador, que é
+	// sempre desenhado) a menos disto do lugar do jogador pode esconder o anel
+	// dele (o de cima esconde o de baixo). Era 12; na 3305449546 (47 mil
+	// aliados conferidos, descobertas 9) o anel de quem tem outro campeão a
+	// 12–16 px é achado em 67–81% das vezes, a 16–20 px em 77–90% e a mais de
+	// 20 px em 94–98%: abaixo de 20 px a falta do anel não prova "fora".
+	OclusaoPx = 20.0
+	// SobrepostoPx: aliado com outro campeão vivo a menos disto não entra na
+	// conferência dos aliados (o anel dele pode estar embaixo do outro; mesma
+	// medida de OclusaoPx).
+	SobrepostoPx = 20.0
+	// FonteConferencia: aliado a menos disto (unidades) da própria fonte não
+	// entra na conferência: ali a posição rastreada é a fonte fixa (origem
+	// "base", logo depois de renascer) e não a de verdade, e os retratos se
+	// juntam; na 3305449546, 48–66% achados.
+	FonteConferencia = 2500.0
 	// DuvidaPx: um anel inimigo sem dono a menos disto do lugar do jogador
 	// pode ser ele mesmo com a posição atrasada: indeterminado.
 	DuvidaPx = 25.0
@@ -55,8 +68,10 @@ type ClassificacaoCaptura struct {
 	Estados map[int]string
 	// Motivos dos indeterminados (participante → motivo curto).
 	Motivos map[int]string
-	// Aliados vivos com posição e quantos deles têm o retrato achado (no
-	// próprio time o retrato aparece sempre: é a conferência da leitura).
+	// Aliados conferíveis (vivos, com posição, longe da própria fonte e sem
+	// outro campeão a menos de SobrepostoPx) e quantos deles têm o retrato
+	// achado (no próprio time o retrato aparece sempre: é a conferência da
+	// leitura, da geometria e da posição rastreada).
 	AliadosVivos, AliadosAchados int
 	// Sobras: anéis inimigos que não casaram com nenhum inimigo.
 	Sobras int
@@ -67,15 +82,21 @@ type ClassificacaoCaptura struct {
 func ClassificaCaptura(lt LeituraMinimapa, modoOK bool, observador int, js []PosicaoNoInstante) ClassificacaoCaptura {
 	c := ClassificacaoCaptura{Estados: map[int]string{}, Motivos: map[int]string{}}
 	var inimigos []PosicaoNoInstante
+	// Retratos que podem cobrir o de um inimigo: os achados e os dos aliados
+	// do observador (desenhados sempre, mesmo quando a leitura não os achou).
+	cobrem := append([]MarcaMinimapa(nil), lt.Retratos...)
 	for _, j := range js {
 		if j.Morto {
 			continue // morto não conta (nem aparece no minimapa)
 		}
 		if j.Time == observador {
 			if j.TemPosicao {
-				c.AliadosVivos++
-				if _, ok := maisPerto(lt.Retratos, observador, j.X, j.Y, ToleranciaRetratoPx); ok {
-					c.AliadosAchados++
+				cobrem = append(cobrem, MarcaMinimapa{Time: j.Time, X: j.X, Y: j.Y})
+				if conferivel(j, js) {
+					c.AliadosVivos++
+					if _, ok := maisPerto(lt.Retratos, observador, j.X, j.Y, ToleranciaRetratoPx); ok {
+						c.AliadosAchados++
+					}
 				}
 			}
 			continue
@@ -168,7 +189,7 @@ func ClassificaCaptura(lt LeituraMinimapa, modoOK bool, observador int, js []Pos
 			motivo = "anel_sem_dono"
 		case pertoDeAlgum(sobras, j.X, j.Y, DuvidaPx):
 			motivo = "anel_sem_dono"
-		case pertoDeAlgum(lt.Retratos, j.X, j.Y, OclusaoPx):
+		case pertoDeAlgum(cobrem, j.X, j.Y, OclusaoPx):
 			motivo = "coberto"
 		case naBorda(j.X, j.Y):
 			motivo = "borda"
@@ -183,6 +204,24 @@ func ClassificaCaptura(lt LeituraMinimapa, modoOK bool, observador int, js []Pos
 }
 
 func hasKey(m map[int]int, k int) bool { _, ok := m[k]; return ok }
+
+// conferivel diz se o aliado j entra na conferência dos aliados: longe da
+// própria fonte e sem outro campeão vivo com posição a menos de SobrepostoPx
+// (inimigo também: se estiver à vista, o retrato dele pode estar por cima).
+func conferivel(j PosicaoNoInstante, js []PosicaoNoInstante) bool {
+	if j.Time == 100 || j.Time == 200 {
+		f := FonteDoTime(j.Time)
+		if math.Hypot(j.X-f[0], j.Y-f[1]) < FonteConferencia {
+			return false
+		}
+	}
+	for _, o := range js {
+		if o.ParticipanteID != j.ParticipanteID && !o.Morto && o.TemPosicao && replay.DistanciaMinimapa(o.X, o.Y, j.X, j.Y) < SobrepostoPx {
+			return false
+		}
+	}
+	return true
+}
 
 func maisPerto(ms []MarcaMinimapa, time int, x, y, tol float64) (MarcaMinimapa, bool) {
 	melhor, d := MarcaMinimapa{}, math.Inf(1)

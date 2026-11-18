@@ -114,7 +114,7 @@ cadeia reduzida (`cadeia`), e as linhas de trabalho do passe são apagadas. Deci
 | `calibracao` | JSON `{x0, x_px, y0, y_px, cx, cy, largura, altura, modo, descartados}` da fórmula câmera → mapa (abaixo) |
 | `calibracao_pontos`, `erro_calibracao_mediano`, `erro_calibracao_maximo` | o ajuste contra os quadros da linha do tempo (unidades do mapa) |
 | `iniciado_em`, `terminado_em`, `erro` | |
-| `repescagem` | JSON da última repescagem dos buracos do passe (vazio = nunca rodou): `{quando: "fim_do_passe"|"depois", buracos, recuperados, sobraram, restantes: [{de_ms, ate_ms, duracao_ms, amostras, motivo}], feita_em}`. Regras em "Buracos e repescagem" abaixo |
+| `repescagem` | JSON da última repescagem dos buracos do passe (vazio = nunca rodou): `{quando: "fim_do_passe"|"depois", buracos, recuperados, sobraram, restantes: [{de_ms, ate_ms, duracao_ms, amostras, motivo, tipo?}], feita_em}` (`tipo: "nao_selecionavel"` = o jogo tira o jogador da tela ali; numa repescagem de passe gravado, `restantes` inclui os que ficaram de fora do plano por isso). Regras em "Buracos e repescagem" abaixo |
 
 ### `amostras_brutas` (trabalho)
 Uma linha por leitura do jogador seguido (~4 por segundo de jogo). Colunas = as do bloco `amostras` abaixo, mais `passe_id`,
@@ -224,12 +224,13 @@ tamanho da onda ("devagar/rápido" é só a velocidade do avanço); depois da fa
 ### Visão dos times: `passes_visao`, `visao_capturas_brutas` e os arquivos
 
 Dois **passes de visão** por partida (um por time observador), sem seguir ninguém: a névoa do replay na visão do time (F1
-azul, F2 vermelho, conferida pelo painel "Fog of War"), o replay a 8× e uma captura do painel + minimapa a cada 250 ms de jogo
+azul, F2 vermelho, conferida pelo painel "Fog of War"), o replay a 4× (era 8×: o ciclo de ~57 ms medido não cabia nos 31 ms)
+e uma captura do painel + minimapa a cada 250 ms de jogo
 (`rastreio/visao_passe.go`; medidas e geometria em `descobertas-replay.md`, seção 9).
 
 `passes_visao`: `id`, `game_id`, `rastreio_id` (0 = avulso, pela rota da visão; > 0 = pedido junto com o rastreio, roda no
 fim dele), `time` (observador 100/200), `ordem`, `estado` (`pendente rodando pausado concluido cancelado falhou`; na subida do
-servidor `rodando` vira `pausado`), `velocidade` (padrão 8), `t_inicio_ms`, `t_fim_ms` (0 = fim), `t_atual_ms` (a retomada
+servidor `rodando` vira `pausado`), `velocidade` (padrão 4), `t_inicio_ms`, `t_fim_ms` (0 = fim), `t_atual_ms` (a retomada
 continua daqui), `duracao_ms`, `capturas`, `capturas_modo_ok` (o painel dizia a névoa do time), `taxa` (capturas por segundo de
 jogo), `teclas` (F1/F2 e o F3 do fim), `iniciado_em`, `terminado_em`, `erro`.
 
@@ -241,22 +242,27 @@ Arquivos (pacote `arquivo`, em `dados/partidas/<id>/`):
 
 | arquivo | conteúdo |
 |---|---|
-| `visao-p<passe>-capturas.tsv.zst` | as capturas lidas do passe, `t_ms \t modo \t retratos \t sentinelas`. É o dado bruto (não depende das posições). Passe **concluído** sempre grava e apaga o arquivo dos passes de visão anteriores do mesmo time; **cancelado** só grava se o time ainda não tinha nenhum. O passe que vale para um time é o concluído mais recente com arquivo (senão o cancelado mais recente com arquivo). |
+| `visao-p<passe>-capturas.tsv.zst` | as capturas lidas do passe, `t_ms \t modo \t retratos \t sentinelas`, depois de uma primeira linha `#geometria \t x0 \t x_px \t y0 \t y_px` (a geometria do minimapa com que as marcas viraram posição; arquivo sem ela é de antes de 2026-11-18, `replay.GeometriaMinimapa20261117`). Ao ler, cada marca volta ao pixel pela geometria do arquivo e vira posição pela atual. É o dado bruto (não depende das posições). Passe **concluído** sempre grava e apaga o arquivo dos passes de visão anteriores do mesmo time; **cancelado** só grava se o time ainda não tinha nenhum. O passe que vale para um time é o concluído mais recente com arquivo (senão o cancelado mais recente com arquivo). |
 | `visao.json.zst` | `VisaoDaPartida` (contrato): para cada time observador, por inimigo, os intervalos `visivel` / `fora` / `indeterminado` e as sentinelas lidas. **Derivado**: `rastreio.RecalculaVisao` refaz no fim de cada passe de visão e no começo de cada `analise.Recalcula` (passe de jogador novo ou repescado muda as posições). Sem passe de visão que valha, o arquivo some. |
 
-**A decisão por captura** (`rastreio.ClassificaCaptura`; tolerâncias em pixels do minimapa, 1 px ≈ 44 unidades):
+**A decisão por captura** (`rastreio.ClassificaCaptura`; tolerâncias em pixels do minimapa, 1 px ≈ 44 unidades; as posições
+rastreadas usadas são as de `replay.AtrasoMinimapaMs` antes do carimbo da captura — 22 ms reais × a velocidade do passe, 176 ms
+de jogo a 8× —, porque o minimapa capturado mostra o jogo daquele instante):
 - painel sem a névoa do time → os inimigos ficam `indeterminado` (motivo `painel`);
-- menos da metade dos aliados vivos rastreados com o retrato achado no lugar (com um aliado só: ele não achado; no próprio
-  time o retrato aparece sempre) → todos `indeterminado` (`aliados`: minimapa coberto, geometria, instante ou calibração do passe
-  errados — sem isso, um inimigo com a posição rastreada deslocada sairia "fora"). Com menos de 80% de aliados achados no passe
-  inteiro, o resultado do time sai com `aviso`;
+- menos da metade dos aliados **conferíveis** com o retrato achado no lugar (com um só: ele não achado; no próprio time o
+  retrato aparece sempre) → todos `indeterminado` (`aliados`: minimapa coberto, geometria, instante ou calibração do passe
+  errados — sem isso, um inimigo com a posição rastreada deslocada sairia "fora"). Conferível = vivo, com posição rastreada, a
+  ≥ `FonteConferencia` (2 500 unidades) da própria fonte (ali a posição "base" é a fonte fixa) e sem outro campeão vivo com
+  posição a < `SobrepostoPx` (20 px: o anel dele pode estar embaixo do outro); sem conferível, a captura não é conferida. Com
+  menos de 80% de aliados achados no passe inteiro (`aliados_achados`, sobre os conferíveis), o resultado do time sai com `aviso`;
 - inimigo morto não conta (fica fora das listas); inimigo sem posição rastreada boa no instante (não rastreado, buraco,
   posição interpolada) → `indeterminado` (`sem_posicao`);
 - anel colorido do time inimigo a ≤ `ToleranciaRetratoPx` (6 px) da posição rastreada → `visivel` (cada anel casa com um só,
   do par mais perto ao mais longe);
 - sem anel no lugar: `indeterminado` se sobra anel inimigo sem dono e todos os inimigos vivos têm posição (o anel é de um deles,
-  fora do lugar: `anel_sem_dono`), ou se um anel sem dono está a < 25 px dele (`anel_sem_dono`), ou se outro retrato qualquer está
-  a < `OclusaoPx` (12 px) do lugar dele (`coberto`: o de cima esconde o de baixo), ou se ele está a < 8 px da borda do minimapa
+  fora do lugar: `anel_sem_dono`), ou se um anel sem dono está a < 25 px dele (`anel_sem_dono`), ou se outro retrato achado ou um
+  aliado do observador (desenhado sempre) está a < `OclusaoPx` (20 px; era 12) do lugar dele (`coberto`: o de cima esconde o de
+  baixo), ou se ele está a < 8 px da borda do minimapa
   (`borda`); senão `fora`.
 
 Cada captura vale da metade do caminho até a anterior à metade do caminho até a seguinte (no máximo 500 ms para cada lado). A
@@ -291,6 +297,8 @@ vizinhas com posição, até `BuracoCurtoMs`/2 = 10 s de cada lado, e só se `Po
 #### Buracos e repescagem
 
 **Buraco** (`rastreio.Buracos`, a mesma regra para a checagem de qualidade e para a repescagem): trecho com o jogador vivo entre duas **leituras boas** (origem `camera`, `morte` ou `base`, sem `trava_perdida`) mais longe que o limiar, haja amostras sem posição no meio ou nenhuma. Morto nas duas pontas não é buraco. **Repescagem**: ao fim de cada passe, com o replay ainda aberto, cada buraco > `LimiarRepescagemMs` (3 s) é refeito: seek para `de − FolgaRepescagemMs (2 s) − RecuoRetomadaMs (4 s)`, trava, grava de `de − 2 s` a `ate + 2 s` e, se o trecho novo não tem buraco dentro do velho, troca as linhas de trabalho daquele intervalo (amostras e estado dos 10). No máximo `MaxRepescagensPorPasse` (8) buracos por passe e `TentativasExtrasRepescagem` (1) tentativa a mais por buraco; o que não fecha fica em `restantes` com o motivo. A repescagem de passe gravado (`POST .../rastreio/repescagem`) faz o mesmo com o bloco carregado de volta no trabalho e fecha o passe de novo com a calibração gravada (as amostras velhas não têm as colunas da câmera).
+
+**Não selecionável** (`rastreio.ClassificaBuracos`, `tipo: "nao_selecionavel"` no `Buraco`): buraco em que é o **jogo** que tira o jogador da tela (teleporte, montar no Arauto do Vale; descobertas 8). Vale quando as 3 primeiras amostras sem a câmera ainda têm a seleção nele (`selecao_ok`) e (a) as duas leituras boas em volta estão mais longe do que `PodeInterpolar` deixa andar e a de depois não é a fonte do time (teleporte), ou (b) uma repescagem já regravou o trecho e a perda voltou (restante com o tipo, ou com o motivo antigo "o trecho regravado ainda ficou…"). A repescagem dá **uma** tentativa a esse buraco (às vezes a retravada pega mais cedo e o trecho fica abaixo do limiar) e, se a perda volta com a seleção nele, para e grava o restante com o tipo; o plano de repescagem de passe gravado não o inclui mais (volta ao resumo novo em `restantes`, com o motivo "já regravado antes"). Na checagem de qualidade sai como `nao_selecionavel`, informativo (fora do `total`). O mapa liga as pontas quando `PodeInterpolar` deixa (Arauto: sim; teleporte: não, mostra o salto).
 
 **`PodeInterpolar(a, b)`** (posição em linha reta entre duas leituras): os dois vivos, o placar de mortes igual (não morreu no meio), sem chegada à fonte vinda de fora dela (volta à base) e distância ≤ `VelocidadeMaxInterpolacao` (700/s) × intervalo + `FolgaSaltoInterpolacao` (1000; um Flash e um avanço). Teleporte saindo da base cai aqui (Orianna 2:29 e Garen 13:06 da 3304217746: 8 600–9 500 unidades em 4–7 s).
 
@@ -378,6 +386,95 @@ Uma linha por partida analisada: `game_id` PK, `calculada_em`, `rastreados` (JSO
 
 Parâmetros das regras (limiares) em `server/analise/parametros.go` (`analise.Param`, também em `GET /api/indicadores`).
 
+### Base de fatos (`analise/fatos*.go`): `resumos_partida`, `resumos_jogador`, `momentos_chave`
+
+O resumo PESQUISÁVEL da partida, sem IA, para qualquer via de IA que vier depois (e para um humano ler). Gerado ao fim de
+`Recalcula` (com os dados já carregados) e gravado depois do commit da análise; recalculável (apaga e regrava as linhas da
+partida). Partida analisada antes da base (ou com `versao` menor que `analise.VersaoFatos`): preenchida na subida do servidor
+(`PreencheFatosEmSegundoPlano`) ou no primeiro `GET .../resumo` / `.../contexto-ia`, lendo os arquivos da partida UMA vez.
+Quem consulta (`/api/resumos`, pacotes de contexto) lê SÓ estas três tabelas: nenhum arquivo `partidas/<id>/*.zst` é aberto.
+Medido na 3304217746 (10 rastreados): 1 + 10 + 218 linhas, ~212 KB a mais no banco (página e índice inclusos, `VACUUM` antes e
+depois); quase tudo são os momentos (74 abates e 108 janelas).
+
+`resumos_partida`: `game_id` PK, `versao`, `calculado_em`, `criada_em`, `patch`, `duracao_s`, `vencedor`, `elo` ('' =
+desconhecido; da coleta por elo), `abates_azul/vermelho`, `dragoes_azul/vermelho` (com o ancião), `baroes_*`, `torres_*` (as que
+CADA time derrubou), `maior_vantagem_azul` + `_ms`, `maior_vantagem_vermelho` + `_ms` (pela curva de ouro dos quadros de minuto),
+`viradas` (trocas de time na frente, contando só vantagem ≥ 1 000), `texto` (a linha curta da partida), `dados` (JSON: `times`
+com dragões nomeados, arautos, vastilarvas, atakhan, inibidores, placas; `curva_ouro`; `rastreados`; `riot`; `avisos`; `fila`).
+
+`resumos_jogador`: PK `(game_id, participante_id)`; `puuid`, `nome`, `campeao`, `funcao` (posição do LCU), `time`, `venceu`,
+`rastreado`, `elo`, `abates`, `mortes`, `assistencias`, `kda`, `ouro_10/15/fim`, `cs_10/15/fim`, `adversario`,
+`dif_ouro_10/15`, `dif_cs_10/15` (nulos sem quadro), `mortes_rotas/meio/final` (marcos fixos de 14 e 25 min), `mortes_caras`,
+`objetivos_participou` / `objetivos_time` (dragão, barão, arauto, vastilarvas, atakhan, torre, inibidor do time em que matou ou
+ajudou), `sentinelas`, `sentinelas_controle`, `nota`, `posicao_nota`, `funcao_principal`, `etiquetas` (JSON
+`{"total"|"rotas"|"meio"|"final": {atividade: segundos}}`, só rastreados), `dados` (JSON: `itens` na ordem, `build`,
+`componentes` da nota, `contexto`). Índices `(campeao, funcao)` e `(puuid)`.
+
+`momentos_chave`: PK `(game_id, n)` (n na ordem do tempo); `t_ms`, `fim_ms`, `tipo`, `subtipo`, `time` (quem ganhou o
+momento), `participante_id` (protagonista), `autor`, `funcao` e `campeao` (do protagonista), `envolvidos` (JSON), `atividade` (a
+etiqueta do protagonista no instante), `atividade_previa` (a última etiqueta fora de briga até `JanelaAtividadePreviaMs` antes:
+é o "morreu gankando"), `zona`, `rota`, `duracao_ms`, `saldo_antes` / `saldo_depois` (azul − vermelho `SaldoAntesMs` antes e
+`SaldoDepoisMs` depois), `custo_azul`, `custo_vermelho`, `impacto` (|custo azul − custo vermelho|), `chave` (a lista curta: os
+`MomentosChave` de maior impacto ≥ `ImpactoMinimoChave`; o abate que faz parte de uma luta de time não concorre), `estimado`,
+`tags` (`,a,b,`: `LIKE '%,sozinho,%'` acha a etiqueta inteira), `frase` (português), `dados` (JSON). Índice `(tipo, game_id)`.
+
+Regras (limiares em `analise.Param`, seção "Base de fatos"; valores em ouro são EQUIVALENTES escolhidos à mão, não ouro pago):
+
+- **abate** (um por `CHAMPION_KILL`; protagonista = a vítima): custo para o time da vítima = ouro do abate (`bounty` +
+  `shutdownBounty` da Riot; sem ela `OuroAbatePadrao`) + o que ela deixou de ganhar morta (ritmo de ouro dos `RitmoOuroJanelaMs`
+  antes × tempo morto pelo estado dos 10; sem estado, `MorteEstimadaMs`) + `PesoObjetivoNaMorte` × o valor do objetivo que o
+  inimigo levou até `JanelaMorteObjetivoMs` depois. Etiquetas: `sozinho` (aliado mais perto além de `DistanciaSozinho`),
+  `inferioridade`, `sem_troca` (o time dela não matou ninguém a ±`JanelaLutaTimeMs`), `r_em_recarga`, `flash_em_recarga`,
+  `passiva_em_recarga` (só campeão cuja passiva entra em recarga), `antes_de_objetivo`, `fora_da_rota`, `luta`,
+  `previa_<atividade>`. **Morte cara** (`subtipo = 'morte_cara'`): `sozinho`, ou `antes_de_objetivo`, ou alguma recarga COM
+  `sem_troca` (a recarga sozinha marcava ~90% das mortes da 3304217746: o R e o Flash se gastam na própria luta).
+- **luta**: `AbatesLutaTime`+ abates seguidos a menos de `JanelaLutaTimeMs` um do outro; custo de cada time = soma do custo dos
+  mortos dele; `objetivo_depois` quando o vencedor levou objetivo/torre logo depois.
+- **objetivo / torre / inibidor**: custo para quem perdeu = `OuroDragao`, `OuroAnciao`, `OuroBarao`, `OuroArauto`,
+  `OuroVastilarva`, `OuroAtakhan`, `OuroTorre`, `OuroInibidor`. Time = o de quem matou (sem matador, o da maioria de quem
+  ajudou; senão `killerTeamId`); participantes = matador e ajudantes DO TIME que pegou (a linha do tempo lista quem bateu dos dois
+  lados). Torre: time = o outro do `teamId` (dono).
+- **freeze**: os trechos `freeze` que as ondas puseram na cadeia (um por rota e instante); custo = CS que o time do freeze fez a
+  mais que o adversário no trecho (quadros interpolados) × `OuroPorCS`. Sempre estimado.
+- **janela_perdida / janela_aproveitada** (protagonista = quem tinha a janela): o adversário direto (mesma posição) morto (do
+  abate até voltar à PRÓPRIA selva, caçador, ou à rota, os outros, pela posição rastreada; sem rastreio, renascer +
+  `VoltaSelvaMs`/`VoltaRotaMs`, estimado) ou na base (`recall`/`na_base` dele). Teto `JanelaMaximaMs`; menos que
+  `JanelaMinimaMs`, antes de `InicioJanelasMs` ou com o protagonista morto mais da metade da janela: não há janela. Caçador:
+  estado de cada acampamento do lado do ausente (`TemposAcampamento`: nascimento, volta e ouro, escritos de memória da Wiki e
+  ainda A CONFERIR; limpeza deduzida das amostras de quem foi rastreado: perto do centro usando habilidade — ESTIMADO), onde ele
+  estava e a distância ao acampamento vivo mais perto. Aproveitada = participou de abate/objetivo na janela, limpou acampamento do
+  lado do ausente, ou ≥ `UsoMinimoJanelaMs` invadindo / em objetivo (caçador) ou em torre/dive / placa derrubada na rota dele
+  (rota). Valor: acampamentos vivos (caçador) ou ondas da janela × `OuroOnda` + `OuroPlaca` com a torre externa de pé antes dos
+  14 min (rota).
+- **Nota de impacto** (ouro equivalente, com os componentes): abates/assistências (custo da morte ÷ participantes), objetivos
+  (valor ÷ participantes), − custo das próprias mortes, − `PenalidadeMorteCara` por morte cara, ± `PesoMomentoChave` × impacto
+  dos momentos-chave em que esteve (+ o time dele ganhou, − perdeu; janela só conta para o protagonista), + `PesoVantagemRota` ×
+  diferença de ouro aos 15 (ou 10) contra o adversário. `posicao_nota` 1 = maior.
+- **Contexto do jogador** (só banco): partidas guardadas dele antes desta (`partida.HistoricoGuardado`), função principal (com ≥
+  `MinPartidasContexto`), sequência de vitórias/derrotas, vitórias nas últimas 10, elo (registrado pelo pacote `aprendizado`,
+  da coleta por elo). O que faltar vai em `falta`, com a rota permitida que daria (o histórico:
+  `GET /lol-match-history/v1/products/lol/{puuid}/matches`; o elo não vem de rota permitida do LCU). Nenhuma chamada nova.
+- **Build como evidência**: cada item completo (custo ≥ `CustoItemCompleto`, fora o item de suporte) com o que o item dá, a
+  vantagem de ouro do time, ouro dele × do adversário, o placar dele, o inimigo de mais ouro (com o tipo de dano dele na partida),
+  o dano por tipo do time inimigo (partida inteira) e o dano que ele recebeu nas mortes até ali (Riot). Sem julgamento. As
+  compras vêm do `ITEM_PURCHASED` da Riot (com `ITEM_UNDO`); sem ela, das mudanças do inventário no estado dos 10.
+- **Pacote de contexto** (`MontaContextoIA`): Markdown com limite `LimiteContextoIA`; seções na ordem de prioridade; a que não
+  cabe entra até onde der e a última linha diz o que ficou de fora.
+
+Perguntas em SQL simples, por exemplo:
+
+```sql
+-- caçador que morreu gankando antes dos 5 min
+SELECT game_id, campeao, t_ms, frase FROM momentos_chave
+ WHERE tipo = 'abate' AND funcao = 'JUNGLE' AND t_ms < 300000 AND (atividade = 'gankando' OR atividade_previa = 'gankando');
+-- freeze no topo de mais de 2 min
+SELECT game_id, time, t_ms, duracao_ms FROM momentos_chave WHERE tipo = 'freeze' AND rota = 'rota_topo' AND duracao_ms > 120000;
+-- mortes sozinho antes de objetivo inimigo
+SELECT game_id, campeao, frase FROM momentos_chave WHERE tags LIKE '%,sozinho,%' AND tags LIKE '%,antes_de_objetivo,%';
+-- tempo invadindo da Vi em cada partida
+SELECT game_id, json_extract(etiquetas, '$.total.invadindo') FROM resumos_jogador WHERE campeao = 'Vi';
+```
+
 ## Qualidade do dado (`analise/qualidade.go`)
 
 ### `qualidade_passes`
@@ -389,6 +486,7 @@ PK `passe_id`; `game_id`, `participante_id`, `contagem` (JSON `{tipo: n}`), `pon
 |---|---|
 | `salto` | duas amostras vivas com mais de 1 500 unidades E mais de 1 200 unidades/s entre elas, nenhuma na base (raio da base de `fronteiras.go`) nem com origem `base`/`morte`. Avanços, Flash e o R da Diana/Vi ficam abaixo de 1 500. |
 | `buraco` | mais de 3 s (`BuracoMs`) com o jogador vivo sem leitura boa (sem amostra, ou só amostras com a trava perdida): `rastreio.Buracos`, a mesma regra da repescagem. |
+| `nao_selecionavel` | um buraco em que o jogo tira o jogador da tela (teleporte, Arauto do Vale; "Não selecionável" em "Buracos e repescagem"). **Informativo**: entra em `contagem` e em `pontos`, não no `total` (não é defeito da captura). |
 | `fora_do_mapa` | posição fora de (−120…14 870, −120…14 980). |
 | `parado` | vivo, fora da base, no MESMO ponto exato por 20 s ou mais (trava perdida que não foi marcada). |
 | `nivel_voltou`, `cs_voltou` | nível ou CS menor que na amostra anterior. |
@@ -445,12 +543,14 @@ Coletas de partidas de referência por elo (contrato: "Aprendizado por elo"). Re
 `atualizado_em`, `terminado_em`, `so_descobrir` (0/1: só acha os jogadores, termina sem rastrear), `funcao` (vazio ou a
 função principal exigida dos jogadores; os outros contam no descarte `outra_funcao`), `estudo_id` (0; > 0 = o
 rastreio das partidas desse estudo: sem elos nem jogadores, começa na fase `rastreio`, `regiao` vazia, fora da lista do
-cartão).
+cartão), `amostragem` (0/1: descoberta por amostragem do meio do elo, sem os filtros de subida), `jogadores_por_elo`
+(padrão 10).
 
 ### `aprendizado_elos`
 PK `(coleta_id, elo)`; `ordem`, `estado` (`pendente descobrindo pronto`), `candidatos_vistos` (quantos da lista ordenada já foram
 olhados: a retomada continua dali), `descartes` (JSON `{inativo, veterano, poucas_partidas, travado, nao_achado, nao_mono,
-sem_historico, sem_partida}`; `sem_partida` = sem vitória rastreável no histórico, não ocupa vaga), `aviso` (ex.: achou menos de 10).
+sem_historico, sem_partida}`; `sem_partida` = sem vitória rastreável no histórico, não ocupa vaga), `aviso` (ex.: achou menos de 10),
+`paginas_vistas` (páginas da liga de onde saíram candidatos), `pedidos_liga` (pedidos à league-v4 no elo).
 
 ### `aprendizado_jogadores`
 `id`, `coleta_id`, `regiao`, `elo`, `posicao` (na ordem de subida), `lp`, `divisao`, `vitorias`, `derrotas`, `taxa_vitoria`,

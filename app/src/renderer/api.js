@@ -69,6 +69,8 @@ export const api = {
   indicadores: (gameId, pid) => pede('GET', `/api/partidas/${gameId}/indicadores?participante=${pid}`),
   saidas: (gameId, pid) => pede('GET', `/api/partidas/${gameId}/saidas-de-rota?participante=${pid}`),
   qualidade: (gameId) => pede('GET', `/api/partidas/${gameId}/qualidade`),
+  // Base de fatos (analise/fatos*.go): momentos-chave, jogadores-chave, contexto.
+  resumo: (gameId) => pede('GET', `/api/partidas/${gameId}/resumo`),
   estaticos: (gameId) => pede('GET', `/api/partidas/${gameId}/estaticos`),
   bonusObjetivos: (gameId) => pede('GET', `/api/partidas/${gameId}/bonus-objetivos`),
   build: (gameId, pid = 0) => pede('GET', `/api/partidas/${gameId}/build${pid ? `?participante=${pid}` : ''}`),  atividades: (gameId, de, ate) => pede('GET', `/api/partidas/${gameId}/atividades?de=${de}&ate=${ate}`),

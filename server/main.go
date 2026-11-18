@@ -154,12 +154,16 @@ func main() {
 	estado.RegistraDados(mux, cfg.Dados, arquivoBanco)
 	jogador.Registra(mux, db, cliLCU)
 	partida.Registra(mux, partida.Deps{DB: db, LCU: cliLCU, Campeoes: nomes}, hub)
-	// A análise refaz a partida quando um passe fecha (em segundo plano).
-	depsAnalise := analise.Deps{DB: db, Riot: chaveRiot}
+	// A análise refaz a partida quando um passe fecha (em segundo plano). Os
+	// estáticos dão nome e custo aos itens na base de fatos.
+	depsAnalise := analise.Deps{DB: db, Riot: chaveRiot, Estaticos: estaticos}
 	fila := rastreio.NovaFila(rastreio.Deps{DB: db, LCU: cliLCU, Replay: depsReplay, Hub: hub, Config: cfgRastreio,
 		AoFecharPasse: analise.RecalculaEmSegundoPlano(depsAnalise)})
 	rastreio.Registra(mux, fila)
 	analise.Registra(mux, depsAnalise)
+	// A base de fatos das partidas analisadas antes dela (ou de regra antiga):
+	// em segundo plano, lendo os arquivos de cada partida uma vez.
+	analise.PreencheFatosEmSegundoPlano(depsAnalise)
 	estudo.Registra(mux, depsAnalise)
 	// Aprendizado por elo: o ranking vem da API da Riot (no modo teste, a
 	// falsa casada com os jogadores de referência do LCU falso).

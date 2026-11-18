@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"image"
+	"math"
 	"strings"
 	"testing"
 
@@ -123,6 +124,72 @@ func TestClassificaCapturaRegras(t *testing.T) {
 	r = ClassificaCaptura(LeituraMinimapa{Modo: ModoNevoaAzul, Retratos: []MarcaMinimapa{{Time: 100, X: 3000, Y: 3000}}}, true, 100, borda)
 	if r.Estados[6] != VisIndeterminado || r.Motivos[6] != "borda" {
 		t.Fatalf("borda: %+v", r)
+	}
+}
+
+// Conferência dos aliados e oclusão (descobertas 9): aliado com outro campeão
+// a menos de SobrepostoPx ou perto da própria fonte não entra na conta; um
+// inimigo sem anel a menos de OclusaoPx de um aliado do observador (desenhado
+// sempre, mesmo sem anel achado) fica "coberto", não "fora".
+func TestConferenciaDosAliadosEOclusao(t *testing.T) {
+	u := replay.UnidadesPorPixelMinimapa()
+	js := []PosicaoNoInstante{pos(1, 100, 6000, 6000), pos(2, 100, 6000+10*u, 6000), pos(3, 100, 9000, 3000),
+		pos(4, 100, 1000, 1000), pos(6, 200, 6000, 6000+15*u), pos(7, 200, 12000, 9000)}
+	// Só o 3 achado: o 1 e o 2 estão encostados (10 px), o 4 está na fonte.
+	lt := LeituraMinimapa{Modo: ModoNevoaAzul, Retratos: []MarcaMinimapa{{Time: 100, X: 9000, Y: 3000}}}
+	r := ClassificaCaptura(lt, true, 100, js)
+	if r.AliadosVivos != 1 || r.AliadosAchados != 1 {
+		t.Fatalf("conferência: %d de %d, esperado 1 de 1", r.AliadosAchados, r.AliadosVivos)
+	}
+	// O 6 está a 15 px do 1 (aliado do observador, sem anel achado: embaixo
+	// do 2) e sem anel: coberto. O 7, longe de todos: fora.
+	if r.Estados[6] != VisIndeterminado || r.Motivos[6] != "coberto" || r.Estados[7] != VisFora {
+		t.Fatalf("oclusão: %+v", r)
+	}
+	// Com o 1 e o 2 mortos, nada cobre o 6: fora.
+	js2 := append([]PosicaoNoInstante(nil), js...)
+	js2[0].Morto, js2[1].Morto = true, true
+	r = ClassificaCaptura(lt, true, 100, js2)
+	if r.Estados[6] != VisFora {
+		t.Fatalf("sem nada por cima: %+v", r)
+	}
+}
+
+// O arquivo de capturas leva a geometria do minimapa; o de antes (sem a
+// linha) foi gravado com GeometriaMinimapa20261117 e é reprojetado ao ler: a
+// marca volta ao mesmo pixel e vira posição pela geometria atual.
+func TestCapturasVisaoGeometria(t *testing.T) {
+	cs := []CapturaVisao{{TMs: 1000, Modo: ModoNevoaAzul, Retratos: []MarcaMinimapa{{Time: 100, X: 5000, Y: 7000, Cobertura: 1}},
+		Sentinelas: []MarcaMinimapa{{Time: 100, X: 6400, Y: 8300, Cobertura: 0.9}}}}
+	texto := textoCapturas(cs)
+	if !strings.HasPrefix(string(texto), prefixoGeometria+"\t") {
+		t.Fatalf("sem a linha da geometria: %q", texto)
+	}
+	lidas, err := capturasDoTexto(texto)
+	if err != nil || len(lidas) != 1 || lidas[0].Retratos[0].X != 5000 || lidas[0].Retratos[0].Y != 7000 || lidas[0].Sentinelas[0].X != 6400 {
+		t.Fatalf("ida e volta: %+v %v", lidas, err)
+	}
+	// Arquivo velho: a marca (5000, 7000) era o pixel da geometria velha.
+	velho := "1000\tazul\t100:5000:7000:1\t\n"
+	lidas, err = capturasDoTexto([]byte(velho))
+	if err != nil || len(lidas) != 1 {
+		t.Fatalf("arquivo velho: %v", err)
+	}
+	g := replay.GeometriaMinimapa20261117
+	pxV, pyV := g.X0+g.XPx*5000, g.Y0-g.YPx*7000
+	pxN, pyN := replay.MapaParaMinimapa(lidas[0].Retratos[0].X, lidas[0].Retratos[0].Y, replay.LarguraRef, replay.AlturaRef)
+	if math.Abs(pxV-pxN) > 1e-6 || math.Abs(pyV-pyN) > 1e-6 {
+		t.Fatalf("reprojeção: pixel velho (%.3f, %.3f), novo (%.3f, %.3f)", pxV, pyV, pxN, pyN)
+	}
+	if math.Abs(lidas[0].Retratos[0].X-5000) < 1 {
+		t.Fatalf("a marca velha não mudou: %+v", lidas[0].Retratos[0])
+	}
+	if _, err := capturasDoTexto([]byte(prefixoGeometria + "\t1\t0\t2\t3\n")); err == nil {
+		t.Fatal("geometria com escala 0 passou")
+	}
+	// Atraso do minimapa (tempo real) em ms de jogo: a 8×, 176 ms.
+	if a := atrasoMinimapaJogoMs(8); a != 176 {
+		t.Fatalf("atraso a 8×: %d", a)
 	}
 }
 
