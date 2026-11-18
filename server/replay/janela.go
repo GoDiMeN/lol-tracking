@@ -63,21 +63,63 @@ func (RelogioReal) Dorme(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// Teclas de seleção: as únicas que o app manda (regra 3). Na ordem do
-// playerlist: 1–5 para o time ORDER (azul), Q W E R T para o CHAOS (vermelho).
+// Teclas de seleção: na ordem do playerlist, 1–5 para o time ORDER (azul),
+// Q W E R T para o CHAOS (vermelho).
 var (
 	teclasOrder = []rune{'1', '2', '3', '4', '5'}
 	teclasChaos = []rune{'Q', 'W', 'E', 'R', 'T'}
 )
 
-// TeclaPermitida diz se a tecla está na lista das 10.
+// Teclas da visão de time do replay (F1 = névoa do time azul, F2 = do
+// vermelho, F3 = todos), autorizadas pelo dono em 2026-11-17 para as passadas
+// de visibilidade e conferidas no jogo (o painel do replay mostra "Fog of War:
+// Blue | Red | All"). Teclas de função não são caracteres: ficam em runas da
+// área de uso privado do Unicode, que nenhum texto digitado produz.
+const (
+	TeclaF1 rune = 0xF701
+	TeclaF2 rune = 0xF702
+	TeclaF3 rune = 0xF703
+)
+
+// teclasPermitidas é a lista inteira (regra 3 do CLAUDE.md): as 10 de seleção
+// e as 3 da visão de time. Nenhuma outra sai do app.
+var teclasPermitidas = []rune{'1', '2', '3', '4', '5', 'Q', 'W', 'E', 'R', 'T', TeclaF1, TeclaF2, TeclaF3}
+
+// TeclaPermitida diz se a tecla está na lista.
 func TeclaPermitida(t rune) bool {
-	for _, k := range append(append([]rune{}, teclasOrder...), teclasChaos...) {
+	for _, k := range teclasPermitidas {
 		if k == t {
 			return true
 		}
 	}
 	return false
+}
+
+// NomeTecla é o nome legível da tecla (para log, erro e o registro do falso).
+func NomeTecla(t rune) string {
+	switch t {
+	case TeclaF1:
+		return "F1"
+	case TeclaF2:
+		return "F2"
+	case TeclaF3:
+		return "F3"
+	}
+	return string(t)
+}
+
+// TeclaDaVisao é a tecla que põe a névoa do replay na visão do time (100 =
+// azul/ORDER → F1, 200 = vermelho/CHAOS → F2) ou em "todos" (0 → F3).
+func TeclaDaVisao(time int) (rune, error) {
+	switch time {
+	case 100:
+		return TeclaF1, nil
+	case 200:
+		return TeclaF2, nil
+	case 0:
+		return TeclaF3, nil
+	}
+	return 0, fmt.Errorf("time %d não tem visão no replay (só 100, 200 ou 0 = todos)", time)
 }
 
 // ErrJogadorNaoEncontrado: o nome não está no playerlist.

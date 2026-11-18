@@ -1,8 +1,9 @@
 // Partida rastreada: cabeçalho, seletor de jogador, o mapa no momento de cada abate com os 10 e
 // "onde cada um estava", a vida ao longo da partida (mortes e saídas de rota), a lista de saídas de
-// rota, a linha do tempo da cadeia reduzida, os indicadores e a conferência do CS.
+// rota, o farm (CS) por minuto contra o adversário de rota, a linha do tempo da cadeia reduzida, os
+// indicadores e a conferência do CS.
 
-import { api, imagemItem } from '../api.js';
+import { api, imagemItem, acompanha } from '../api.js';
 import { duracao, dataCurta, posicao } from '../formato.js';
 import { emPorcento, separa } from '../mapa.js';
 import {
@@ -18,6 +19,7 @@ import {
   resumoDano,
   superioridade,
   origemPosicao,
+  tempoHumano,
 } from '../texto.js';
 import {
   el,
@@ -33,6 +35,8 @@ import {
   participantePrincipal,
   toast,
 } from '../ui.js';
+import { MARGEM, escala, serieCS, csNoInstante, perdidasDoJogador, tetoRedondo } from '../grafico-tempo.js';
+import { adversarioDeRota } from '../atributos.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}) => {
@@ -124,7 +128,186 @@ export async function desenha(raiz, rota, ctx) {
     seletor.append(g);
   }
 
-  const partes = [cab, seletor];
+  // Selo da checagem de qualidade do dado (servidor: analise/qualidade.go). Não segura a tela:
+  // chega depois, e a lista leva a cada instante no mapa com play.
+  const selo = el('span');
+  cab.children[2]?.after(selo);
+  const listaQualidade = el('div');
+  api
+    .qualidade(gameId)
+    .then((q) => {
+      if (!q.passes.length) return;
+      const nomeDe = Object.fromEntries(p.participantes.map((x) => [x.participante_id, x.campeao]));
+      selo.replaceWith(
+        q.total
+          ? pilula(`${q.total} ${q.total === 1 ? 'ponto' : 'pontos'} para conferir`, 'at', 'a checagem do dado gravado achou instantes para conferir (lista abaixo)')
+          : pilula('sem glitches no dado', 'ok', 'a checagem do dado gravado não achou salto, buraco, posição fora do mapa nem leitura estranha'),
+      );
+      if (!q.total) return;
+      const det = el('details', 'qualidade cartao');
+      det.append(el('summary', '', `Qualidade do dado: ${q.total} ${q.total === 1 ? 'ponto' : 'pontos'} para conferir`));
+      const ul = el('ul', 'qualidade-lista');
+      for (const ps of q.passes) {
+        for (const pt of ps.pontos) {
+          const quem = nomeDe[ps.participante_id] || `jogador ${ps.participante_id}`;
+          const texto = `${quem} · ${pt.t_ms ? relogio(pt.t_ms) : 'passe inteiro'} · ${pt.texto}`;
+          ul.append(el('li', '', [pt.t_ms ? link(texto, `#replay/${gameId}/${Math.max(0, Math.round(pt.t_ms / 1000) - 5)}`) : el('span', '', texto)]));
+        }
+      }
+      det.append(ul);
+      listaQualidade.replaceChildren(det);
+    })
+    .catch(() => selo.remove());
+
+  // Repescagem (servidor: rastreio/repescagem_fila.go): trechos com o jogador vivo sem a posição
+  // de verdade. O botão abre o replay, volta a cada trecho, trava a câmera, grava de novo e fecha
+  // o replay; o progresso vem pelo SSE da execução. Some quando não há o que recuperar.
+  const repescagem = el('span', 'repescagem');
+  selo.after(repescagem);
+  const plural = (n) => `${n} ${n === 1 ? 'trecho' : 'trechos'} sem amostra`;
+  const segueRepescagem = (exId, total, botaoR) => {
+    const estado = el('span', 'sub', 'abrindo o replay…');
+    estado.setAttribute('role', 'status');
+    repescagem.replaceChildren(estado);
+    let n = 0;
+    acompanha(
+      exId,
+      {
+        replay_aberto: () => (estado.textContent = `recuperando ${plural(total)}…`),
+        repescagem_trecho: (d) => {
+          if (d.tentativa === 1) n++;
+          estado.textContent = `trecho ${Math.min(n, total)} de ${total} (${relogio(d.de_ms)})${d.ok ? ' recuperado' : ': não fechou'}…`;
+        },
+        fechando_replay: () => (estado.textContent = 'fechando o replay…'),
+        concluido: (d) => {
+          const sobra = d.sobraram ? ` (${d.sobraram} não ${d.sobraram === 1 ? 'fechou' : 'fecharam'})` : '';
+          toast(`Recuperados ${d.recuperados} de ${d.buracos} trechos sem amostra${sobra}.`, d.sobraram ? '' : 'ok');
+          ctx.navega({ vista: 'partida', gameId, participante: pid }, { substitui: true });
+        },
+        cancelado: () => {
+          toast('Repescagem cancelada; o replay foi fechado.');
+          repescagem.replaceChildren(botaoR);
+          botaoR.disabled = false;
+        },
+        erro: (d) => {
+          toast(d.texto || 'a repescagem falhou', 'erro');
+          repescagem.replaceChildren(botaoR);
+          botaoR.disabled = false;
+        },
+      },
+      { textoQueda: 'a conexão com o servidor caiu durante a repescagem' },
+    );
+  };
+  api
+    .planoRepescagem(gameId)
+    .then((pl) => {
+      if (pl.rodando && pl.execucao) {
+        segueRepescagem(pl.execucao.id, pl.total, el('span'));
+        return;
+      }
+      if (!pl.total) return;
+      const dica =
+        'abre o replay, volta a cada trecho em que a câmera perdeu o jogador, grava de novo e fecha o replay (o cliente do LoL precisa estar aberto e fora de partida)';
+      const b = botao(
+        `recuperar ${plural(pl.total)}`,
+        '',
+        async () => {
+          b.disabled = true;
+          try {
+            const r = await api.repesca(gameId);
+            segueRepescagem(r.execucao.id, r.total, b);
+          } catch (err) {
+            toast(err.message, 'erro');
+            b.disabled = false;
+          }
+        },
+        dica,
+      );
+      repescagem.replaceChildren(b);
+    })
+    .catch(() => repescagem.remove());
+
+  // Visão dos times (servidor: rastreio/visao_fila.go): dois passes com a névoa do replay na visão
+  // de cada time (F1, F2), lendo do minimapa quem do outro time estava à vista. Precisa de jogador
+  // rastreado (a decisão usa a posição deles); o resultado aparece na caixa "visão" do mapa com play.
+  const visaoEl = el('span', 'repescagem');
+  repescagem.after(visaoEl);
+  const segueVisao = (exId, botaoV) => {
+    const estado = el('span', 'sub', 'abrindo o replay…');
+    estado.setAttribute('role', 'status');
+    visaoEl.replaceChildren(estado);
+    const nomeTime = (t) => (t === 200 ? 'vermelho' : 'azul');
+    acompanha(
+      exId,
+      {
+        replay_aberto: () => (estado.textContent = 'replay aberto…'),
+        visao_inicio: (d) => (estado.textContent = `visão do time ${nomeTime(d.time)}: conferindo a névoa…`),
+        visao_amostra: (d) => (estado.textContent = `visão do time ${nomeTime(d.time)}: ${relogio(d.t_ms)} (${d.inimigos_a_vista} à vista)`),
+        visao_fim: (d) => {
+          if (d.estado === 'falhou') toast(`Visão do time ${nomeTime(d.time)}: ${d.erro}`, 'erro');
+        },
+        fechando_replay: () => (estado.textContent = 'fechando o replay…'),
+        concluido: () => {
+          toast('Visão dos times rastreada: ligue a caixa "visão" no mapa com play.', 'ok');
+          ctx.navega({ vista: 'partida', gameId, participante: pid }, { substitui: true });
+        },
+        cancelado: () => {
+          toast('Rastreio da visão cancelado; o replay foi fechado.');
+          visaoEl.replaceChildren(botaoV);
+          botaoV.disabled = false;
+        },
+        erro: (d) => {
+          toast(d.texto || 'o rastreio da visão falhou', 'erro');
+          visaoEl.replaceChildren(botaoV);
+          botaoV.disabled = false;
+        },
+      },
+      { textoQueda: 'a conexão com o servidor caiu durante o rastreio da visão' },
+    );
+  };
+  api
+    .visao(gameId)
+    .then((v) => {
+      if (v.rodando && v.execucao) {
+        segueVisao(v.execucao.id, el('span'));
+        return;
+      }
+      if (!v.disponivel) {
+        visaoEl.remove();
+        return;
+      }
+      const feito = Boolean(v.visao?.times?.length);
+      const dica = `abre o replay e faz 2 passes a ${v.velocidade_padrao}×, um com a névoa na visão de cada time (teclas F1 e F2 do replay), lendo do minimapa quem do outro time estava à vista; leva ${tempoHumano(v.estimativa_s)} e fecha o replay (o cliente do LoL precisa estar aberto e fora de partida)`;
+      const b = botao(
+        feito ? 'rastrear a visão de novo' : `rastrear a visão dos times (${tempoHumano(v.estimativa_s)})`,
+        '',
+        async () => {
+          b.disabled = true;
+          try {
+            const r = await api.rastreiaVisao(gameId);
+            segueVisao(r.execucao.id, b);
+          } catch (err) {
+            toast(err.message, 'erro');
+            b.disabled = false;
+          }
+        },
+        dica,
+      );
+      const partesV = [b];
+      if (feito) {
+        const times = v.visao.times.map((x) => (x.time === 200 ? 'vermelho' : 'azul')).join(' e ');
+        const avisos = v.visao.times.filter((x) => x.aviso).map((x) => `visão do time ${x.time === 200 ? 'vermelho' : 'azul'}: ${x.aviso}`);
+        partesV.unshift(
+          avisos.length
+            ? pilula(`visão dos times: ${times} (conferir)`, 'at', avisos.join(' · '))
+            : pilula(`visão dos times: ${times}`, 'ok', 'os passes de visão já rodaram: no mapa com play, a caixa "visão" mostra quem cada time via'),
+        );
+      }
+      visaoEl.replaceChildren(...partesV);
+    })
+    .catch(() => visaoEl.remove());
+
+  const partes = [cab, seletor, listaQualidade];
   if (analise?.avisos?.length) partes.push(el('ul', 'avisos', analise.avisos.map((a) => el('li', 'at', a))));
   if (!analise) {
     partes.push(
@@ -142,12 +325,12 @@ export async function desenha(raiz, rota, ctx) {
   partes.push(secAbates);
 
   // --- Vida, saídas, cadeia, indicadores, CS: por jogador ---
-  const secVida = el('div');
+  const secVida = el('div', 'graficos-tempo');
   const secSaidas = el('div');
   const secCadeia = el('div');
   const secInd = el('div');
   const secCS = el('div');
-  partes.push(secVida, el('div', 'grade-2', [secSaidas, secCS]), secCadeia, secInd);
+  partes.push(secVida, el('div', 'grade-2 saidas-cs', [secSaidas, secCS]), secCadeia, secInd);
   raiz.replaceChildren(...partes);
 
   desenhaAbates(secAbates, { gameId, info, abates, pid, rota, ctx, rastreados });
@@ -162,22 +345,39 @@ export async function desenha(raiz, rota, ctx) {
     );
   }
 
-  const [ind, saidas, amostras, cadeia, cs] = await Promise.allSettled([
+  const [ind, saidas, amostras, cadeia, cs, lt, ondas] = await Promise.allSettled([
     api.indicadores(gameId, pid),
     ehRastreado ? api.saidas(gameId, pid) : Promise.resolve({ saidas: [] }),
     ehRastreado ? api.amostras(gameId, pid, 0, p.duracao_s, 1) : Promise.resolve(null),
     ehRastreado ? api.cadeia(gameId, pid) : Promise.resolve(null),
     api.cs(gameId, pid),
+    api.linhaDoTempo(gameId),
+    api.ondas(gameId),
   ]);
 
   const nomes = info.nomes;
+  // Vida e farm na MESMA escala de tempo (0 até o fim da partida) e com a guia do mouse junta.
+  const t1 = p.duracao_s * 1000;
+  const cursor = cursorDoTempo();
+  const mortes = cadeia.status === 'fulfilled' && cadeia.value ? cadeia.value.itens.filter((i) => i.tipo === 'morte') : [];
+  const listaSaidasRota = saidas.status === 'fulfilled' ? saidas.value.saidas : [];
   if (ehRastreado) {
     if (amostras.status === 'fulfilled') {
-      const mortes = cadeia.status === 'fulfilled' ? cadeia.value.itens.filter((i) => i.tipo === 'morte') : [];
-      secVida.append(graficoVida(jog, amostras.value.amostras, mortes, saidas.status === 'fulfilled' ? saidas.value.saidas : [], gameId, p.duracao_s));
+      secVida.append(graficoVida(jog, amostras.value.amostras, mortes, listaSaidasRota, gameId, t1, cursor));
     } else {
       secVida.append(cartao('Vida ao longo da partida', null, erroNaTela(amostras.reason)));
     }
+  }
+  if (lt.status === 'fulfilled') {
+    const adv = adversarioDeRota(p.participantes, pid);
+    const perdidas = ondas.status === 'fulfilled' ? perdidasDoJogador(ondas.value, pid) : [];
+    secVida.append(
+      graficoFarm(jog, adv, serieCS(lt.value, pid), adv ? serieCS(lt.value, adv.participante_id) : [], mortes, listaSaidasRota, perdidas, gameId, t1, cursor),
+    );
+  } else {
+    secVida.append(cartao('Farm (CS) ao longo da partida', null, erroNaTela(lt.reason)));
+  }
+  if (ehRastreado) {
     secSaidas.append(
       saidas.status === 'fulfilled' ? listaSaidas(saidas.value.saidas, gameId, jog) : cartao('Saídas de rota', null, erroNaTela(saidas.reason)),
     );
@@ -364,73 +564,223 @@ function painelAbate(a, info, rastreados) {
   return blocos;
 }
 
-// --- Vida ao longo da partida -------------------------------------------------------------------
+// --- Vida e farm ao longo da partida ------------------------------------------------------------
 
-function graficoVida(jog, amostras, mortes, saidas, gameId) {
-  const comVida = amostras.filter((a) => a.vida !== null && a.vida_max);
-  const titulo = `${jog.campeao} · vida ao longo da partida`;
-  if (!amostras.length) return cartao(titulo, null, el('div', 'estado-tela vazio', 'Sem leituras gravadas para este jogador.'));
-  const t0 = 0;
-  const t1 = Math.max(amostras.at(-1).t_ms, ...saidas.map((s) => s.dados?.fim_ms || 0));
-  const L = 1000;
-  const A = 150;
-  const topo = 8;
-  const base = 120;
-  const x = (t) => ((t - t0) / Math.max(1, t1 - t0)) * L;
-  const y = (pct) => base - (pct / 100) * (base - topo);
-  const g = svg('svg', { viewBox: `0 0 ${L} ${A}`, role: 'img', class: 'grafico', preserveAspectRatio: 'none' });
-  g.setAttribute('aria-label', `Vida de ${jog.campeao} de ${relogio(t0)} a ${relogio(t1)}, com ${mortes.length} mortes e ${saidas.length} saídas de rota`);
+// cursorDoTempo: o instante sob o mouse, compartilhado pelos gráficos de vida e de farm (mesma
+// escala de tempo): passar o mouse num mostra a guia nos dois.
+function cursorDoTempo() {
+  const ouvintes = new Set();
+  return {
+    ouve: (f) => ouvintes.add(f),
+    move: (t) => ouvintes.forEach((f) => f(t)),
+  };
+}
 
+// graficoNoTamanho: um SVG desenhado no tamanho real da caixa (1 unidade = 1 px) e redesenhado
+// quando ela muda. `desenha(svg, largura, altura)` monta o conteúdo; devolve o que o gráfico
+// precisa guardar (a escala). A altura vem do CSS (cresce com a janela, com teto).
+function graficoNoTamanho(rotulo, desenha) {
+  const caixa = el('div', 'grafico-caixa');
+  const g = svg('svg', { role: 'img', class: 'grafico' });
+  g.setAttribute('aria-label', rotulo);
+  caixa.append(g);
+  const estado = { largura: 0, altura: 0, escala: null };
+  const redesenha = () => {
+    const largura = Math.round(caixa.clientWidth);
+    const altura = Math.round(caixa.clientHeight);
+    if (largura < 50 || altura < 50 || (largura === estado.largura && altura === estado.altura)) return;
+    estado.largura = largura;
+    estado.altura = altura;
+    g.setAttribute('width', String(largura));
+    g.setAttribute('height', String(altura));
+    g.setAttribute('viewBox', `0 0 ${largura} ${altura}`);
+    g.replaceChildren();
+    estado.escala = desenha(g, largura, altura);
+  };
+  new ResizeObserver(redesenha).observe(caixa);
+  return { caixa, g, estado, redesenha };
+}
+
+// eixoDoTempo: grade vertical leve e os rótulos (0:00, 5:00...) embaixo, em px de verdade.
+function eixoDoTempo(g, esc, t1, altura) {
+  const base = altura - MARGEM.base;
+  for (let t = 0; t <= t1; t += esc.passo) {
+    const px = esc.x(t);
+    g.append(svg('line', { x1: px, x2: px, y1: MARGEM.topo, y2: base, class: 'grade-tempo' }));
+    const tx = svg('text', { x: px, y: altura - 6, class: 'rotulo-eixo', 'text-anchor': t === 0 ? 'start' : 'middle' });
+    tx.textContent = relogio(t);
+    g.append(tx);
+  }
+  g.append(svg('line', { x1: MARGEM.esq, x2: esc.x(t1), y1: base, y2: base, class: 'eixo' }));
+}
+
+// marcasComuns: as faixas de saída de rota (atrás) e as mortes (no eixo), iguais nos dois gráficos.
+function faixasDeSaida(g, esc, saidas, altura) {
+  const base = altura - MARGEM.base;
   for (const s of saidas.filter((s) => s.tipo === 'saiu_da_rota')) {
     const fim = s.dados?.fim_ms || s.t_ms;
-    const r = svg('rect', { x: x(s.t_ms), y: topo, width: Math.max(2, x(fim) - x(s.t_ms)), height: base - topo, class: 'faixa-saida' });
+    const r = svg('rect', { x: esc.x(s.t_ms), y: MARGEM.topo, width: Math.max(2, esc.x(fim) - esc.x(s.t_ms)), height: base - MARGEM.topo, class: 'faixa-saida' });
     const tt = svg('title');
     tt.textContent = `saiu da rota às ${relogio(s.t_ms)} por ${Math.round((fim - s.t_ms) / 1000)} s · ${desfecho(s.dados?.desfecho)}`;
     r.append(tt);
     g.append(r);
   }
-  for (const pct of [50, 100]) g.append(svg('line', { x1: 0, x2: L, y1: y(pct), y2: y(pct), class: 'grade-linha' }));
-  g.append(svg('line', { x1: 0, x2: L, y1: base, y2: base, class: 'eixo' }));
-
-  // A linha quebra onde não há leitura (morto, painel não lido) por mais de 3 s.
-  let d = '';
-  let ant = null;
-  for (const a of comVida) {
-    const px = x(a.t_ms).toFixed(1);
-    const py = y((a.vida / a.vida_max) * 100).toFixed(1);
-    d += !ant || a.t_ms - ant.t_ms > 3000 ? `M${px} ${py}` : `L${px} ${py}`;
-    ant = a;
-  }
-  g.append(svg('path', { d, class: 'linha-vida' }));
-
+}
+function marcasDeMorte(g, esc, mortes, altura) {
   for (const m of mortes) {
-    const c = svg('circle', { cx: x(m.t_ms), cy: base, r: 5, class: 'morte' });
+    const c = svg('circle', { cx: esc.x(m.t_ms), cy: altura - MARGEM.base, r: 5, class: 'morte' });
     const tt = svg('title');
     tt.textContent = `morreu às ${relogio(m.t_ms)}`;
     c.append(tt);
     g.append(c);
   }
-  const passo = t1 > 1200000 ? 300000 : t1 > 600000 ? 180000 : 60000;
-  for (let t = 0; t <= t1; t += passo) {
-    const tx = svg('text', { x: Math.min(L - 30, x(t) + 2), y: A - 6, class: 'rotulo-eixo' });
-    tx.textContent = relogio(t);
-    g.append(tx);
-  }
+}
+
+// interativo: guia vertical sincronizada, texto do instante e clique → mapa com play.
+function interativo(gr, { t1, cursor, gameId, texto, valor }) {
+  const guia = () => gr.g.querySelector('.guia');
+  gr.g.style.cursor = 'pointer';
+  const tDoMouse = (ev) => {
+    const r = gr.g.getBoundingClientRect();
+    return gr.estado.escala ? Math.max(0, Math.min(t1, gr.estado.escala.tDoX(ev.clientX - r.left))) : null;
+  };
+  gr.g.addEventListener('mousemove', (ev) => cursor.move(tDoMouse(ev)));
+  gr.g.addEventListener('mouseleave', () => cursor.move(null));
+  gr.g.addEventListener('click', (ev) => {
+    const t = tDoMouse(ev);
+    if (t !== null) location.hash = `#replay/${gameId}/${Math.max(0, Math.round(t / 1000))}`;
+  });
+  cursor.ouve((t) => {
+    let l = guia();
+    if (t === null || !gr.estado.escala) {
+      if (l) l.remove();
+      valor.textContent = texto(null);
+      return;
+    }
+    if (!l) {
+      l = svg('line', { class: 'guia', y1: MARGEM.topo, y2: gr.estado.altura - MARGEM.base });
+      gr.g.append(l);
+    }
+    const px = gr.estado.escala.x(t);
+    l.setAttribute('x1', px);
+    l.setAttribute('x2', px);
+    valor.textContent = texto(t);
+  });
+}
+
+function graficoVida(jog, amostras, mortes, saidas, gameId, t1, cursor) {
+  const comVida = amostras.filter((a) => a.vida !== null && a.vida_max);
+  const titulo = `${jog.campeao} · vida ao longo da partida`;
+  if (!amostras.length) return cartao(titulo, null, el('div', 'estado-tela vazio', 'Sem leituras gravadas para este jogador.'));
+  const gr = graficoNoTamanho(`Vida de ${jog.campeao} ao longo da partida, com ${mortes.length} mortes e ${saidas.length} saídas de rota`, (g, W, H) => {
+    const esc = escala(t1, W);
+    const base = H - MARGEM.base;
+    const y = (pct) => base - (pct / 100) * (base - MARGEM.topo);
+    faixasDeSaida(g, esc, saidas, H);
+    for (const pct of [50, 100]) {
+      g.append(svg('line', { x1: MARGEM.esq, x2: W - MARGEM.dir, y1: y(pct), y2: y(pct), class: 'grade-linha' }));
+      const r = svg('text', { x: MARGEM.esq - 6, y: y(pct) + 4, class: 'rotulo-eixo', 'text-anchor': 'end' });
+      r.textContent = `${pct}%`;
+      g.append(r);
+    }
+    eixoDoTempo(g, esc, t1, H);
+    // A linha quebra onde não há leitura (morto, painel não lido) por mais de 3 s.
+    let d = '';
+    let ant = null;
+    for (const a of comVida) {
+      const px = esc.x(a.t_ms).toFixed(1);
+      const py = y((a.vida / a.vida_max) * 100).toFixed(1);
+      d += !ant || a.t_ms - ant.t_ms > 3000 ? `M${px} ${py}` : `L${px} ${py}`;
+      ant = a;
+    }
+    g.append(svg('path', { d, class: 'linha-vida' }));
+    marcasDeMorte(g, esc, mortes, H);
+    return esc;
+  });
+  const valor = el('span', 'sub num valor-grafico');
+  const vidaEm = (t) => {
+    let melhor = null;
+    for (const a of comVida) {
+      if (Math.abs(a.t_ms - t) <= 1500 && (!melhor || Math.abs(a.t_ms - t) < Math.abs(melhor.t_ms - t))) melhor = a;
+      if (a.t_ms > t + 1500) break;
+    }
+    return melhor;
+  };
+  interativo(gr, {
+    t1,
+    cursor,
+    gameId,
+    valor,
+    texto: (t) => {
+      if (t === null) return 'passe o mouse para ver o instante; clique para abrir no mapa com play';
+      const a = vidaEm(t);
+      return `${relogio(t)} · ${a ? `vida ${Math.round((a.vida / a.vida_max) * 100)}% (${numero(Math.round(a.vida), 0)} / ${numero(a.vida_max, 0)})` : 'vida não lida'}`;
+    },
+  });
+  valor.textContent = 'passe o mouse para ver o instante; clique para abrir no mapa com play';
   const lado = el('div', 'linha legenda-grafico', [
     el('span', '', [el('i', 'k-linha'), 'vida (painel do jogo)']),
     el('span', '', [el('i', 'k-faixa'), 'fora da rota']),
     el('span', '', [el('i', 'k-morte'), 'morte']),
     comVida.length < amostras.length * 0.5 ? el('span', 'sub', 'a vida só aparece onde a tela foi lida') : null,
+    valor,
   ]);
-  const c = cartao(titulo, `${relogio(t0)}–${relogio(t1)}`, [el('div', 'grafico-caixa', [g]), lado]);
-  // Clique no gráfico: abre o mapa com play naquele instante.
-  g.addEventListener('click', (ev) => {
-    const r = g.getBoundingClientRect();
-    const t = t0 + ((ev.clientX - r.left) / r.width) * (t1 - t0);
-    location.hash = `#replay/${gameId}/${Math.max(0, Math.round(t / 1000))}`;
+  return cartao(titulo, `0:00–${relogio(t1)}`, [gr.caixa, lado]);
+}
+
+// graficoFarm: o CS do jogador (e do adversário direto de rota) de minuto em minuto, pela linha do
+// tempo do cliente (exata; o CS do jogo anda de 10 em 10 e fica só na conferência), na mesma escala
+// de tempo do gráfico de vida, com as mesmas marcas (saídas, mortes) e as ondas perdidas.
+function graficoFarm(jog, adv, serieEu, serieAdv, mortes, saidas, perdidas, gameId, t1, cursor) {
+  const titulo = `${jog.campeao} · farm (CS) ao longo da partida`;
+  if (!serieEu.length) return cartao(titulo, null, el('div', 'estado-tela vazio', 'Sem a linha do tempo desta partida: sem o CS por minuto.'));
+  const max = tetoRedondo(Math.max(...serieEu.map((s) => s.cs), ...serieAdv.map((s) => s.cs)));
+  const gr = graficoNoTamanho(`CS de ${jog.campeao}${adv ? ` e de ${adv.campeao}` : ''} ao longo da partida`, (g, W, H) => {
+    const esc = escala(t1, W);
+    const base = H - MARGEM.base;
+    const y = (cs) => base - (cs / max) * (base - MARGEM.topo);
+    faixasDeSaida(g, esc, saidas, H);
+    for (const v of [max / 2, max]) {
+      g.append(svg('line', { x1: MARGEM.esq, x2: W - MARGEM.dir, y1: y(v), y2: y(v), class: 'grade-linha' }));
+      const r = svg('text', { x: MARGEM.esq - 6, y: y(v) + 4, class: 'rotulo-eixo', 'text-anchor': 'end' });
+      r.textContent = String(Math.round(v));
+      g.append(r);
+    }
+    eixoDoTempo(g, esc, t1, H);
+    const caminho = (s) => s.map((p, i) => `${i ? 'L' : 'M'}${esc.x(p.t_ms).toFixed(1)} ${y(p.cs).toFixed(1)}`).join('');
+    if (serieAdv.length) g.append(svg('path', { d: caminho(serieAdv), class: 'linha-cs adv' }));
+    g.append(svg('path', { d: caminho(serieEu), class: 'linha-cs' }));
+    for (const o of perdidas) {
+      const px = esc.x(o.t_ms);
+      const m = svg('path', { d: `M${px - 5} ${MARGEM.topo} L${px + 5} ${MARGEM.topo} L${px} ${MARGEM.topo + 8} Z`, class: 'onda-perdida' });
+      const tt = svg('title');
+      tt.textContent = `onda ${o.onda}${o.canhao ? ' (com canhão)' : ''} perdida às ${relogio(o.t_ms)}: ${{ morto: 'morto', na_base: 'na base', longe: 'longe da onda' }[o.motivo] || o.motivo}${o.zona ? ` (${nomeZona(o.zona)})` : ''}`;
+      m.append(tt);
+      g.append(m);
+    }
+    marcasDeMorte(g, esc, mortes, H);
+    return esc;
   });
-  g.style.cursor = 'pointer';
-  return c;
+  const valor = el('span', 'sub num valor-grafico');
+  const texto = (t) => {
+    if (t === null) return 'passe o mouse para ver o CS e o CS por minuto';
+    const eu = csNoInstante(serieEu, t);
+    const ele = adv ? csNoInstante(serieAdv, t) : null;
+    const fmt = (c) => `${Math.round(c.cs)} CS${c.por_min !== null ? ` (${numero(c.por_min)}/min)` : ''}`;
+    return `${relogio(t)} · ${jog.campeao} ${fmt(eu)}${ele ? ` · ${adv.campeao} ${fmt(ele)}` : ''}`;
+  };
+  interativo(gr, { t1, cursor, gameId, valor, texto });
+  valor.textContent = texto(null);
+  const ultimo = serieEu.at(-1);
+  const lado = el('div', 'linha legenda-grafico', [
+    el('span', '', [el('i', 'k-cs'), jog.campeao]),
+    adv && serieAdv.length ? el('span', '', [el('i', 'k-cs adv'), `${adv.campeao} (adversário de rota)`]) : null,
+    el('span', '', [el('i', 'k-faixa'), 'fora da rota']),
+    el('span', '', [el('i', 'k-morte'), 'morte']),
+    el('span', '', [el('i', 'k-onda'), `onda perdida${perdidas.length ? ` (${perdidas.length})` : ' (nenhuma estimada)'}`]),
+    valor,
+  ]);
+  return cartao(titulo, `${ultimo.cs} CS · ${numero(ultimo.cs / Math.max(1, ultimo.t_ms / 60000))}/min`, [gr.caixa, lado]);
 }
 
 // --- Saídas de rota -----------------------------------------------------------------------------
@@ -442,7 +792,7 @@ function listaSaidas(saidas, gameId, jog) {
   }
   const tab = el('table', 'tabela');
   tab.append(
-    el('thead', '', [el('tr', '', ['Quando', 'Por', 'Para onde', 'Vida', 'Como terminou', ''].map((h) => el('th', '', h)))]),
+    el('thead', '', [el('tr', '', ['Quando', 'Por', 'Para onde', 'Vida', 'Como terminou', ''].map((h) => el('th', h === 'Para onde' ? 'larga' : '', h)))]),
   );
   const tb = el('tbody');
   for (const s of so) {

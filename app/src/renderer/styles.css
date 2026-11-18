@@ -221,12 +221,23 @@ dialog.dialogo::backdrop{background:rgba(5,8,12,.6)}
 .dano h3{font-size:12px;color:var(--texto-2);font-weight:600;margin-bottom:2px}
 .dano-linha{display:grid;grid-template-columns:110px 60px minmax(0,1fr);gap:8px;font-size:12.5px;align-items:baseline}
 .dano-linha .quem{font-weight:600}
-.grafico-caixa{padding:10px 12px 0}
-.grafico{width:100%;height:150px;display:block}
+/* Gráficos no tamanho real em px (grafico-tempo.js): a caixa dá a altura, que cresce com a janela. */
+.grafico-caixa{height:clamp(150px,19vh,320px);margin:10px 12px 0;min-width:0}
+.grafico{display:block;overflow:visible}
+.grafico .grade-tempo{stroke:var(--borda);stroke-opacity:.45}
+.grafico .guia{stroke:var(--texto-2);stroke-width:1;stroke-dasharray:2 3;pointer-events:none}
+.grafico .linha-cs{fill:none;stroke:var(--acento);stroke-width:2}
+.grafico .linha-cs.adv{stroke:var(--vermelho);stroke-dasharray:6 4;stroke-width:1.6}
+.grafico .onda-perdida{fill:var(--atencao)}
+.graficos-tempo{display:flex;flex-direction:column;gap:14px}
+.valor-grafico{margin-left:auto;font-family:var(--font-mono);font-size:11.5px}
+.legenda-grafico i.k-cs{width:14px;height:0;border-top:2px solid var(--acento)}
+.legenda-grafico i.k-cs.adv{border-top:2px dashed var(--vermelho)}
+.legenda-grafico i.k-onda{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:8px solid var(--atencao)}
 .grafico .faixa-saida{fill:var(--atencao-fraco)}
 .grafico .grade-linha{stroke:var(--borda);stroke-dasharray:3 4}
 .grafico .eixo{stroke:var(--borda-forte)}
-.grafico .linha-vida{fill:none;stroke:var(--ok);stroke-width:1.6;vector-effect:non-scaling-stroke}
+.grafico .linha-vida{fill:none;stroke:var(--ok);stroke-width:1.6}
 .grafico .morte{fill:var(--critico)}
 .grafico .rotulo-eixo{fill:var(--texto-3);font-family:var(--font-mono);font-size:11px}
 .legenda-grafico{padding:6px 12px 10px;font-size:12px;color:var(--texto-2);gap:14px}
@@ -435,6 +446,14 @@ dialog.dialogo::backdrop{background:rgba(5,8,12,.6)}
 .figura .f-atv.gankando,.figura .f-atv.counter_gank,.figura .f-atv.roaming,.figura .f-atv.rotacionando,.rp-grupo.gankando,.rp-grupo.counter_gank,.rp-grupo.roaming,.rp-grupo.rotacionando,.rp-linha .f-atv.gankando,.rp-linha .f-atv.counter_gank,.rp-linha .f-atv.roaming,.rp-linha .f-atv.rotacionando{background:rgba(14,116,144,.95)}
 .figura .f-atv.parado,.figura .f-atv.na_base,.rp-grupo.parado,.rp-grupo.na_base{background:rgba(60,70,85,.92)}
 .rp-linha .f-atv.morto,.rp-linha .f-atv.na_base,.rp-linha .f-atv.parado{background:var(--fundo-4);color:var(--texto-2)}
+/* Etiquetas novas: dive é luta mais escura (magenta), invadindo amarelo-limão com texto escuro (a selva dos outros; o âmbar é da torre),
+   split push verde-água (farm longe do time), agrupado anil (o time junto), recall cinza-azulado
+   (a caminho da base). */
+.figura .f-atv.dive,.rp-grupo.dive,.rp-linha .f-atv.dive{background:rgba(130,20,70,.95)}
+.figura .f-atv.invadindo,.rp-grupo.invadindo,.rp-linha .f-atv.invadindo{background:rgba(222,190,52,.95);color:#1b1500}
+.figura .f-atv.split_push,.rp-grupo.split_push,.rp-linha .f-atv.split_push{background:rgba(16,112,96,.95)}
+.figura .f-atv.agrupado,.rp-grupo.agrupado,.rp-linha .f-atv.agrupado{background:rgba(58,62,150,.95)}
+.figura .f-atv.recall,.rp-grupo.recall,.rp-linha .f-atv.recall{background:rgba(72,84,118,.95)}
 /* Morto: fica onde morreu, menor, apagado e POR BAIXO dos vivos; só a etiqueta "morto" pequena. */
 .figura.morto{z-index:1;transform:translate(-50%,calc(var(--ret) * -0.36))}
 .figura.morto .retrato{width:calc(var(--ret) * .72)!important;height:calc(var(--ret) * .72)!important;border-width:2px}
@@ -463,6 +482,43 @@ dialog.dialogo::backdrop{background:rgba(5,8,12,.6)}
 .figura .f-ponto.torre{background:#e0a83a}
 .figura .f-ponto.gankando,.figura .f-ponto.counter_gank,.figura .f-ponto.roaming,.figura .f-ponto.rotacionando{background:#22a6c7}
 .figura .f-ponto.parado,.figura .f-ponto.na_base{background:#8a95a6}
+.figura .f-ponto.dive{background:#d6377f}
+.figura .f-ponto.invadindo{background:#f2e03c}
+.figura .f-ponto.split_push{background:#2bb39a}
+.figura .f-ponto.agrupado{background:#7479e6}
+.figura .f-ponto.recall{background:#9aa7c9}
+/* Sentinelas no mapa com play: o ponto no lugar ESTIMADO, na cor do time, e um círculo discreto
+   do tamanho da incerteza (tracejado). Por baixo dos retratos. */
+.rp-sentinelas{position:absolute;inset:0;pointer-events:none;z-index:0}
+.rp-sentinelas[hidden]{display:none}
+.sent{position:absolute;transform:translate(-50%,-50%);border-radius:50%;pointer-events:none}
+.sent .sent-raio{position:absolute;inset:0;border-radius:50%;border:1px dashed currentColor;opacity:.45;background:color-mix(in srgb,currentColor 7%,transparent)}
+.sent .sent-ponto{position:absolute;left:50%;top:50%;width:9px;height:9px;transform:translate(-50%,-50%) rotate(45deg);background:currentColor;box-shadow:0 0 0 1.5px rgba(8,11,16,.9);pointer-events:auto;cursor:help}
+.sent.controle .sent-ponto{background:#e05252;outline:2px solid currentColor;outline-offset:0}
+.sent.azul{color:var(--azul)} .sent.vermelho{color:var(--vermelho)}
+.sent.desconhecida .sent-ponto{border-radius:50%;transform:translate(-50%,-50%)}
+/* Sentinela lida do minimapa (passe de visão): lugar exato, sem o círculo da incerteza. */
+.sent.lida{width:0;height:0}
+.sent.lida .sent-ponto{width:11px;height:11px;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 0 0 3.5px rgba(8,11,16,.9)}
+/* Caixa "visão" do mapa com play: fora da visão do time escolhido = esmaecido (o anel fica no lugar
+   real); indeterminado = "?" no retrato. */
+.rp-sel-visao{margin-left:4px;font-size:12px;background:var(--fundo-3);color:var(--texto);border:1px solid var(--borda);border-radius:4px;padding:1px 4px}
+.figura.fora-da-visao .retrato{opacity:.28;filter:grayscale(.7)}
+.figura.fora-da-visao .f-nome,.figura.fora-da-visao .f-atv{opacity:.45}
+.figura .f-duvida{position:absolute;right:-7px;bottom:-5px;min-width:16px;height:16px;border-radius:8px;background:#e0a83a;color:#1b1500;font-size:11px;font-weight:800;display:grid;place-items:center;box-shadow:0 0 0 2px rgba(8,11,16,.85);cursor:help;pointer-events:auto;line-height:1}
+.figura .f-duvida[hidden]{display:none}
+.ch-anel.fora-da-visao{stroke-dasharray:2 2;stroke-width:2}
+.rp-visao{margin-left:6px;font-size:10.5px;padding:0 5px;border-radius:4px;white-space:nowrap}
+.rp-visao.visivel{background:rgba(31,110,50,.9);color:#fff}
+.rp-visao.fora{background:rgba(60,68,82,.9);color:#cdd5e2}
+.rp-visao.indeterminado{background:rgba(140,96,18,.95);color:#fff}
+.rp-linha.fora-da-visao .retrato{opacity:.4}
+/* Checagem de qualidade do dado (tela da partida). */
+.qualidade{padding:8px 14px;margin-bottom:12px}
+.qualidade summary{cursor:pointer;font-weight:600;color:var(--atencao)}
+.qualidade-lista{margin:8px 0 0;padding-left:18px;font-size:13px;display:flex;flex-direction:column;gap:3px}
+.repescagem{display:inline-flex;align-items:center;gap:6px}
+.repescagem .btn{padding:3px 10px;font-size:12.5px}
 .rp-linha.destacado{background:var(--fundo-4);box-shadow:inset 3px 0 0 var(--acento)}
 
 /* --- Mapa com play: placar dos times à esquerda ------------------------------------------------ */
@@ -559,3 +615,54 @@ dialog.dialogo::backdrop{background:rgba(5,8,12,.6)}
 .pl-onda{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:6px;align-items:baseline;padding:2px 0;font-size:12.5px}
 .pl-onda-rota{color:var(--texto-3);font-size:11.5px}
 .pl-onda-est.freeze{font-weight:700}
+
+/* --- Mapa com play: atributos com o bônus dos objetivos, decomposição e detalhe dos itens ------- */
+.rp-atr{display:flex;flex-direction:column;gap:1px}
+.rp-atr-linha{display:grid;grid-template-columns:minmax(0,1fr) auto 64px;gap:8px;align-items:center;width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:5px;padding:2px 6px;color:inherit;font:inherit;font-size:12.5px;cursor:pointer}
+.rp-atr-linha:hover:not(:disabled),.rp-atr-linha.aberto{background:var(--fundo-3);border-color:var(--borda)}
+.rp-atr-linha:disabled{cursor:default}
+.rp-atr-linha:focus-visible{outline:2px solid var(--acento);outline-offset:1px}
+.rp-atr-nome{color:var(--texto-2)}
+.rp-atr-linha b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-weight:600;text-align:right}
+.rp-atr-icones{display:flex;gap:2px}
+.rp-atr-icone{width:18px;height:18px}
+.rp-atr-icone.inativo{opacity:.4;filter:grayscale(1)}
+.rp-decomp{display:flex;flex-direction:column;gap:2px;margin:2px 0 6px 10px;padding:6px 8px;border-left:2px solid var(--acento);background:var(--fundo-3);border-radius:0 6px 6px 0;font-size:12px}
+.rp-dc{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 8px;align-items:baseline}
+.rp-dc b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;text-align:right}
+.rp-dc small{grid-column:1/-1;font-size:10.5px;line-height:1.3}
+.rp-dc.obj b{color:var(--atencao)}
+.rp-dc.sobra span{font-style:italic}
+.rp-dc.nao-expl b,.rp-dc.nao-expl span{color:var(--critico)}
+.rp-dc.total{border-top:1px solid var(--borda);padding-top:3px;margin-top:2px;font-weight:600}
+.rp-decomp > small{font-size:10.5px}
+.rp-item{padding:0;border:1px solid transparent;border-radius:6px;background:none;cursor:pointer;line-height:0}
+.rp-item:hover,.rp-item.aberto{border-color:var(--acento)}
+.rp-item:focus-visible{outline:2px solid var(--acento);outline-offset:1px}
+.rp-ouro-itens{font-size:12px;margin:2px 0 0}
+.rp-ouro-itens b{font-family:var(--font-mono)}
+.tx-ok{color:var(--ok)}
+.rp-item-det{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border:1px solid var(--borda);border-radius:6px;background:var(--fundo-3);font-size:12px}
+.rp-item-det-cab{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.rp-item-linhas{margin:0;padding-left:16px;font-family:var(--font-mono);font-size:11.5px}
+.rp-item-desc{margin:0;white-space:pre-line;line-height:1.4;color:var(--texto-2)}
+
+/* Tela da partida em tela larga: a tabela de saídas fica com a coluna "para onde" absorvendo a sobra
+   (as outras no tamanho do conteúdo) e a do CS numa coluna estreita ao lado. */
+.grade-2.saidas-cs{grid-template-columns:minmax(0,1fr) minmax(300px,440px)}
+@media (max-width:1100px){.grade-2.saidas-cs{grid-template-columns:minmax(0,1fr)}}
+.tabela th.larga{width:100%}
+.saidas-cs .tabela td{white-space:nowrap}
+.saidas-cs .tabela td:nth-child(3),.saidas-cs .tabela td:nth-child(5){white-space:normal}
+/* Tela larga (1920/2560): o mapa do abate cresce com a janela e o "onde cada um estava" lê da
+   esquerda (com o valor colado no nome, sem um vão de 1500 px no meio). */
+@media (min-width:901px){.grade-abate{grid-template-columns:minmax(300px,clamp(440px,28vw,680px)) minmax(0,1fr)}}
+.onde{grid-template-columns:minmax(150px,max-content) minmax(0,1fr)}
+.onde > b{text-align:left}
+.saidas-cs .tabela{max-width:1000px}
+/* Monitor largo (1920/2560): telas de lista e formulário param de esticar (campo de busca de 2400 px,
+   rótulo e valor separados por 1000 px). A da partida fica com a largura toda (mapa e gráficos). */
+.tela[data-vista="jogadores"] > *,.tela[data-vista="rastreio"] > *,.tela[data-vista="partidas"] > *,
+.tela[data-vista="estudo"] > *{width:100%;max-width:1680px}
+.tela[data-vista="configuracoes"] > *{width:100%;max-width:1320px}
+.tela[data-vista="jogadores"] > form{max-width:860px}

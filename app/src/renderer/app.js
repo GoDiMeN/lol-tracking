@@ -12,6 +12,7 @@ import { desenha as partida } from './views/partida.js';
 import { desenha as estudo } from './views/estudo.js';
 import { desenha as replay } from './views/replay.js';
 import { desenha as configuracoes } from './views/configuracoes.js';
+import * as telaCheia from './telacheia.js';
 
 const VISTAS = { jogadores, rastreio, partidas, partida, estudo, replay, configuracoes };
 
@@ -105,6 +106,9 @@ async function roteia() {
   $('janela').hidden = cheia;
   $('cheia').hidden = !cheia;
   const raiz = cheia ? $('cheia') : $('conteudo');
+  // A tela atual no atributo: o CSS limita a largura das telas de lista e formulário em monitor
+  // largo (2560 px), sem mexer na da partida, que usa a largura nos gráficos.
+  $('conteudo').dataset.vista = rota.vista;
   $('conteudo').replaceChildren();
   $('cheia').replaceChildren();
 
@@ -138,10 +142,33 @@ if (window.janelaApp) {
   $('winMin').addEventListener('click', () => window.janelaApp.minimiza());
   $('winMax').addEventListener('click', () => window.janelaApp.alternaMaximizada());
   $('winFecha').addEventListener('click', () => window.janelaApp.fecha());
+  telaCheia.aoMudar((ligada) => {
+    const bt = $('winCheia');
+    const rot = ligada ? 'Sair da tela cheia (F11)' : 'Tela cheia (F11)';
+    bt.title = rot;
+    bt.setAttribute('aria-label', rot.replace(' (F11)', ''));
+    bt.setAttribute('aria-pressed', String(ligada));
+  });
+  $('winCheia').addEventListener('click', () => telaCheia.alterna());
   $('titlebar').addEventListener('dblclick', (e) => {
     if (!e.target.closest('button')) window.janelaApp.alternaMaximizada();
   });
 }
+
+// Esc sai da tela cheia quando a tela não usou o Esc para outra coisa (o mapa com play fecha o
+// painel primeiro; um diálogo aberto fecha o diálogo). No window: roda depois dos ouvintes das telas.
+window.addEventListener('keydown', (ev) => {
+  // F11 dentro do app: o processo principal já pega a tecla antes da página (before-input-event);
+  // se ela chegar aqui mesmo assim (tecla sintética, foco em outro lugar), a página alterna.
+  if (ev.key === 'F11' && window.janelaApp && !ev.defaultPrevented) {
+    ev.preventDefault();
+    telaCheia.alterna();
+    return;
+  }
+  if (ev.key !== 'Escape' || ev.defaultPrevented || !telaCheia.estaLigada()) return;
+  if (document.querySelector('dialog[open]')) return;
+  telaCheia.poe(false);
+});
 
 window.addEventListener('hashchange', roteia);
 atualizaStatus().then(roteia);

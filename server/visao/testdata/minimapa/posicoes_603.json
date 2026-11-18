@@ -1,0 +1,87 @@
+{
+ "game_id": 3304217746,
+ "t_ms": 603000,
+ "fonte": "amostras dos passes (servidor com cópia dos dados), interpoladas em 603,0 s",
+ "jogadores": [
+  {
+   "participante_id": 1,
+   "campeao": "Ambessa",
+   "time": 100,
+   "x": 1362,
+   "y": 10576,
+   "morto": true
+  },
+  {
+   "participante_id": 2,
+   "campeao": "Shaco",
+   "time": 100,
+   "x": 14059,
+   "y": 4486,
+   "morto": true
+  },
+  {
+   "participante_id": 3,
+   "campeao": "Diana",
+   "time": 100,
+   "x": 7098,
+   "y": 6857,
+   "morto": false
+  },
+  {
+   "participante_id": 4,
+   "campeao": "Yunara",
+   "time": 100,
+   "x": 12779,
+   "y": 2859,
+   "morto": false
+  },
+  {
+   "participante_id": 5,
+   "campeao": "Leona",
+   "time": 100,
+   "x": 747,
+   "y": 1214,
+   "morto": false
+  },
+  {
+   "participante_id": 6,
+   "campeao": "Garen",
+   "time": 200,
+   "x": 1265,
+   "y": 10361,
+   "morto": false
+  },
+  {
+   "participante_id": 7,
+   "campeao": "Vi",
+   "time": 200,
+   "x": 4115,
+   "y": 9468,
+   "morto": false
+  },
+  {
+   "participante_id": 8,
+   "campeao": "Orianna",
+   "time": 200,
+   "x": 7691,
+   "y": 7726,
+   "morto": false
+  },
+  {
+   "participante_id": 9,
+   "campeao": "Draven",
+   "time": 200,
+   "x": 14050,
+   "y": 4775,
+   "morto": true
+  },
+  {
+   "participante_id": 10,
+   "campeao": "Senna",
+   "time": 200,
+   "x": 13726,
+   "y": 5150,
+   "morto": false
+  }
+ ]
+}

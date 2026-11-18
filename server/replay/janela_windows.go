@@ -235,10 +235,13 @@ func (j *JanelaWindows) Encerra() error {
 	return errors.Join(erros...)
 }
 
-// scancodes do teclado US/ABNT (a linha de cima e os números são iguais).
+// scancodes do teclado US/ABNT (a linha de cima, os números e as teclas de
+// função são iguais). F1–F3: 0x3B–0x3D, os mesmos da sonda que mediu a troca
+// de visão do replay em 2026-11-17.
 var scancodes = map[rune]uint16{
 	'1': 0x02, '2': 0x03, '3': 0x04, '4': 0x05, '5': 0x06,
 	'Q': 0x10, 'W': 0x11, 'E': 0x12, 'R': 0x13, 'T': 0x14,
+	TeclaF1: 0x3B, TeclaF2: 0x3C, TeclaF3: 0x3D,
 }
 
 type keybdInput struct {
@@ -267,7 +270,7 @@ const (
 func (j *JanelaWindows) Aperta(tecla rune) error {
 	sc, ok := scancodes[tecla]
 	if !ok || !TeclaPermitida(tecla) {
-		return fmt.Errorf("tecla %q fora da lista de seleção de jogador", tecla)
+		return fmt.Errorf("tecla %s fora da lista de teclas permitidas", NomeTecla(tecla))
 	}
 	envia := func(flags uint32) error {
 		in := input{tipo: inputTeclado, ki: keybdInput{scan: sc, flags: flags}}

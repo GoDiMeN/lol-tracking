@@ -118,26 +118,38 @@ func Recalcula(ctx context.Context, d Deps, gameID int64) (Resumo, error) {
 		}
 	}
 
+	// 0. A visão dos times (passes de visão), de novo: ela depende das posições
+	// rastreadas, que mudam com passe novo ou repescado; a cadeia (1) lê dela.
+	if _, err := rastreio.RecalculaVisao(db, gameID); err != nil {
+		r.Avisos = append(r.Avisos, "a visão dos times não foi refeita: "+err.Error())
+	}
+
 	// 1. A cadeia de cada passe, de novo (com o contexto de agora).
 	passes, err := rastreio.PassesCompactados(db, gameID)
 	if err != nil {
 		return r, err
 	}
+	// Passe com o arquivo faltando ou ilegível não segura os outros: vira aviso, e a checagem de
+	// qualidade (1b) aponta qual arquivo é.
 	for _, p := range passes {
 		if _, err := rastreio.RegeraCadeia(db, p.ID); err != nil {
-			return r, fmt.Errorf("refazer a cadeia do passe %d: %w", p.ID, err)
+			r.Avisos = append(r.Avisos, fmt.Sprintf("a cadeia do passe %d não foi refeita: %v", p.ID, err))
 		}
 	}
 	r.Passes = len(passes)
 
-	// 1b. A checagem de qualidade do dado de cada passe (qualidade.go): só aponta, não muda nada.
-	if pt, err := partida.Le(db, gameID); err == nil {
+	// 1b. A checagem de qualidade do dado e do armazenamento de cada passe (qualidade.go): só
+	// aponta, não muda nada. Gravada já aqui, para valer mesmo se o resto falhar.
+	var qs map[int64]*QualidadePasse
+	todos, errTodos := rastreio.PassesDaPartida(db, gameID)
+	if pt, err := partida.Le(db, gameID); err == nil && errTodos == nil {
 		timeDe := map[int]int{}
 		for _, x := range pt.Participantes {
 			timeDe[x.ParticipanteID] = x.Time
 		}
-		if err := confereQualidadeDaPartida(db, gameID, passes, timeDe); err != nil {
+		if qs, err = confereQualidadeDaPartida(db, gameID, todos, timeDe); err != nil {
 			r.Avisos = append(r.Avisos, "a checagem de qualidade do dado não rodou: "+err.Error())
+			qs = nil
 		}
 	}
 
@@ -156,6 +168,13 @@ func Recalcula(ctx context.Context, d Deps, gameID int64) (Resumo, error) {
 	retratos := dp.retratos()
 	inds := dp.indicadores(retratos)
 	r.Abates, r.Indicadores = len(retratos), len(inds)
+
+	// 3b. A checagem de qualidade da análise (qualidade_analise.go), por cima da do dado.
+	if qs != nil {
+		if err := confereAnaliseDaPartida(db, gameID, dp, retratos, todos, qs); err != nil {
+			r.Avisos = append(r.Avisos, "a checagem de qualidade da análise não rodou: "+err.Error())
+		}
+	}
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -439,6 +458,12 @@ func carrega(db *banco.DB, gameID int64) (*dadosPartida, error) {
 		dp.riot = leAbatesRiot(rb)
 		dp.quadrosRiot = leQuadrosRiot(rb)
 		dp.wards = leWardsRiot(rb)
+		dp.eventosSentinela = sentinelasDosEventos(eventosRiot(rb))
+	}
+	if v, ok, err := rastreio.LeVisao(db, gameID); err != nil {
+		return nil, err
+	} else if ok {
+		dp.visao = v
 	}
 	return dp, nil
 }

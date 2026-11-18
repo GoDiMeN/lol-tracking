@@ -251,10 +251,21 @@ func geraNaBase(c *rastreio.ContextoCadeia) []rastreio.ItemCadeia {
 		case p.trechos[k-1].morto:
 			chegada = "renasceu"
 		default:
-			// Recall: a posição salta mais de 3000 em menos de 3 s logo antes.
-			for i := t.iIni; i > 0 && i > t.iIni-40; i-- {
-				a, b := p.zonas[i-1], p.zonas[i]
-				if a.temPonto && b.temPonto && a.vivo && b.vivo && b.tMs-a.tMs < 3000 && dist(a.ponto, b.ponto) > 3000 {
+			// Morto pouco antes: é o renascer com a câmera atrasada (ela grava um ponto velho
+			// antes de chegar à fonte: Orianna 11:10, Draven 11:45 da 3304217746), não recall.
+			for i := t.iIni - 1; i >= 0 && p.zonas[t.iIni].tMs-p.zonas[i].tMs < rastreio.RenascerAtrasadoMs; i-- {
+				if !p.zonas[i].vivo {
+					chegada = "renasceu"
+					break
+				}
+			}
+			// Recall: a definição única (rastreio.ChegadasPorRecall), numa das
+			// amostras em volta da entrada no trecho da base: antes (a histerese da
+			// zona atrasa a entrada em relação ao salto) ou logo depois (o ponto no
+			// meio do caminho já cai na zona da base: Orianna 7:47 da 3304217746).
+			recalls := p.chegadasRecall()
+			for i := t.iIni - 40; chegada == "andando" && i <= t.iIni+12 && i <= t.iFim; i++ {
+				if i >= 0 && recalls[i] && p.zonas[i].tMs-t.ini <= 3000 {
 					chegada = "recall"
 					break
 				}
@@ -299,6 +310,23 @@ const (
 	AAndando      = "andando"
 	// AParado: quase não saiu do lugar e não há nenhum outro sinal.
 	AParado = "parado"
+	// ARecall: o trecho parado (a canalização) que termina com ele surgindo na
+	// própria fonte. Partida 3304217746: a Diana parada aos 27:47–27:54 com 15% de
+	// vida, na fonte aos 27:55.
+	ARecall = "recall"
+	// ADive: luta ou troca dentro do alcance de uma torre inimiga de pé. `com` =
+	// os inimigos; `alvo` = a torre.
+	ADive = "dive"
+	// AInvadindo: na selva do time inimigo, sem luta. Limpando um acampamento de
+	// lá, `alvo` = o acampamento. Atravessar a selva inimiga a caminho de uma luta
+	// continua sendo a aproximação (rotulaAproximacoes).
+	AInvadindo = "invadindo"
+	// ASplitPush: depois da fase de rotas, sozinho numa rota lateral do lado
+	// inimigo, farmando ou em torre, com os aliados longe.
+	ASplitPush = "split_push"
+	// AAgrupado: ele e mais três ou quatro aliados juntos, sem luta nem objetivo.
+	// `com` = os aliados do grupo.
+	AAgrupado = "agrupado"
 )
 
 // ItensDeSuporte: o item de suporte e as evoluções dele (Atlas do Mundo,
@@ -323,7 +351,8 @@ func (p *preparo) temItemDeSuporte(t int64) bool {
 }
 
 // Atividades é o vocabulário, na ordem de prioridade da regra.
-var Atividades = []string{AMorto, ANaBase, ALutando, ATrocando, AObjetivo, ATorre, AFarmando, AColetando, AGankando, ACounterGank, ARoaming, ARotacionando, AAndando, AParado}
+var Atividades = []string{AMorto, ANaBase, ARecall, ADive, ALutando, ATrocando, AObjetivo, ASplitPush, ATorre, AAgrupado, AInvadindo,
+	AFarmando, AColetando, AGankando, ACounterGank, ARoaming, ARotacionando, AAndando, AParado}
 
 type rotuloAtv struct {
 	atv       string
@@ -353,6 +382,11 @@ func (p *preparo) classifica(k int) rotuloAtv {
 	}
 	if z.zona == p.basePropria() {
 		return rotuloAtv{atv: ANaBase, confianca: "alta", sinais: []string{"na base"}, zona: z.zona}
+	}
+	// A canalização do recall que terminou na fonte (dano interrompe o recall:
+	// quem chegou à fonte não estava apanhando).
+	if r, ok := p.recallEm(t, z.zona); ok {
+		return r
 	}
 	// Quem está perto (só quem foi rastreado tem posição de verdade).
 	type perto struct {
@@ -405,10 +439,10 @@ func (p *preparo) classifica(k int) rotuloAtv {
 				for _, a := range alia {
 					com = append(com, a.pid)
 				}
-				return rotuloAtv{atv: ALutando, com: com, sinais: sinais, confianca: conf, zona: z.zona}
+				return p.talvezDive(rotuloAtv{atv: ALutando, com: com, sinais: sinais, confianca: conf, zona: z.zona}, z.ponto, t)
 			}
 			if inim[0].d <= Param.AlcanceTroca {
-				return rotuloAtv{atv: ATrocando, com: []int{inim[0].pid}, sinais: sinais, confianca: conf, zona: z.zona}
+				return p.talvezDive(rotuloAtv{atv: ATrocando, com: []int{inim[0].pid}, sinais: sinais, confianca: conf, zona: z.zona}, z.ponto, t)
 			}
 		}
 	}
@@ -444,21 +478,41 @@ func (p *preparo) classifica(k int) rotuloAtv {
 		}
 		if d := dist(z.ponto, Ponto{*e.X, *e.Y}); d <= Param.RaioObjetivo {
 			alvo := nomeDoAlvo(e)
-			return rotuloAtv{atv: atv, alvo: alvo, confianca: "media", zona: z.zona, sinais: []string{
+			r := rotuloAtv{atv: atv, alvo: alvo, confianca: "media", zona: z.zona, sinais: []string{
 				fmt.Sprintf("%s a %.0f, cai %.0f s depois", alvo, d, float64(e.TMs-t)/1000)}}
+			if atv == ATorre {
+				r = p.talvezSplit(r, z.ponto, t)
+			}
+			return r
 		}
 	}
+	// Agrupado: o time junto, sem luta nem objetivo (essas já ganharam acima).
+	if grupo, ok := p.agrupado(z.ponto, t); ok {
+		return rotuloAtv{atv: AAgrupado, com: grupo, confianca: "media", zona: z.zona, sinais: []string{
+			fmt.Sprintf("%d aliados a até %.0f uns dos outros", len(grupo), Param.DistanciaAgrupado), "nenhuma luta nem objetivo"}}
+	}
+	inimiga := p.selvaInimiga(z.zona)
 	// Limpando um acampamento da selva: perto do centro dele, sem inimigo
 	// rastreado por perto e com uma habilidade usada agora. Vem antes da regra
 	// do deslocamento porque o caçador limpa em poucos segundos e já sai andando.
+	// Acampamento da selva do outro time: "invadindo (acampamento)".
 	if len(inim) == 0 {
 		if !p.usosOK {
 			p.usos, p.usosOK = usosDeHabilidade(c.Amostras), true
 		}
 		if ac, d, ok := acampamentoPerto(z.ponto); ok && usouHabilidadePerto(p.usos, t, Param.JanelaAcampamentoMs) {
-			return rotuloAtv{atv: AFarmando, confianca: "media", zona: z.zona, sinais: []string{
-				fmt.Sprintf("habilidade usada a %.0f do acampamento %s", d, ac.Nome), "nenhum inimigo rastreado perto"}}
+			sinais := []string{fmt.Sprintf("habilidade usada a %.0f do acampamento %s", d, ac.Nome), "nenhum inimigo rastreado perto"}
+			if zc, _ := Zona(ac.X, ac.Y); p.selvaInimiga(zc) {
+				return rotuloAtv{atv: AInvadindo, alvo: ac.Nome, confianca: "media", zona: z.zona,
+					sinais: append([]string{"na selva do time inimigo"}, sinais...)}
+			}
+			return rotuloAtv{atv: AFarmando, confianca: "media", zona: z.zona, sinais: sinais}
 		}
+	}
+	// Na selva inimiga sem luta: invadindo (andando, parado ou farmando lá).
+	if inimiga {
+		return rotuloAtv{atv: AInvadindo, confianca: "media", zona: z.zona, sinais: []string{
+			"na selva do time inimigo", "nenhuma luta"}}
 	}
 	// Quem atravessa o mapa não está farmando: deslocamento em linha reta nos
 	// últimos JanelaDeslocamentoMs acima de DeslocamentoAndando = andando.
@@ -499,8 +553,8 @@ func (p *preparo) classifica(k int) rotuloAtv {
 				// Sem ninguém rastreado não dá para dizer que não havia inimigo perto.
 				conf = "baixa"
 			}
-			return rotuloAtv{atv: AFarmando, confianca: conf, zona: z.zona, sinais: []string{
-				fmt.Sprintf("CS %.0f/min no minuto (linha do tempo)", r), "nenhum inimigo rastreado perto"}}
+			return p.talvezSplit(rotuloAtv{atv: AFarmando, confianca: conf, zona: z.zona, sinais: []string{
+				fmt.Sprintf("CS %.0f/min no minuto (linha do tempo)", r), "nenhum inimigo rastreado perto"}}, z.ponto, t)
 		}
 	}
 	// Sem nenhum outro sinal: parado, se quase não saiu do lugar na janela;
@@ -570,9 +624,40 @@ func geraAtividade(c *rastreio.ContextoCadeia) []rastreio.ItemCadeia {
 	// Trecho curto de andando/farmando é absorvido pelo anterior.
 	var lim []trechoAtv
 	for _, t := range ts {
-		curto := t.fim-t.ini < Param.TrechoMinimoMs && (t.r.atv == AAndando || t.r.atv == AFarmando || t.r.atv == AColetando || t.r.atv == AParado)
+		// Invadindo e agrupado também: cortar o canto da selva inimiga ou um aliado
+		// passar perto por 2 s não é mudar de atividade.
+		curto := t.fim-t.ini < Param.TrechoMinimoMs && (t.r.atv == AAndando || t.r.atv == AFarmando || t.r.atv == AColetando ||
+			t.r.atv == AParado || t.r.atv == AInvadindo || t.r.atv == AAgrupado)
 		if n := len(lim); n > 0 && (curto || lim[n-1].r.chave() == t.r.chave()) {
 			lim[n-1].fim = t.fim
+			continue
+		}
+		// Na luta perto da torre o jogador entra e sai do alcance a cada passo:
+		// trecho curto de luta, troca ou dive grudado num dive (antes ou depois)
+		// fica no anterior, com os inimigos dos dois (sem isso o dive piscava).
+		if n := len(lim); n > 0 && t.fim-t.ini < Param.TrechoMinimoMs && combate(t.r.atv) && combate(lim[n-1].r.atv) &&
+			(t.r.atv == ADive || lim[n-1].r.atv == ADive) {
+			lim[n-1].fim = t.fim
+			for _, pid := range t.r.com {
+				if !contem(lim[n-1].r.com, pid) && (lim[n-1].r.atv != ADive || contem(p.inimigos, pid)) {
+					lim[n-1].r.com = append(lim[n-1].r.com, pid)
+				}
+			}
+			continue
+		}
+		// Histerese entre atividades vizinhas (luta, troca, dive e torre na mesma
+		// briga): trocar de uma para outra só vale se a nova durar pelo menos
+		// HistereseAtividadeMs; mais curta, fica na anterior (com os envolvidos
+		// das duas). A entrada na primeira não espera nada: só a troca DENTRO do
+		// grupo é segurada. Sem isso a 3304217746 tinha 61 "etiquetas piscando"
+		// (4 trocas em 10 s), quase todas lutando↔torre e lutando↔trocando.
+		if n := len(lim); n > 0 && t.fim-t.ini < Param.HistereseAtividadeMs && vizinhas(lim[n-1].r.atv, t.r.atv) {
+			lim[n-1].fim = t.fim
+			for _, pid := range t.r.com {
+				if !contem(lim[n-1].r.com, pid) {
+					lim[n-1].r.com = append(lim[n-1].r.com, pid)
+				}
+			}
 			continue
 		}
 		lim = append(lim, t)
@@ -605,6 +690,16 @@ func geraAtividade(c *rastreio.ContextoCadeia) []rastreio.ItemCadeia {
 		itens = append(itens, rastreio.ItemCadeia{TMs: t.ini, Tipo: "atividade", Dados: dados})
 	}
 	return itens
+}
+
+// combate: luta, troca ou dive (as etiquetas de quem está batendo/apanhando).
+func combate(a string) bool { return a == ALutando || a == ATrocando || a == ADive }
+
+// vizinhas: duas atividades da mesma briga (luta, troca, dive, torre), entre as
+// quais a etiqueta tem histerese.
+func vizinhas(a, b string) bool {
+	briga := func(x string) bool { return combate(x) || x == ATorre }
+	return a != b && briga(a) && briga(b)
 }
 
 // fimDaFaseDeRotas: ver FimDaFaseDeRotas.
@@ -674,14 +769,24 @@ func relogio(ms int64) string {
 // parte final do trecho conta (até JanelaAproximacaoMs antes da luta), e só se
 // nela o jogador de fato chegou perto (AproximacaoMinima). É o caso da Vi aos
 // 3:42 da partida 3304217746: 21 s indo do lobo até o meio, e a luta começa.
+//
+// O deslocamento que vira aproximação pode ser uma sequência de trechos
+// "andando" e "invadindo" sem acampamento (atravessar a selva inimiga a caminho
+// da luta é gank/rotação, não invasão): todos os que caem na janela entram.
 func (p *preparo) rotulaAproximacoes(ts []trechoAtv) []trechoAtv {
+	desloca := func(r rotuloAtv) bool { return r.atv == AAndando || (r.atv == AInvadindo && r.alvo == "") }
 	var saida []trechoAtv
 	for i, t := range ts {
-		luta := (t.r.atv == ALutando || t.r.atv == ATrocando) && len(t.r.com) > 0
+		luta := (t.r.atv == ALutando || t.r.atv == ATrocando || t.r.atv == ADive) && len(t.r.com) > 0
 		n := len(saida)
-		if !luta || n == 0 || saida[n-1].r.atv != AAndando || t.ini-saida[n-1].fim > 3000 || i == 0 {
+		if !luta || n == 0 || !desloca(saida[n-1].r) || t.ini-saida[n-1].fim > 3000 || i == 0 {
 			saida = append(saida, t)
 			continue
+		}
+		// Começo da sequência de deslocamento que toca a janela da aproximação.
+		k := n - 1
+		for k > 0 && desloca(saida[k-1].r) && saida[k].ini-saida[k-1].fim <= 3000 && saida[k].ini > t.ini-Param.JanelaAproximacaoMs {
+			k--
 		}
 		atv := ""
 		switch {
@@ -697,7 +802,7 @@ func (p *preparo) rotulaAproximacoes(ts []trechoAtv) []trechoAtv {
 			saida = append(saida, t)
 			continue
 		}
-		ini := max(saida[n-1].ini, t.ini-Param.JanelaAproximacaoMs)
+		ini := max(saida[k].ini, t.ini-Param.JanelaAproximacaoMs)
 		de, ok := PosicaoEm(p.c.Amostras, ini)
 		// Rápido demais para ser andando: teleporte ou volta à base no meio.
 		if !ok || dist(de, alvo) < Param.AproximacaoMinima || dist(de, alvo) > Param.VelocidadeMaxima*float64(t.ini-ini)/1000 {
@@ -722,13 +827,17 @@ func (p *preparo) rotulaAproximacoes(ts []trechoAtv) []trechoAtv {
 			atv, inimigos, sinais = p.ganhoOuCounter(t.ini, t.r.zona, inimigos, sinais)
 		}
 		aprox := trechoAtv{ini: ini, fim: t.ini, r: rotuloAtv{atv: atv, com: inimigos, confianca: "media", zona: t.r.zona, sinais: sinais}}
-		if ini <= saida[n-1].ini {
-			saida[n-1] = aprox // o trecho andando inteiro era a aproximação
-		} else {
-			saida[n-1].fim = ini
-			saida = append(saida, aprox)
+		// Os trechos de deslocamento que começam depois de `ini` viram a
+		// aproximação inteiros; o que atravessa `ini` é cortado ali.
+		m := k
+		for m < n && saida[m].ini < ini {
+			m++
 		}
-		saida = append(saida, t)
+		saida = saida[:m]
+		if m > 0 && saida[m-1].fim > ini {
+			saida[m-1].fim = ini
+		}
+		saida = append(saida, aprox, t)
 	}
 	return saida
 }

@@ -2,6 +2,7 @@ package rastreio
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -239,7 +240,7 @@ func ListaEstados(db *banco.DB, gameID int64, deMs, ateMs, passoMs int64) ([]Qua
 		for _, pt := range p.Participantes {
 			j := JogadorNoQuadro{ParticipanteID: pt.ParticipanteID, Itens: []SlotItem{}}
 			if as := amostras[pt.ParticipanteID]; len(as) > 0 {
-				posicaoDasAmostras(&j, as, t)
+				posicaoDasAmostras(&j, as, t, pt.Time)
 			}
 			if j.X == nil {
 				if x, y, ok := lt.PosicaoInterpolada(pt.ParticipanteID, t); ok {
@@ -262,7 +263,15 @@ func ListaEstados(db *banco.DB, gameID int64, deMs, ateMs, passoMs int64) ([]Qua
 	return quadros, nil
 }
 
-func posicaoDasAmostras(j *JogadorNoQuadro, as []Amostra, t int64) {
+// posicaoDasAmostras põe no quadro a posição e o estado do jogador seguido em
+// t. Com leitura boa a até 1,5 s, é ela (interpolada entre as vizinhas). No
+// meio de um buraco (sem amostra, ou só amostras sem a câmera nele) de até
+// BuracoCurtoMs entre duas leituras boas, a posição é a reta entre as duas,
+// com origem "interpolada" (a tela mostra "estimado entre duas leituras"),
+// desde que PodeInterpolar (sem morte, renascimento ou volta à base no meio:
+// o salto é real). Fora disso fica sem posição e quem chama cai na linha do
+// tempo por minuto. time: 100/200, para a regra da volta à base.
+func posicaoDasAmostras(j *JogadorNoQuadro, as []Amostra, t int64, time int) {
 	i := sort.Search(len(as), func(k int) bool { return as[k].TMs >= t })
 	var a, b *Amostra
 	if i > 0 && t-as[i-1].TMs <= 1500 {
@@ -271,28 +280,68 @@ func posicaoDasAmostras(j *JogadorNoQuadro, as []Amostra, t int64) {
 	if i < len(as) && as[i].TMs-t <= 1500 {
 		b = &as[i]
 	}
-	if a == nil && b == nil {
+	if a != nil || b != nil {
+		perto := a
+		if perto == nil || (b != nil && b.TMs-t < t-a.TMs) {
+			perto = b
+		}
+		preencheEstado(j, perto)
+		if LeituraBoa(*perto) {
+			if a != nil && b != nil && temPos(*a) && temPos(*b) && !a.Morto && !b.Morto && b.TMs > a.TMs {
+				f := float64(t-a.TMs) / float64(b.TMs-a.TMs)
+				x, y := *a.X+(*b.X-*a.X)*f, *a.Y+(*b.Y-*a.Y)*f
+				j.X, j.Y = &x, &y
+				return
+			}
+			if temPos(*perto) {
+				x, y := *perto.X, *perto.Y
+				j.X, j.Y = &x, &y
+				return
+			}
+		}
+	}
+	// Buraco: as duas leituras boas em volta de t.
+	ant, prox := -1, -1
+	for k := i - 1; k >= 0 && as[k].TMs >= t-BuracoCurtoMs; k-- {
+		if LeituraBoa(as[k]) && temPos(as[k]) {
+			ant = k
+			break
+		}
+	}
+	for k := i; k < len(as) && as[k].TMs <= t+BuracoCurtoMs; k++ {
+		if LeituraBoa(as[k]) && temPos(as[k]) {
+			prox = k
+			break
+		}
+	}
+	j.X, j.Y = nil, nil
+	if ant < 0 || prox < 0 || as[prox].TMs-as[ant].TMs > BuracoCurtoMs || !PodeInterpolar(as[ant], as[prox], time) {
+		if j.Rastreado {
+			j.Origem = ""
+		}
 		return
 	}
-	perto := a
-	if perto == nil || (b != nil && b.TMs-t < t-a.TMs) {
-		perto = b
+	pa, pb := &as[ant], &as[prox]
+	if !j.Rastreado {
+		perto := pa
+		if pb.TMs-t < t-pa.TMs {
+			perto = pb
+		}
+		preencheEstado(j, perto)
+		// Vida, recursos e recargas mudam em segundos: sem leitura perto, ficam nulos.
+		j.Vida, j.VidaMax, j.Mana, j.ManaMax, j.CD, j.Atr = nil, nil, nil, nil, Recargas{}, Atributos{}
 	}
+	f := float64(t-pa.TMs) / float64(pb.TMs-pa.TMs)
+	x, y := *pa.X+(*pb.X-*pa.X)*f, *pa.Y+(*pb.Y-*pa.Y)*f
+	j.X, j.Y, j.Origem, j.Morto = &x, &y, OrigemInterpolada, false
+}
+
+func preencheEstado(j *JogadorNoQuadro, s *Amostra) {
 	j.Rastreado = true
-	j.Origem, j.Morto, j.Respawn, j.Nivel, j.CS = perto.Origem, perto.Morto, perto.Respawn, perto.Nivel, perto.CS
-	j.Abates, j.Mortes, j.Assistencias = perto.Abates, perto.Mortes, perto.Assistencias
-	j.Vida, j.VidaMax, j.Mana, j.ManaMax = perto.Vida, perto.VidaMax, perto.Mana, perto.ManaMax
-	j.CD, j.Atr = perto.CD, perto.Atr
-	if a != nil && b != nil && temPos(*a) && temPos(*b) && !a.Morto && !b.Morto && b.TMs > a.TMs {
-		f := float64(t-a.TMs) / float64(b.TMs-a.TMs)
-		x, y := *a.X+(*b.X-*a.X)*f, *a.Y+(*b.Y-*a.Y)*f
-		j.X, j.Y = &x, &y
-		return
-	}
-	if temPos(*perto) {
-		x, y := *perto.X, *perto.Y
-		j.X, j.Y = &x, &y
-	}
+	j.Origem, j.Morto, j.Respawn, j.Nivel, j.CS = s.Origem, s.Morto, s.Respawn, s.Nivel, s.CS
+	j.Abates, j.Mortes, j.Assistencias = s.Abates, s.Mortes, s.Assistencias
+	j.Vida, j.VidaMax, j.Mana, j.ManaMax = s.Vida, s.VidaMax, s.Mana, s.ManaMax
+	j.CD, j.Atr = s.CD, s.Atr
 }
 
 // Cadeia de um participante na partida (do melhor passe).
@@ -407,4 +456,53 @@ func EstadosDaPartida(db *banco.DB, gameID int64) (map[int][]EstadoJogador, erro
 		sort.SliceStable(s, func(a, b int) bool { return s[a].TMs < s[b].TMs })
 	}
 	return r, nil
+}
+
+// PassesDaPartida são todos os passes da partida (qualquer estado), em ordem.
+func PassesDaPartida(db *banco.DB, gameID int64) ([]Passe, error) {
+	return lePasses(db, `WHERE p.game_id = ? ORDER BY p.id`, gameID)
+}
+
+// CadeiaDoPasse devolve a cadeia gravada de um passe (vazia se não tem).
+func CadeiaDoPasse(db *banco.DB, p Passe) ([]ItemCadeia, error) {
+	itens, ok, err := leCadeia(db, p.ID, p.GameID)
+	if err != nil || !ok {
+		return []ItemCadeia{}, err
+	}
+	return itens, nil
+}
+
+// ProblemasDosArquivos confere, para um passe registrado em passes_compactos,
+// se cada arquivo dele em dados/partidas/<id>/ existe e se lê (descomprime e
+// decodifica): a checagem de qualidade do armazenamento. Devolve uma frase por
+// problema (vazia = tudo legível). Não usa o cache: lê do disco.
+func ProblemasDosArquivos(db *banco.DB, p Passe) []string {
+	var probs []string
+	linhas, err := db.Query(`SELECT conteudo FROM passes_compactos WHERE passe_id = ? ORDER BY conteudo`, p.ID)
+	if err != nil {
+		return []string{"não deu para ler o registro do passe: " + err.Error()}
+	}
+	var conteudos []string
+	for linhas.Next() {
+		var c string
+		if linhas.Scan(&c) == nil {
+			conteudos = append(conteudos, c)
+		}
+	}
+	linhas.Close()
+	for _, c := range conteudos {
+		if _, ok, err := leCompacto(db, p.ID, c); err != nil {
+			probs = append(probs, fmt.Sprintf("arquivo %s ilegível: %v", nomeBloco(p.ID, c), err))
+		} else if !ok {
+			probs = append(probs, fmt.Sprintf("arquivo %s não encontrado", nomeBloco(p.ID, c)))
+		}
+	}
+	if len(conteudos) > 0 {
+		if _, ok, err := leCadeia(db, p.ID, p.GameID); err != nil {
+			probs = append(probs, fmt.Sprintf("arquivo %s ilegível: %v", nomeCadeia(p.ID), err))
+		} else if !ok {
+			probs = append(probs, fmt.Sprintf("arquivo %s não encontrado", nomeCadeia(p.ID)))
+		}
+	}
+	return probs
 }

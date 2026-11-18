@@ -62,6 +62,9 @@ type Parametros struct {
 	// TrechoMinimoMs: trecho de atividade "andando"/"farmando" mais curto que
 	// isso é absorvido pelo anterior (tira o pisca-pisca).
 	TrechoMinimoMs int64
+	// HistereseAtividadeMs: tempo mínimo de uma atividade nova para a etiqueta
+	// trocar entre atividades vizinhas da mesma briga (luta, troca, dive, torre).
+	HistereseAtividadeMs int64
 	// RaioSuperioridade: aliados e inimigos a menos disso contam no retrato do
 	// abate (superioridade numérica).
 	RaioSuperioridade float64
@@ -70,6 +73,33 @@ type Parametros struct {
 	// VidaSaidaArriscadaPct: saída de rota com menos que isso de vida é
 	// arriscada (indicador mortes_saida_vida_baixa).
 	VidaSaidaArriscadaPct float64
+
+	// --- Etiquetas recall, dive, split push e agrupado (geradores.go).
+
+	// DuracaoRecallMs, RaioCanalizacao e CanalizacaoMinimaMs: o recall. A
+	// canalização dura 8 s (League of Legends Wiki, "Recall", conferido em
+	// 17/11/2026; 4 s com o Barão). O trecho parado (sem sair mais que
+	// RaioCanalizacao do ponto de onde sumiu: o erro da posição é ~30–100) que
+	// termina no salto para a fonte vira "recall", no máximo DuracaoRecallMs (+
+	// 0,5 s de folga da leitura) antes do salto; parado menos que
+	// CanalizacaoMinimaMs não é canalização (o recall mais curto, com o Barão,
+	// leva 4 s).
+	DuracaoRecallMs     int64
+	RaioCanalizacao     float64
+	CanalizacaoMinimaMs int64
+	// AlcanceTorre: a menos disso do centro de uma torre inimiga de pé, luta ou
+	// troca é "dive". O alcance da torre é 750 a partir da borda dela (Wiki); o
+	// raio da torre (~88) e o do campeão (~65) dão ~900 de centro a centro.
+	AlcanceTorre float64
+	// DistanciaSplitAliados: split push = depois da fase de rotas, sozinho
+	// (nenhum aliado a menos de AlcanceLuta) numa rota lateral, além do ponto de
+	// encontro das torres externas (o rio cruza a rota ali) para o lado inimigo,
+	// farmando ou em torre, com pelo menos três aliados mortos ou a mais que isso.
+	DistanciaSplitAliados float64
+	// DistanciaAgrupado: agrupado = ele e mais três ou quatro aliados vivos, todos
+	// a menos disso uns dos outros (dois a dois), sem luta nem objetivo. Um time
+	// agrupado no meio ou no rio ocupa ~1 000–1 500 de diâmetro.
+	DistanciaAgrupado float64
 
 	// --- Ondas de tropas (ondas.go). A posição da onda é deduzida de onde os
 	// jogadores da rota estão; nenhuma tropa é rastreada. Medidos/escolhidos
@@ -150,9 +180,16 @@ var Param = Parametros{
 	JanelaContatoDepoisMs: 5000,
 	MargemCounterMs:       500,
 	TrechoMinimoMs:        3000,
+	HistereseAtividadeMs:  4000,
 	RaioSuperioridade:     1500,
 	VidaBaixaPct:          30,
 	VidaSaidaArriscadaPct: 40,
+	DuracaoRecallMs:       8000,
+	RaioCanalizacao:       200,
+	CanalizacaoMinimaMs:   3500,
+	AlcanceTorre:          900,
+	DistanciaSplitAliados: 5000,
+	DistanciaAgrupado:     2000,
 	PassoOndaMs:           1000,
 	SuavizaOndaMs:         10000,
 	MeiaDistanciaOnda:     500,

@@ -12,6 +12,11 @@
 //   Arauto: wiki.leagueoflegends.com/en-us/Rift_Herald; Atakhan: removido no 26.1.
 // Onde a fonte não deixa o número seguro, `por_acumulo` fica nulo e a tela mostra só a
 // descrição. Patch novo = conferir esta tabela de novo.
+//
+// MEDIDO: infernal, montanha e nuvens também são medidos no próprio dado (o degrau do atributo
+// no instante da queda, GET /api/partidas/{id}/bonus-objetivos). Com a medição (`medidos` em
+// bonusDoJogador), o número do jogador sai dela; sem ela, cai na tabela; sem nenhum dos dois, só
+// a descrição.
 
 export const PATCH_DOS_BONUS = '26.22';
 
@@ -29,7 +34,10 @@ export const BONUS_DRAGAO = {
     nome: 'Dragão infernal',
     efeito: (n) => `+${3 * n}% de dano de ataque e de poder de habilidade`,
     // % do TOTAL (multiplicativo): a parte do bônus no valor atual é atual × p/(1+p).
-    impacto: (n, j) => [parteDe('dano de ataque', j.atributos?.ad, 0.03 * n), parteDe('poder de habilidade', j.atributos?.ap, 0.03 * n)],
+    impacto: (n, j, m) => [
+      parteDe('dano de ataque', j.atributos?.ad, (m.ad ?? 0.03) * n, m.ad !== undefined),
+      parteDe('poder de habilidade', j.atributos?.ap, (m.ap ?? 0.03) * n, m.ap !== undefined),
+    ],
   },
   WATER_DRAGON: {
     nome: 'Dragão do oceano',
@@ -43,16 +51,26 @@ export const BONUS_DRAGAO = {
   EARTH_DRAGON: {
     nome: 'Dragão da montanha',
     efeito: (n) => `+${5 * n}% de armadura e de resistência mágica`,
-    // A fonte não diz se é do total ou só do bônus: sem número para o jogador.
-    impacto: () => [null],
-    sem_numero: 'a fonte não diz se o % é sobre o total ou só sobre o bônus',
+    // A fonte não diz se é do total ou só do bônus; o degrau medido na 3304217746 (≈ 5% do
+    // TOTAL) resolve: com a medição, há número; sem ela, só a descrição.
+    impacto: (n, j, m) =>
+      m.armadura === undefined && m.rm === undefined
+        ? [null]
+        : [parteDe('armadura', j.atributos?.armadura, (m.armadura ?? m.rm) * n, true), parteDe('resistência mágica', j.atributos?.rm, (m.rm ?? m.armadura) * n, true)],
+    sem_numero: 'a fonte não diz se o % é sobre o total ou só sobre o bônus, e não houve medição confiável nesta partida',
   },
   AIR_DRAGON: {
     nome: 'Dragão das nuvens',
     efeito: (n) => `+${5 * n}% de velocidade de movimento fora de combate (e de resistência a lentidão)`,
-    // Soma com os outros % de velocidade do campeão, que a tela não separa.
-    impacto: () => [null],
-    sem_numero: 'soma com os outros % de velocidade do campeão, que a tela não separa',
+    // Soma com os outros % de velocidade do campeão, que a tela não separa; com a medição do
+    // degrau (primeiro trecho fora de luta depois da queda) dá uma estimativa.
+    impacto: (n, j, m) => {
+      if (m.vel_mov === undefined) return [null];
+      const v = j.atributos?.vel_mov;
+      if (v === null || v === undefined || !(v > 0)) return [null];
+      return [{ texto: `fora de combate, ≈ ${Math.round((v * m.vel_mov * n) / (1 + m.vel_mov * n))} da sua velocidade (${Math.round(v)}) vem daí (medido nesta partida)`, exato: false }];
+    },
+    sem_numero: 'soma com os outros % de velocidade do campeão, que a tela não separa, e não houve medição confiável nesta partida',
   },
   HEXTECH_DRAGON: {
     nome: 'Dragão hextec',
@@ -96,17 +114,29 @@ export function baraoNoMinuto(tMs) {
   return { ad: [u[1], u[1]], ap: [u[2], u[2]] };
 }
 
-function parteDe(nome, atual, p) {
+function parteDe(nome, atual, p, medido = false) {
   if (atual === null || atual === undefined || !(atual > 0)) return null;
-  return { texto: `≈ ${Math.round((atual * p) / (1 + p))} do seu ${nome} (${Math.round(atual)}) vem daí`, exato: false };
+  const artigo = nome === 'resistência mágica' || nome === 'armadura' ? 'da sua' : 'do seu';
+  return { texto: `≈ ${Math.round((atual * p) / (1 + p))} ${artigo} ${nome} (${Math.round(atual)}) vem daí${medido ? ' (medido nesta partida)' : ''}`, exato: false };
 }
+
+// medidosDoTipo: {atributo: fração por acúmulo} do resumo da medição (só o medido com confiança).
+export function medidosDoTipo(medidos, sub) {
+  const r = {};
+  for (const m of medidos || []) {
+    if (m.sub === sub && m.medido !== null && m.medido !== undefined && m.confianca !== 'nenhuma') r[m.atributo] = m.medido;
+  }
+  return r;
+}
+
+const NOME_ATR = { ad: 'DA', ap: 'PH', armadura: 'armadura', rm: 'RM', vel_mov: 'velocidade', vel_ataque: 'vel. de ataque' };
 
 const faixa = ([a, b]) => (a === b ? `${a}` : `${a}–${b}`);
 
 // bonusDoJogador: a lista de blocos {titulo, efeito, impacto: [{texto, exato}], aviso} para o
 // jogador `j` (do quadro de estados) do time `time`, com o placar do time em t (placar.js) e o
 // estado do Barão/Ancião dele ('ativo' | 'perdeu' | 'nao_recebeu' | 'incerto').
-export function bonusDoJogador({ j, placarTime, estadoBarao = null, estadoAnciao = null, tBarao = null }) {
+export function bonusDoJogador({ j, placarTime, estadoBarao = null, estadoAnciao = null, tBarao = null, medidos = null }) {
   const blocos = [];
   const porTipo = {};
   for (const s of placarTime.dragoes) porTipo[s] = (porTipo[s] || 0) + 1;
@@ -116,8 +146,11 @@ export function bonusDoJogador({ j, placarTime, estadoBarao = null, estadoAnciao
       blocos.push({ titulo: `Dragão (${sub || 'tipo desconhecido'}) × ${n}`, efeito: 'tipo sem valor na tabela', impacto: [] });
       continue;
     }
-    const imp = b.impacto(n, j).filter(Boolean);
-    blocos.push({ titulo: `${b.nome} × ${n}`, efeito: b.efeito(n), impacto: imp, aviso: imp.length ? '' : b.sem_numero || 'sem número para este jogador' });
+    const m = medidosDoTipo(medidos, sub);
+    const imp = b.impacto(n, j, m).filter(Boolean);
+    const medida = Object.entries(m).map(([a, p]) => `${NOME_ATR[a] || a} +${(p * 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`);
+    const efeito = b.efeito(n) + (medida.length ? ` · medido nesta partida, por dragão: ${medida.join(', ')}` : '');
+    blocos.push({ titulo: `${b.nome} × ${n}`, efeito, impacto: imp, aviso: imp.length ? '' : b.sem_numero || 'sem número para este jogador' });
   }
   if (placarTime.alma) {
     const a = ALMAS[placarTime.alma];

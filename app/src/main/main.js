@@ -7,6 +7,12 @@
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const servidor = require('./servidor');
+const preferencias = require('./preferencias');
+
+// LANE_DADOS_USUARIO: outra pasta de dados do usuário do Electron (preferências, cache, e a trava
+// de instância única, que é por pasta). Serve para abrir uma segunda instância de teste sem
+// derrubar a de uso (com LOL_PORTA de outro servidor). Precisa vir antes da trava.
+if (process.env.LANE_DADOS_USUARIO) app.setPath('userData', path.resolve(process.env.LANE_DADOS_USUARIO));
 
 const PORTA = servidor.portaDoAmbiente();
 const BASE = servidor.urlBase(PORTA);
@@ -24,7 +30,10 @@ small{display:block;color:#94a3b8;margin-top:6px}</style></head>
 const dataUrl = (html) => `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 
 function criaJanela() {
+  // Abre em tela cheia de verdade por padrão (Configurações → "abrir em tela cheia").
+  const prefs = preferencias.le(app.getPath('userData'));
   janela = new BrowserWindow({
+    fullscreen: prefs.tela_cheia,
     width: 1280,
     height: 820,
     minWidth: 900,
@@ -52,6 +61,20 @@ function criaJanela() {
   janela.webContents.on('will-navigate', (evento, url) => {
     if (url === BASE || url.startsWith(`${BASE}/`) || url.startsWith('data:')) return;
     evento.preventDefault();
+  });
+  // A página acompanha a tela cheia (o botão da barra de título e o do mapa com play mostram o
+  // estado certo, venha a mudança de onde vier: botão, F11, Esc).
+  const avisa = () => janela?.webContents.send('janela:tela-cheia', janela.isFullScreen());
+  janela.on('enter-full-screen', avisa);
+  janela.on('leave-full-screen', avisa);
+  // F11 alterna a tela cheia em qualquer tela (a janela sem moldura não tem o menu que faria isso).
+  // O Esc fica com a página: ela sai da tela cheia quando o Esc não foi usado para outra coisa
+  // (fechar o painel do mapa com play, por exemplo).
+  janela.webContents.on('before-input-event', (evento, entrada) => {
+    if (entrada.type === 'keyDown' && entrada.key === 'F11' && !entrada.alt && !entrada.control && !entrada.meta) {
+      evento.preventDefault();
+      janela.setFullScreen(!janela.isFullScreen());
+    }
   });
   janela.on('closed', () => {
     janela = null;
@@ -90,6 +113,17 @@ ipcMain.handle('janela:maximiza', () => {
   return janela.isMaximized();
 });
 ipcMain.handle('janela:fecha', () => janela?.close());
+// Tela cheia: um estado só, o da janela (o mapa com play usava a API de tela cheia da página, que
+// brigava com a da janela). `quer` booleano = põe nesse estado; sem ele, alterna.
+ipcMain.handle('janela:tela-cheia', (_e, quer) => {
+  if (!janela) return false;
+  janela.setFullScreen(typeof quer === 'boolean' ? quer : !janela.isFullScreen());
+  return janela.isFullScreen();
+});
+ipcMain.handle('janela:esta-em-tela-cheia', () => Boolean(janela?.isFullScreen()));
+// Preferências da janela (Configurações): lidas e gravadas aqui, valem na próxima abertura.
+ipcMain.handle('preferencias:le', () => preferencias.le(app.getPath('userData')));
+ipcMain.handle('preferencias:grava', (_e, mudanca) => preferencias.grava(app.getPath('userData'), mudanca));
 
 // Sem isto o Windows agrupa a janela na barra de tarefas sob o ícone do Electron.
 app.setAppUserModelId('br.nzt.lane');

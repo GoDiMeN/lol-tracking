@@ -1,6 +1,7 @@
 package rastreio
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 
@@ -29,8 +30,10 @@ type ResultadoFinal struct {
 
 // recalculaPosicoes aplica a calibração às amostras de câmera e preenche as
 // de trava perdida (origem interpolada) entre as vizinhas com posição, até
-// 10 s de cada lado.
-func recalculaPosicoes(as []Amostra, cal Calibracao) {
+// BuracoCurtoMs/2 de cada lado. Entre duas vizinhas que não dá para ligar em
+// linha reta (morte, volta à base, salto maior que o que se anda: ver
+// PodeInterpolar) fica a posição da mais próxima, sem deslizar pelo mapa.
+func recalculaPosicoes(as []Amostra, cal Calibracao, time int) {
 	for i := range as {
 		a := &as[i]
 		if a.Origem == OrigemCamera && a.CamX != nil && a.CamZ != nil && a.TelaX != nil && a.TelaY != nil {
@@ -44,16 +47,24 @@ func recalculaPosicoes(as []Amostra, cal Calibracao) {
 			continue
 		}
 		ant, prox := -1, -1
-		for k := i - 1; k >= 0 && as[k].TMs >= a.TMs-10000; k-- {
+		lado := BuracoCurtoMs / 2
+		for k := i - 1; k >= 0 && as[k].TMs >= a.TMs-lado; k-- {
 			if as[k].Origem != OrigemInterpolada && temPos(as[k]) && !as[k].Morto {
 				ant = k
 				break
 			}
 		}
-		for k := i + 1; k < len(as) && as[k].TMs <= a.TMs+10000; k++ {
+		for k := i + 1; k < len(as) && as[k].TMs <= a.TMs+lado; k++ {
 			if as[k].Origem != OrigemInterpolada && temPos(as[k]) && !as[k].Morto {
 				prox = k
 				break
+			}
+		}
+		if ant >= 0 && prox >= 0 && !PodeInterpolar(as[ant], as[prox], time) {
+			if a.TMs-as[ant].TMs <= as[prox].TMs-a.TMs {
+				prox = -1
+			} else {
+				ant = -1
 			}
 		}
 		switch {
@@ -89,6 +100,45 @@ func taxaDe(as []Amostra) float64 {
 // numa transação só grava os dois, apaga as linhas de trabalho e marca o
 // passe com estadoFinal.
 func finalizaPasse(db *banco.DB, p Passe, lt LinhaDoTempo, time int, base Calibracao, estadoFinal, erro string) (ResultadoFinal, error) {
+	return fechaPasse(db, p, lt, time, base, false, estadoFinal, erro)
+}
+
+// refinalizaPasse fecha de novo um passe já gravado depois da repescagem: as
+// amostras velhas voltaram do bloco sem as colunas da câmera (foraDoCompacto),
+// então não dá para recalibrar com elas. Vale a calibração gravada no passe
+// (com os pontos e erros dela), aplicada só às amostras novas.
+func refinalizaPasse(db *banco.DB, p Passe, lt LinhaDoTempo, time int, padrao Calibracao) (ResultadoFinal, error) {
+	cal, ok := calibracaoGravada(p)
+	if !ok {
+		cal = padrao
+	}
+	return fechaPasse(db, p, lt, time, cal, true, p.Estado, p.Erro)
+}
+
+// calibracaoGravada lê a calibração que o fechamento do passe gravou.
+func calibracaoGravada(p Passe) (Calibracao, bool) {
+	var g struct {
+		X0          float64 `json:"x0"`
+		XPx         float64 `json:"x_px"`
+		Y0          float64 `json:"y0"`
+		YPx         float64 `json:"y_px"`
+		CX          float64 `json:"cx"`
+		CY          float64 `json:"cy"`
+		Largura     int     `json:"largura"`
+		Altura      int     `json:"altura"`
+		Modo        string  `json:"modo"`
+		Descartados int     `json:"descartados"`
+	}
+	if p.Calibracao == "" || json.Unmarshal([]byte(p.Calibracao), &g) != nil || g.XPx == 0 || g.YPx == 0 {
+		return Calibracao{}, false
+	}
+	return Calibracao{X0: g.X0, XPx: g.XPx, Y0: g.Y0, YPx: g.YPx, CX: g.CX, CY: g.CY, Largura: g.Largura, Altura: g.Altura,
+		Modo: g.Modo, Pontos: p.CalibracaoPontos, Descartados: g.Descartados,
+		ErroMediano: p.ErroCalibracaoMediano, ErroMaximo: p.ErroCalibracaoMaximo}, true
+}
+
+// fechaPasse é o fechamento; calFixa = usar base como está (sem Ajusta).
+func fechaPasse(db *banco.DB, p Passe, lt LinhaDoTempo, time int, base Calibracao, calFixa bool, estadoFinal, erro string) (ResultadoFinal, error) {
 	var r ResultadoFinal
 	as, err := leBrutas(db, p.ID, math.MinInt64, math.MaxInt64)
 	if err != nil {
@@ -98,8 +148,11 @@ func finalizaPasse(db *banco.DB, p Passe, lt LinhaDoTempo, time int, base Calibr
 	if err != nil {
 		return r, err
 	}
-	cal := Ajusta(PontosDoPasse(as, lt, p.ParticipanteID), base)
-	recalculaPosicoes(as, cal)
+	cal := base
+	if !calFixa {
+		cal = Ajusta(PontosDoPasse(as, lt, p.ParticipanteID), base)
+	}
+	recalculaPosicoes(as, cal, time)
 	r.Calibracao, r.Amostras, r.Estados, r.Taxa = cal, len(as), len(es), taxaDe(as)
 
 	blobA, err := Codifica(BlocoDeAmostras(as))

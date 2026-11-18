@@ -1,7 +1,10 @@
 // Validador do desenho do mapa com play sobre trechos REAIS guardados da partida 3304217746
 // (testdata, gravados com `npm run valida-replay -- 3304217746 --de .. --ate .. --grava ..`):
 // 12:15–12:40 (Diana e Draven se cruzando), 14:15–14:35 (Yunara na beira de um grupo), 19:10–19:25
-// (luta do dragão) e 25:40–25:50 (o barão). E as peças puras: arranjo, espalhamento, trechos.
+// (luta do dragão), 25:40–25:50 (o barão) e 7:20–7:40 (rota de baixo: Senna e Draven um em cima do
+// outro, Yunara e Leona ao lado; a captura do dono aos 7:28). Regravados em 2026-11-17 com as
+// etiquetas novas (recall, dive, invadindo, split push, agrupado): só as atividades mudaram.
+// E as peças puras: arranjo, espalhamento, trechos.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,22 +20,35 @@ const carrega = (nome) => {
   return { ...d, janelas: new Map(d.janelas) };
 };
 
-// A 4× e 8× o dado anda 2 a 4 quadros de tela entre dois quadros do servidor; numa luta de 8 ainda
-// sobram poucos tremores (medidos na partida inteira: 1 a 1×, 4 a 2×, 7 a 4×, 17 a 8×; antes
-// do anel e traço eram 1399, 1314, 1238 e 1128). O teto aqui é o medido hoje em cada trecho:
-// subir é regressão. A 1× e 2×, zero.
-const TETO = { cruzamento: [0, 0], 'beira-do-grupo': [0, 0], 'luta-do-dragao': [2, 0], barao: [1, 0] };
+// Teto de glitches por trecho a 1×, 2×, 4× e 8×: o medido hoje (subir é regressão). Na partida
+// inteira, com o desenho de direção travada e histerese no tempo (2026-11-17, noite): 35, 53, 55 e
+// 66 glitches a 1×/2×/4×/8× contando os três novos (retrato sobre anel, troca de direção, volta e
+// sai); o desenho anterior dava 1665, 1488, 1261 e 802 nas mesmas regras.
+const TETO = {
+  cruzamento: [0, 1, 0, 1],
+  'beira-do-grupo': [0, 2, 2, 1],
+  'luta-do-dragao': [2, 2, 0, 0],
+  barao: [0, 0, 0, 0],
+  'rota-de-baixo': [0, 0, 1, 0],
+};
 
-for (const [nome, [teto4, teto8]] of Object.entries(TETO)) {
-  test(`desenho: trecho real "${nome}" sem glitches a 1× e 2× (4× e 8× no teto medido)`, () => {
+for (const [nome, tetos] of Object.entries(TETO)) {
+  test(`desenho: trecho real "${nome}" no teto medido de glitches`, () => {
     const d = carrega(nome);
     const r = validaDesenho({ janelas: d.janelas, duracaoMs: d.duracao_ms, times: d.times, nomes: d.nomes, de: d.de, ate: d.ate });
-    for (const v of [1, 2]) assert.deepEqual(r[v].glitches, [], `${nome} a ${v}×`);
-    assert.ok(r[4].glitches.length <= teto4, `${nome} a 4×: ${JSON.stringify(r[4].glitches)}`);
-    assert.ok(r[8].glitches.length <= teto8, `${nome} a 8×: ${JSON.stringify(r[8].glitches)}`);
+    [1, 2, 4, 8].forEach((v, i) => assert.ok(r[v].glitches.length <= tetos[i], `${nome} a ${v}×: ${JSON.stringify(r[v].glitches)}`));
     assert.ok(r[1].quadros > 300);
   });
 }
+
+test('desenho: 7:28 da rota de baixo: Senna e Draven com o anel à vista, sem troca de direção nem pisca', () => {
+  const d = carrega('rota-de-baixo');
+  const r = validaDesenho({ janelas: d.janelas, duracaoMs: d.duracao_ms, times: d.times, nomes: d.nomes, de: d.de, ate: d.ate });
+  for (const v of [1, 2, 4, 8]) {
+    const ruins = r[v].glitches.filter((g) => ['troca_de_direcao', 'volta_e_sai'].includes(g.tipo) || (g.tipo === 'retrato_sobre_anel' && g.ids.some((i) => i === 9 || i === 10)));
+    assert.deepEqual(ruins, [], `a ${v}×`);
+  }
+});
 
 test('desenho: o anel fica no lugar verdadeiro e o retrato sozinho em cima dele', () => {
   const a = criaArranjo({ ret: 36 });
@@ -58,9 +74,25 @@ test('desenho: dois juntos saem para lados opostos, devagar, e voltam sem pulo',
   assert.ok(azul.rx < azul.ax && verm.rx > verm.ax, 'azul à esquerda, vermelho à direita (para fora do miolo)');
   assert.equal(azul.ax, 300);
   assert.ok(azul.traco > 0.9);
-  // Separados de novo: o retrato volta para cima do anel deslizando.
-  for (let i = 0; i < 200; i++) r = a.passo([{ id: 3, x: 300, y: 300, time: 100 }, { id: 9, x: 600, y: 300, time: 200 }], 16, { lado: 900 });
+  // Separados de novo: segura o deslocamento por seguraMs de tela (sem voltar antes) e depois
+  // volta para cima do anel deslizando.
+  for (let i = 0; i < 150; i++) {
+    r = a.passo([{ id: 3, x: 300, y: 300, time: 100 }, { id: 9, x: 600, y: 300, time: 200 }], 16, { lado: 900 });
+    assert.ok(r.get(3).traco > 0.9, 'continua deslocado logo depois de separar');
+  }
+  for (let i = 0; i < 300; i++) r = a.passo([{ id: 3, x: 300, y: 300, time: 100 }, { id: 9, x: 600, y: 300, time: 200 }], 16, { lado: 900 });
   assert.ok(Math.abs(r.get(3).rx - 300) < 0.5 && r.get(3).traco < 0.05);
+});
+
+test('desenho: deslocado, o retrato anda junto com o anel (translada, não gira)', () => {
+  const a = criaArranjo({ ret: 36 });
+  let r;
+  for (let i = 0; i < 60; i++) r = a.passo([{ id: 3, x: 300, y: 300, time: 100 }, { id: 9, x: 305, y: 300, time: 200 }], 16, { lado: 900 });
+  const off0 = [r.get(3).rx - r.get(3).ax, r.get(3).ry - r.get(3).ay];
+  // Os dois andam juntos para cima: o deslocamento (vetor) não muda.
+  for (let i = 1; i <= 60; i++) r = a.passo([{ id: 3, x: 300, y: 300 - i, time: 100 }, { id: 9, x: 305, y: 300 - i, time: 200 }], 16, { lado: 900 });
+  const off1 = [r.get(3).rx - r.get(3).ax, r.get(3).ry - r.get(3).ay];
+  assert.ok(Math.hypot(off1[0] - off0[0], off1[1] - off0[1]) < 2, `${off0} → ${off1}`);
 });
 
 test('desenho: espalha afasta sem trocar a ordem; raio e escala do grupo', () => {

@@ -29,6 +29,16 @@ const (
 	QConferencia   = "conferencia"       // a leitura da tela discorda da Riot acima do normal
 	QPasseRepetido = "passe_repetido"    // dois passes concluídos do mesmo jogador na partida
 	QTrabalho      = "trabalho_sobrando" // amostras de trabalho sobrando de passe já fechado
+	QArquivo       = "arquivo_ilegivel"  // passe registrado sem o arquivo legível em dados/partidas/<id>/
+	QSemBloco      = "passe_sem_bloco"   // passe concluído com amostras e nenhum arquivo registrado
+
+	// Checagens da ANÁLISE (qualidade_analise.go): o dado pode estar bom e a dedução, não.
+	QEtiquetaImpossivel = "etiqueta_impossivel"  // ex.: farmando morto; na base longe da base
+	QEtiquetaPiscando   = "etiqueta_piscando"    // a atividade troca várias vezes em poucos segundos
+	QAproxSemLuta       = "aproximacao_sem_luta" // gankando/roaming/rotacionando/counter gank sem luta em seguida
+	QFuncaoIncoerente   = "funcao_incoerente"    // caçador com CS de rota ou o contrário
+	QRetratoAproximado  = "retrato_aproximado"   // abate (dele ou nele) com retrato de posição aproximada
+	QOndaSemJogador     = "onda_sem_jogador"     // estado de onda num trecho sem nenhum jogador da rota nela
 )
 
 // Limiares (medidos na 3304217746: calibração mediana 17–34 unidades; a conferência com a Riot
@@ -47,8 +57,8 @@ const (
 	CalibracaoMaxima  = 150.0
 	// ConferenciaMaxima: fração das amostras conferidas que discordam da Riot.
 	ConferenciaMaxima = 0.05
-	mapaMin, mapaMaxX  = -120.0, 14870.0
-	mapaMaxY           = 14980.0
+	mapaMin, mapaMaxX = -120.0, 14870.0
+	mapaMaxY          = 14980.0
 )
 
 // Fontes de cada time (onde se renasce e para onde se volta).
@@ -87,6 +97,16 @@ func ConfereQualidade(p rastreio.Passe, time int, as []rastreio.Amostra) Qualida
 	var ant *rastreio.Amostra
 	paradoDesde := int64(-1)
 	paradoAnotado := false
+	// Buraco: a mesma regra da repescagem (rastreio.Buracos): jogador vivo sem a
+	// posição de verdade, seja sem amostra nenhuma, seja com a trava perdida (o
+	// motor agora grava o trecho marcado em vez de deixá-lo vazio).
+	for _, b := range rastreio.Buracos(as, BuracoMs) {
+		texto := fmt.Sprintf("%.1f s sem amostra", float64(b.DuracaoMs())/1000)
+		if b.Amostras > 0 {
+			texto = fmt.Sprintf("%.1f s sem a câmera no jogador (%d amostras sem posição de verdade)", float64(b.DuracaoMs())/1000, b.Amostras)
+		}
+		add(QBuraco, b.DeMs, texto)
+	}
 	for i := range as {
 		a := &as[i]
 		temPos := a.X != nil && a.Y != nil
@@ -95,9 +115,6 @@ func ConfereQualidade(p rastreio.Passe, time int, as []rastreio.Amostra) Qualida
 		}
 		if ant != nil {
 			dt := a.TMs - ant.TMs
-			if dt > BuracoMs {
-				add(QBuraco, ant.TMs, fmt.Sprintf("%.1f s sem amostra", float64(dt)/1000))
-			}
 			if a.Nivel > 0 && ant.Nivel > 0 && a.Nivel < ant.Nivel {
 				add(QNivelVoltou, a.TMs, fmt.Sprintf("nível %d → %d", ant.Nivel, a.Nivel))
 			}
@@ -159,10 +176,21 @@ func migraQualidade(db *banco.DB) error {
 	)`, `CREATE INDEX IF NOT EXISTS qualidade_passes_partida ON qualidade_passes (game_id)`)
 }
 
-// confereQualidadeDaPartida roda a checagem de cada passe compactado e as checagens de
-// armazenamento da partida, e grava.
-func confereQualidadeDaPartida(db *banco.DB, gameID int64, passes []rastreio.Passe, timeDe map[int]int) error {
-	agora := banco.Agora()
+// add acrescenta um ponto (o total conta todos; a lista guarda no máximo MaxPontosQualidade).
+func (q *QualidadePasse) add(tipo string, t int64, texto string) {
+	q.Contagem[tipo]++
+	q.Total++
+	if len(q.Pontos) < MaxPontosQualidade {
+		q.Pontos = append(q.Pontos, PontoQualidade{Tipo: tipo, TMs: t, Texto: texto})
+	}
+}
+
+// confereQualidadeDaPartida roda a checagem do dado de cada passe e as do armazenamento, e
+// grava. Devolve o resultado por passe para a análise acrescentar as checagens dela
+// (confereAnaliseDaPartida) depois de montar retratos e indicadores. Passe em andamento (sem
+// bloco e não concluído) fica de fora: ainda não tem o que conferir.
+func confereQualidadeDaPartida(db *banco.DB, gameID int64, passes []rastreio.Passe, timeDe map[int]int) (map[int64]*QualidadePasse, error) {
+	qs := map[int64]*QualidadePasse{}
 	// Passe repetido: vale o concluído mais recente (MelhorPasse); os outros são apontados.
 	concluidos := map[int][]rastreio.Passe{}
 	for _, p := range passes {
@@ -171,32 +199,57 @@ func confereQualidadeDaPartida(db *banco.DB, gameID int64, passes []rastreio.Pas
 		}
 	}
 	for _, p := range passes {
-		as, err := rastreio.AmostrasDoPasse(db, p)
-		if err != nil {
-			return fmt.Errorf("amostras do passe %d: %w", p.ID, err)
+		var q QualidadePasse
+		switch {
+		case p.Compactado:
+			// Armazenamento: cada arquivo registrado precisa existir e ler. Sem isso, nada do dado
+			// dá para conferir (e o resto da análise deste passe também não roda).
+			if probs := rastreio.ProblemasDosArquivos(db, p); len(probs) > 0 {
+				q = QualidadePasse{PasseID: p.ID, ParticipanteID: p.ParticipanteID, Contagem: map[string]int{}, Pontos: []PontoQualidade{}}
+				for _, pr := range probs {
+					q.add(QArquivo, 0, pr+" em "+arquivoPastaRel(gameID))
+				}
+				break
+			}
+			as, err := rastreio.AmostrasDoPasse(db, p)
+			if err != nil {
+				return qs, fmt.Errorf("amostras do passe %d: %w", p.ID, err)
+			}
+			q = ConfereQualidade(p, timeDe[p.ParticipanteID], as)
+		case p.Estado == rastreio.Concluido && p.Amostras > 0:
+			q = QualidadePasse{PasseID: p.ID, ParticipanteID: p.ParticipanteID, Contagem: map[string]int{}, Pontos: []PontoQualidade{}}
+			q.add(QSemBloco, 0, fmt.Sprintf("passe concluído com %d amostras e nenhum arquivo registrado em %s", p.Amostras, arquivoPastaRel(gameID)))
+		default:
+			continue
 		}
-		q := ConfereQualidade(p, timeDe[p.ParticipanteID], as)
 		if l := concluidos[p.ParticipanteID]; len(l) > 1 && p.Estado == rastreio.Concluido {
 			vale, _, _ := rastreio.MelhorPasse(db, gameID, p.ParticipanteID)
 			if vale.ID != p.ID {
-				q.Contagem[QPasseRepetido]++
-				q.Total++
-				q.Pontos = append(q.Pontos, PontoQualidade{Tipo: QPasseRepetido, Texto: fmt.Sprintf("há outro passe concluído deste jogador; vale o passe %d", vale.ID)})
+				q.add(QPasseRepetido, 0, fmt.Sprintf("há outro passe concluído deste jogador; vale o passe %d", vale.ID))
 			}
 		}
 		var sobra int
 		db.QueryRow(`SELECT COUNT(*) FROM amostras_brutas WHERE passe_id = ?`, p.ID).Scan(&sobra)
 		if sobra > 0 && p.Compactado {
-			q.Contagem[QTrabalho]++
-			q.Total++
-			q.Pontos = append(q.Pontos, PontoQualidade{Tipo: QTrabalho, Texto: fmt.Sprintf("%d amostras de trabalho sobrando de passe já fechado", sobra)})
+			q.add(QTrabalho, 0, fmt.Sprintf("%d amostras de trabalho sobrando de passe já fechado", sobra))
 		}
+		qs[p.ID] = &q
+	}
+	return qs, gravaQualidade(db, gameID, qs)
+}
+
+func arquivoPastaRel(gameID int64) string { return fmt.Sprintf("dados/partidas/%d/", gameID) }
+
+// gravaQualidade grava (ou regrava) o resultado de cada passe.
+func gravaQualidade(db *banco.DB, gameID int64, qs map[int64]*QualidadePasse) error {
+	agora := banco.Agora()
+	for id, q := range qs {
 		sort.SliceStable(q.Pontos, func(a, b int) bool { return q.Pontos[a].TMs < q.Pontos[b].TMs })
 		c, _ := json.Marshal(q.Contagem)
 		pt, _ := json.Marshal(q.Pontos)
 		if _, err := db.Exec(`INSERT INTO qualidade_passes (passe_id, game_id, participante_id, contagem, pontos, total, calculada_em)
 			VALUES (?,?,?,?,?,?,?) ON CONFLICT (passe_id) DO UPDATE SET contagem = excluded.contagem, pontos = excluded.pontos,
-			total = excluded.total, calculada_em = excluded.calculada_em`, p.ID, gameID, p.ParticipanteID, string(c), string(pt), q.Total, agora); err != nil {
+			total = excluded.total, calculada_em = excluded.calculada_em`, id, gameID, q.ParticipanteID, string(c), string(pt), q.Total, agora); err != nil {
 			return err
 		}
 	}

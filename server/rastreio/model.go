@@ -155,6 +155,28 @@ func Migra(db *banco.DB) error {
 	if err := banco.AdicionaColuna(db, "amostras_brutas", "cd_p", "REAL"); err != nil {
 		return err
 	}
+	// Repescagem dos buracos (buracos.go): o resumo da última, em JSON.
+	if err := banco.AdicionaColuna(db, "passes", "repescagem", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// Linhas de trabalho de passe já fechado só existem durante a repescagem de
+	// um passe gravado (o bloco é carregado de volta nelas). Se o processo morreu
+	// no meio, o bloco antigo continua valendo: as linhas sobrando saem.
+	if _, err := db.Exec(`DELETE FROM amostras_brutas WHERE passe_id IN (SELECT id FROM passes WHERE estado IN ('concluido','cancelado'))
+		AND passe_id IN (SELECT passe_id FROM passes_compactos)`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`DELETE FROM amostras_time_brutas WHERE passe_id IN (SELECT id FROM passes WHERE estado IN ('concluido','cancelado'))
+		AND passe_id IN (SELECT passe_id FROM passes_compactos)`); err != nil {
+		return err
+	}
+	// Passes de visão de time (visao_modelo.go).
+	if err := migraVisao(db); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`DELETE FROM visao_capturas_brutas WHERE passe_id IN (SELECT id FROM passes_visao WHERE estado IN ('concluido','cancelado'))`); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -186,6 +208,10 @@ type Rastreio struct {
 	Progresso        float64 `json:"progresso"`
 	EstimativaS      float64 `json:"estimativa_s"`
 	Execucao         *IDExec `json:"execucao"`
+	// ComVisao: o rastreio tem os dois passes de visão de time no fim.
+	ComVisao              bool `json:"com_visao"`
+	PassesVisaoTotal      int  `json:"passes_visao_total"`
+	PassesVisaoConcluidos int  `json:"passes_visao_concluidos"`
 }
 
 // IDExec é a referência à execução (SSE) em andamento.
@@ -222,6 +248,8 @@ type Passe struct {
 	ConferenciaIguais   *int64          `json:"conferencia_iguais"`
 	ConferenciaMaiorDif *float64        `json:"conferencia_maior_dif"`
 	Conferencia         json.RawMessage `json:"conferencia_riot"`
+	// Repescagem: a última repescagem dos buracos do passe (nulo = nunca rodou).
+	Repescagem *ResumoRepescagem `json:"repescagem"`
 }
 
 // ErrNaoEncontrado: rastreio ou passe que não existe.
@@ -283,6 +311,22 @@ func completaRastreio(db *banco.DB, r *Rastreio) {
 	}
 	r.PassesTotal = len(ps)
 	restante, soma := 0.0, 0.0
+	// Repescagem ao fim de cada passe que falta: a média de buracos dos passes
+	// já repescados deste rastreio (sem nenhum, BuracosEsperadosPorPasse).
+	nRep, somaBuracos, faltam := 0, 0, 0
+	for _, p := range ps {
+		if p.Repescagem != nil && p.Repescagem.Quando == "fim_do_passe" {
+			nRep++
+			somaBuracos += p.Repescagem.Buracos
+		}
+		if p.Estado != Concluido && p.Estado != Cancelado {
+			faltam++
+		}
+	}
+	buracosPorPasse := BuracosEsperadosPorPasse
+	if nRep > 0 {
+		buracosPorPasse = float64(somaBuracos) / float64(nRep)
+	}
 	for _, p := range ps {
 		ini, fim := r.TInicioMs, r.TFimMs
 		if fim <= 0 {
@@ -309,11 +353,45 @@ func completaRastreio(db *banco.DB, r *Rastreio) {
 			restante += dur * (1 - frac)
 		}
 	}
-	if len(ps) > 0 {
-		r.Progresso = soma / float64(len(ps))
+	// Passes de visão de time pedidos junto (visao_modelo.go): entram no
+	// progresso como um passe cada e na estimativa pela velocidade deles.
+	pvs, _ := lePassesVisao(db, `WHERE rastreio_id = ? ORDER BY ordem`, r.ID)
+	restanteVisao := 0.0
+	for _, p := range pvs {
+		r.ComVisao = true
+		r.PassesVisaoTotal++
+		ini, fim := max(r.TInicioMs, p.TInicioMs), p.TFimMs
+		if fim <= 0 {
+			fim = p.DuracaoMs
+		}
+		frac := 0.0
+		switch {
+		case p.Estado == Concluido:
+			r.PassesVisaoConcluidos++
+			frac = 1
+		case p.Estado == Cancelado || p.Estado == Falhou:
+			frac = 1
+		case fim > ini && p.DuracaoMs > 0:
+			frac = min(1, max(0, float64(p.TAtualMs-ini)/float64(fim-ini)))
+		}
+		soma += frac
+		if frac < 1 {
+			dur := float64(fim - ini)
+			if dur <= 0 {
+				dur = 35 * 60000
+			}
+			vel := p.Velocidade
+			if vel <= 0 {
+				vel = VelocidadeVisaoPadrao
+			}
+			restanteVisao += dur * (1 - frac) / vel / 1000
+		}
+	}
+	if n := len(ps) + len(pvs); n > 0 {
+		r.Progresso = soma / float64(n)
 	}
 	if r.Velocidade > 0 {
-		r.EstimativaS = restante / 1000 / r.Velocidade
+		r.EstimativaS = restante/1000/r.Velocidade + float64(faltam)*estimativaRepescagemS(buracosPorPasse, r.Velocidade) + restanteVisao
 	}
 }
 
@@ -333,7 +411,7 @@ const colunasPasse = `p.id, p.rastreio_id, p.game_id, p.participante_id, p.ordem
 	p.tentativas_trava, p.retravas, p.amostras_sem_trava, p.taxa, p.calibracao, p.calibracao_pontos,
 	p.erro_calibracao_mediano, p.erro_calibracao_maximo, p.iniciado_em, p.terminado_em, p.erro,
 	p.conferencia_n, p.conferencia_iguais, p.conferencia_maior_dif, p.conferencia_riot,
-	COALESCE((SELECT SUM(bytes) FROM passes_compactos c WHERE c.passe_id = p.id), -1)`
+	COALESCE((SELECT SUM(bytes) FROM passes_compactos c WHERE c.passe_id = p.id), -1), p.repescagem`
 
 func lePasses(db *banco.DB, filtro string, args ...any) ([]Passe, error) {
 	linhas, err := db.Query(`SELECT `+colunasPasse+` FROM passes p `+filtro, args...)
@@ -346,11 +424,20 @@ func lePasses(db *banco.DB, filtro string, args ...any) ([]Passe, error) {
 		var p Passe
 		var taxa, med, mx, cmd sql.NullFloat64
 		var cn, ci sql.NullInt64
-		var conf string
+		var conf, resc string
 		if err := linhas.Scan(&p.ID, &p.RastreioID, &p.GameID, &p.ParticipanteID, &p.Ordem, &p.Estado, &p.TAtualMs,
 			&p.DuracaoMs, &p.Amostras, &p.TentativasTrava, &p.Retravas, &p.AmostrasSemTrava, &taxa, &p.Calibracao,
-			&p.CalibracaoPontos, &med, &mx, &p.IniciadoEm, &p.TerminadoEm, &p.Erro, &cn, &ci, &cmd, &conf, &p.Bytes); err != nil {
+			&p.CalibracaoPontos, &med, &mx, &p.IniciadoEm, &p.TerminadoEm, &p.Erro, &cn, &ci, &cmd, &conf, &p.Bytes, &resc); err != nil {
 			return nil, err
+		}
+		if resc != "" {
+			var r ResumoRepescagem
+			if json.Unmarshal([]byte(resc), &r) == nil {
+				if r.Restantes == nil {
+					r.Restantes = []Buraco{}
+				}
+				p.Repescagem = &r
+			}
 		}
 		p.Taxa, p.ErroCalibracaoMediano, p.ErroCalibracaoMaximo = nf(taxa), nf(med), nf(mx)
 		p.ConferenciaMaiorDif = nf(cmd)
@@ -421,6 +508,13 @@ func Recupera(db *banco.DB) (int, error) {
 	}
 	n, _ := res.RowsAffected()
 	db.Exec(`UPDATE passes SET estado = ? WHERE estado = ?`, Pausado, Rodando)
+	// Passe de visão rodando: do rastreio (fica pausado com ele) ou avulso
+	// (a execução morreu: vira pausado e o próximo pedido continua dele).
+	if r, err := db.Exec(`UPDATE passes_visao SET estado = ? WHERE estado = ?`, Pausado, Rodando); err == nil {
+		if m, _ := r.RowsAffected(); m > 0 && n == 0 {
+			n = m
+		}
+	}
 	return int(n), nil
 }
 

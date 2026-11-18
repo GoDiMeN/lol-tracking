@@ -6,6 +6,7 @@ import { api, acompanha } from '../api.js';
 import { duracao, dataCurta, kda, titulo, pilulaReplay, contagem, plural } from '../formato.js';
 import { estimativaRastreio, tempoHumano, podeRastrear, lerRelogio, relogio, ESTADOS_RASTREIO } from '../texto.js';
 import { el, botao, link, pilula, retrato, barra, lembraJogador, ultimoJogador, preferencia, guardaPreferencia, toast } from '../ui.js';
+import { VELOCIDADE_VISAO, estimativaVisaoNoRastreio } from '../visao.js';
 
 const POR_PAGINA = 20;
 
@@ -438,6 +439,19 @@ async function abreDialogo(p) {
   for (const i of [de, ate]) i.addEventListener('input', atualiza);
   trecho.append(el('div', 'linha', [el('span', '', 'de'), de, el('span', '', 'até'), ate, el('span', 'sub', 'em minutos:segundos; vazio = a partida inteira')]));
 
+  // Visão dos times: os dois passes de visão (névoa azul e vermelha) no fim, na mesma abertura do
+  // replay. Desligado por padrão (a escolha fica guardada).
+  const cbVisao = el('input');
+  cbVisao.type = 'checkbox';
+  cbVisao.checked = preferencia('rastreio.visao', '0') === '1';
+  cbVisao.addEventListener('change', atualiza);
+  const visaoFs = el('fieldset', 'dlg-visao');
+  visaoFs.append(
+    el('legend', '', 'Visão dos times'),
+    el('label', 'opcao', [cbVisao, el('span', '', `incluir no fim os 2 passes de visão (a ${VELOCIDADE_VISAO}×)`)]),
+    el('p', 'sub', 'Um passe com a névoa do replay na visão de cada time (teclas F1 e F2 do replay): lê do minimapa quem do outro time estava à vista e as sentinelas de cada time.'),
+  );
+
   const estimativa = el('p', 'dlg-estimativa');
   estimativa.setAttribute('aria-live', 'polite');
   const erro = el('p', 'aviso-linha erro');
@@ -468,9 +482,11 @@ async function abreDialogo(p) {
       return;
     }
     estimativa.classList.remove('ruim');
-    const s = estimativaRastreio({ duracaoS: p.duracao_s, jogadores: escolhidos.size, velocidade, deS: d / 1000, ateS: a / 1000 });
+    let s = estimativaRastreio({ duracaoS: p.duracao_s, jogadores: escolhidos.size, velocidade, deS: d / 1000, ateS: a / 1000 });
+    if (cbVisao.checked) s += estimativaVisaoNoRastreio({ duracaoS: p.duracao_s, deS: d / 1000, ateS: a / 1000 });
     const fim = a ? relogio(a) : duracao(p.duracao_s);
-    estimativa.textContent = `${plural(escolhidos.size, 'jogador', 'jogadores')}, de ${relogio(d)} a ${fim}, a ${velocidade}×: leva ${tempoHumano(s)}.`;
+    const mais = cbVisao.checked ? ' e os 2 passes de visão' : '';
+    estimativa.textContent = `${plural(escolhidos.size, 'jogador', 'jogadores')}${mais}, de ${relogio(d)} a ${fim}, a ${velocidade}×: leva ${tempoHumano(s)}.`;
   }
 
   form.addEventListener('submit', async (ev) => {
@@ -482,8 +498,10 @@ async function abreDialogo(p) {
       const corpo = { jogadores: [...escolhidos].sort((x, y) => x - y), velocidade };
       if (d) corpo.de_ms = d;
       if (a) corpo.ate_ms = a;
+      if (cbVisao.checked) corpo.visao = true;
       const { rastreio } = await api.rastrear(p.game_id, corpo);
       guardaPreferencia('velocidade', velocidade);
+      guardaPreferencia('rastreio.visao', cbVisao.checked ? '1' : '0');
       dlg.close();
       ctxApp.atualizaSeloRastreio();
       ctxApp.navega({ vista: 'rastreio', id: rastreio.id });
@@ -501,6 +519,7 @@ async function abreDialogo(p) {
     times,
     vel,
     trecho,
+    visaoFs,
     estimativa,
     lembrete,
     erro,

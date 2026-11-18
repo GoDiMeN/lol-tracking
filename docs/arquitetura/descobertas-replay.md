@@ -293,3 +293,64 @@ Consequências para o código:
 - **Passiva**: o ícone da passiva (x 20–63, primeiro da fileira) mostra a recarga do mesmo jeito que as habilidades. Lido como
   `cd_p`. Vex: 25/22/19 s conforme o nível, 31 entradas em recarga em 19 min. Garen também tem (regeneração interrompida por dano).
   Na cadeia vira `passiva_em_recarga`; no retrato do abate, `passiva_disponivel`.
+## 8. Buracos, retrava e repescagem (2026-11-18; medido no dado, NÃO no jogo)
+
+- **Os buracos da 3304217746** (checagem de qualidade, antes desta mudança): Leona 14,8 s aos 16:16, Orianna 7,4 s (2:29),
+  3,9 s (8:01) e 3,9 s (19:20), Garen 3,8–3,9 s (13:06 e 23:50). Os de ~3,9 s são **uma** tentativa de trava a 4×: a
+  tentativa antiga eram duas teclas (2 × ~60 ms pressionada + `EntreTeclas` 150 ms), `EsperaTrava` 600 ms parados e ~10
+  pedidos de ~4 ms à API e ao LCU, ~0,92 s real = **~3,7 s de jogo a 4×** sem nenhuma linha gravada; até 5 tentativas = 18 s.
+- **Retrava sem parar de gravar** (`motor.passoRetrava`): no meio do passe o motor só bloqueia na tecla dupla
+  (`ApertaDuplo`, ~0,3 s real = ~1,2 s de jogo a 4×) e volta a ler; a conferência é a das próprias leituras. As amostras
+  saem com `trava_perdida` e sem posição, o estado dos 10 continua. Uma tentativa que pega passa a custar ~1,2 s de jogo de
+  "vazio" em vez de 3,7 s; uma que falha, ~1,2 s de vazio + 2,4 s gravados sem posição (antes 3,7 s de vazio).
+- **`TravaCamera`** (a trava do começo do passe e da repescagem, ainda bloqueante): confere de 100 em 100 ms a partir de
+  150 ms depois da 2ª tecla, até 600 ms, e sai na primeira conferência boa. Tentativa que pega: de ~0,92 s para ~0,45 s real
+  (no jogo falso, com a câmera chegando na hora). A mesma conferência de antes (seleção, vivo, centro dentro da tela).
+- **Não verificado no jogo (seção 8)**: se o duplo continua prendendo quando a 2ª tecla sai dentro do laço (o tempo entre as duas é o
+  mesmo, 150 ms, mas agora há leituras antes e depois); quanto tempo a câmera de fato leva para chegar depois da tecla (o
+  polling sai antes se ela chega antes de 600 ms). A Orianna 2:29 e o Garen 13:06 saem da fonte e aparecem a 8 600–9 500
+  unidades em 4–7 s: é teleporte (o mapa não interpola esses).
+
+## 9. Visão de time: névoa por time e o minimapa (2026-11-17/18; 3 capturas do jogo, o resto NÃO verificado no jogo)
+
+Medido pelo dono em 2026-11-17 na partida 3304217746, 2560×1440, com uma sonda PowerShell (scancodes `0x3B`/`0x3C`/`0x3D`,
+captura por `PrintWindow`): replay em 10:00 a 1×, 3 s rodando, pausado; uma captura do minimapa (recorte 360×365 a partir de
+(2195, 1070)) e do painel (760×150 a partir de (0, 1290)) antes das teclas e depois de cada uma. As capturas estão em
+`server/visao/testdata/minimapa/` (com as posições rastreadas dos 10 no instante em `posicoes_603.json`).
+
+- **Teclas**: `F1` põe a névoa do replay na visão do time azul, `F2` na do vermelho, `F3` em "todos". O painel do replay
+  (canto inferior esquerdo) mostra "Fog of War: Blue | Red | All": "Blue" em azul vivo (`40c1ff`), "Red" em vermelho (`ff3333`),
+  "All" em branco, sobre `182726`; a leitura conta os pixels de cada cor na caixa (x 226–300, y 1353–1376). A Replay API
+  (`/replay/render`) só tem o booleano `fogOfWar` (já vinha `true`): **o time da névoa só se confere pela tela**.
+- **O jogo não informa visibilidade**: `/liveclientdata/playerlist` tem posição na tela, vida, itens, e nenhum campo de visível.
+- **O minimapa na visão de um time**: os retratos do próprio time aparecem sempre; o de um inimigo só quando o time o enxerga;
+  só as sentinelas do time aparecem. Retrato = imagem redonda com um anel de ~2 px na cor do time (azul `0099e0`, vermelho
+  `e83d3d`), raio 14,5 px; as torres e inibidores têm outras cores (azul `389bba`, vermelho `7c2221`) e formas; as tropas são
+  pontos de ~4 px. A captura foi em **10:03,0** (não 10:00: o seek a 1× andou 3 s), confirmado pelo melhor ajuste.
+- **Geometria** (`server/replay/minimapa.go`): `px = 2206,79 + 0,022681·x`, `py = 1423,53 − 0,023068·y` (tela 2560×1440),
+  ajustada nos 6 retratos achados contra as posições rastreadas: erro quadrático médio **1,05 px** (máximo 2,0 px, o da Diana,
+  meio coberto pela Orianna); 1 px ≈ 44 unidades. Os limites do mapa 11 do map11.png esticados no quadrado preto do minimapa
+  (x 2206–2546, y 1083–1423) dão 2,9 px (máximo 4,1): o minimapa do jogo tem a escala vertical ~1,7% maior.
+- **Leitura dos retratos** (`server/visao/minimapa.go`): votação de círculos nas duas cores + fração do anel presente (≥ 0,62 de
+  64 direções) + miolo sem a cor. Nas 4 capturas: todos os retratos vivos achados (a Diana com 0,83), nenhum falso (os círculos dos
+  inibidores azuis chegam a 0,52), ~3,3 ms por leitura.
+- **Decisão nas capturas** (com as posições rastreadas): visão azul — Garen e Orianna à vista, Vi e Senna fora (Draven morto);
+  aliados 3 de 3. Visão vermelha — Diana e Yunara à vista, Leona fora (Ambessa e Shaco mortos); aliados 3 de 4. Bate com o que
+  se vê nas capturas.
+- **A Senna fora do lugar (aberto)**: em "todos" e na visão vermelha o retrato da Senna aparece em (14 234, 11 735) — na rota de
+  baixo perto do inibidor vermelho —, a ~7 800 unidades de onde o passe dela E o quadro de 10:00 da linha do tempo do LCU a põem
+  (13 815, 6 463 → 13 726, 5 150 em 10:03), e nada aparece no lugar rastreado. É onde ela estaria ~15 s antes, voltando da fonte.
+  Não se sabe se é o minimapa atrasando um retrato depois do seek, um efeito da Senna (névoa/camuflagem do E) ou outra coisa.
+  Por isso a decisão nunca dá "fora" para um inimigo quando sobra anel inimigo que não casa com ninguém e todos têm posição,
+  e confere os aliados (que têm de aparecer sempre) em toda captura.
+- **Sentinelas**: marcador "olho com asas" de ~12×10 px; vermelho cheio (`de2429`), azul só no contorno (`2880ba`, miolo
+  azul-escuro). Lidas nas capturas: na visão azul, 2 azuis (rio do meio (6402, 8325) e rio de baixo (12222, 4401)); na vermelha,
+  2 vermelhas inteiras (rio do meio (6711, 8736) e rio de baixo (12222, 4510)). Ficam de fora: uma vermelha meio coberta pelo
+  retrato da Vi e um marcador vermelho de outro desenho no rio de cima (tipo não identificado). Em "todos", a azul do rio de
+  baixo some embaixo da vermelha. Duas tropas encostadas também parecem o marcador na tolerância de 1 px: o tamanho (12–14 px)
+  é o que separa.
+- **NÃO verificado no jogo** (o passe de visão foi feito e testado só com o jogo falso): se o painel aparece e muda com o replay
+  rodando a 8×; se a névoa sobrevive ao seek; se apertar F1 duas vezes continua em "Blue"; se o minimapa a 8× desenha os retratos
+  no lugar certo (atraso de desenho); a confiabilidade da leitura em mais situações (lutas com 3+ retratos encostados, base,
+  borda do mapa, sentinela de controle e outros marcadores, retrato do Shaco/clone, Neeko); o erro da geometria longe dos 6
+  pontos medidos (cantos do mapa).

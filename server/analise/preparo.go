@@ -25,6 +25,21 @@ type preparo struct {
 	usosOK bool
 	// ondas: as ondas da partida (calculadas na primeira vez; ondas_cadeia.go).
 	ondas *OndasDaPartida
+	// recalls e torres: calculados na primeira vez (etiquetas.go).
+	recalls   []intervaloRecall
+	recallsOK bool
+	torres    []torreComQueda
+	torresOK  bool
+	// chegadas: índices das amostras que são chegada de recall (rastreio.ChegadasPorRecall).
+	chegadas map[int]bool
+}
+
+// chegadasRecall: a definição única de recall, calculada uma vez por contexto.
+func (p *preparo) chegadasRecall() map[int]bool {
+	if p.chegadas == nil {
+		p.chegadas = rastreio.ChegadasPorRecall(p.c.Amostras, p.c.Time)
+	}
+	return p.chegadas
 }
 
 // zonaAmostra é a zona de uma amostra viva com posição.

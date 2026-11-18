@@ -68,10 +68,14 @@ export const api = {
   abates: (gameId) => pede('GET', `/api/partidas/${gameId}/abates`),
   indicadores: (gameId, pid) => pede('GET', `/api/partidas/${gameId}/indicadores?participante=${pid}`),
   saidas: (gameId, pid) => pede('GET', `/api/partidas/${gameId}/saidas-de-rota?participante=${pid}`),
-  atividades: (gameId, de, ate) => pede('GET', `/api/partidas/${gameId}/atividades?de=${de}&ate=${ate}`),
+  qualidade: (gameId) => pede('GET', `/api/partidas/${gameId}/qualidade`),
+  estaticos: (gameId) => pede('GET', `/api/partidas/${gameId}/estaticos`),
+  bonusObjetivos: (gameId) => pede('GET', `/api/partidas/${gameId}/bonus-objetivos`),
+  build: (gameId, pid = 0) => pede('GET', `/api/partidas/${gameId}/build${pid ? `?participante=${pid}` : ''}`),  atividades: (gameId, de, ate) => pede('GET', `/api/partidas/${gameId}/atividades?de=${de}&ate=${ate}`),
   cs: (gameId, pid) => pede('GET', `/api/partidas/${gameId}/cs?participante=${pid}`),
   fases: (gameId) => pede('GET', `/api/partidas/${gameId}/fases`),
   ondas: (gameId) => pede('GET', `/api/partidas/${gameId}/ondas`),
+  sentinelas: (gameId) => pede('GET', `/api/partidas/${gameId}/sentinelas`),
   // JSON cru do LCU (contrato: exceção ao envelope); o placar usa o ouro por minuto.
   linhaDoTempo: (gameId) => pede('GET', `/api/partidas/${gameId}/linha-do-tempo`),
 
@@ -101,6 +105,12 @@ export const api = {
   // Rastreio das partidas de um estudo (uma coleta sem descoberta: pausar/cancelar pelas rotas da coleta).
   rastreioEstudo: (id) => pede('GET', `/api/estudos/${id}/rastreio`),
   rastreiaEstudo: (id, corpo = {}) => pede('POST', `/api/estudos/${id}/rastreio`, corpo),
+  // Repescagem dos trechos sem amostra de passes já gravados (abre o replay; uma coisa por vez na fila).
+  planoRepescagem: (gameId) => pede('GET', `/api/partidas/${gameId}/rastreio/repescagem`),
+  repesca: (gameId, corpo = {}) => pede('POST', `/api/partidas/${gameId}/rastreio/repescagem`, corpo),
+  // Visão dos times: os dois passes de visão (névoa azul e vermelha; abre o replay) e o resultado.
+  visao: (gameId) => pede('GET', `/api/partidas/${gameId}/visao`),
+  rastreiaVisao: (gameId, corpo = {}) => pede('POST', `/api/partidas/${gameId}/visao/rastreio`, corpo),
 };
 
 export const imagemCampeao = (id) => `/api/imagens/campeao/${Number(id) || 0}`;

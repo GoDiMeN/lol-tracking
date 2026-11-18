@@ -337,6 +337,95 @@ func gravaBrutas(db *banco.DB, passeID, gameID int64, pid int, as []Amostra, es 
 		return err
 	}
 	defer tx.Rollback()
+	if err := insereBrutas(tx, passeID, gameID, pid, as, es); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE passes SET amostras = amostras + ?, t_atual_ms = MAX(t_atual_ms, ?), retravas = ?,
+			tentativas_trava = ?, amostras_sem_trava = ? WHERE id = ?`,
+		len(as), pr.TAtualMs, pr.Retravas, pr.Tentativas, pr.SemTrava, passeID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// substituiTrecho troca, numa transação, as linhas de trabalho do passe entre
+// o primeiro e o último instante do trecho novo pelas do trecho novo (a
+// repescagem de um buraco). A contagem de amostras do passe acompanha.
+func substituiTrecho(db *banco.DB, passeID, gameID int64, pid int, as []Amostra, es []EstadoJogador) error {
+	if len(as) == 0 {
+		return nil
+	}
+	ini, fim := as[0].TMs, as[len(as)-1].TMs
+	for _, e := range es {
+		ini, fim = min(ini, e.TMs), max(fim, e.TMs)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM amostras_brutas WHERE passe_id = ? AND t_ms >= ? AND t_ms <= ?`, passeID, ini, fim); err != nil {
+		return err
+	}
+	if len(es) > 0 {
+		if _, err := tx.Exec(`DELETE FROM amostras_time_brutas WHERE passe_id = ? AND t_ms >= ? AND t_ms <= ?`, passeID, ini, fim); err != nil {
+			return err
+		}
+	}
+	if err := insereBrutas(tx, passeID, gameID, pid, as, es); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE passes SET amostras = (SELECT COUNT(*) FROM amostras_brutas WHERE passe_id = ?) WHERE id = ?`,
+		passeID, passeID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// carregaTrabalho põe de volta nas tabelas de trabalho o que está no bloco de
+// um passe já fechado: a repescagem de um passe gravado regrava trechos ali e
+// fecha de novo pelo caminho normal (finalizaPasse). Não mexe nos números do
+// passe (o fechamento refaz).
+func carregaTrabalho(db *banco.DB, p Passe) (int, error) {
+	ba, ok, err := leCompacto(db, p.ID, ConteudoAmostras)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, fmt.Errorf("o passe %d não tem as amostras gravadas", p.ID)
+	}
+	as := AmostrasDoBloco(ba)
+	var es []EstadoJogador
+	if be, ok, err := leCompacto(db, p.ID, ConteudoTime); err != nil {
+		return 0, err
+	} else if ok {
+		es = EstadosDoBloco(be)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{`DELETE FROM amostras_brutas WHERE passe_id = ?`, `DELETE FROM amostras_time_brutas WHERE passe_id = ?`} {
+		if _, err := tx.Exec(q, p.ID); err != nil {
+			return 0, err
+		}
+	}
+	if err := insereBrutas(tx, p.ID, p.GameID, p.ParticipanteID, as, es); err != nil {
+		return 0, err
+	}
+	return len(as), tx.Commit()
+}
+
+// descartaTrabalho apaga as linhas de trabalho do passe (repescagem de passe
+// gravado que não conseguiu fechar de novo: o bloco antigo continua valendo).
+func descartaTrabalho(db *banco.DB, passeID int64) {
+	db.Exec(`DELETE FROM amostras_brutas WHERE passe_id = ?`, passeID)
+	db.Exec(`DELETE FROM amostras_time_brutas WHERE passe_id = ?`, passeID)
+}
+
+// insereBrutas insere amostras e estados nas tabelas de trabalho (dentro de tx).
+func insereBrutas(tx *sql.Tx, passeID, gameID int64, pid int, as []Amostra, es []EstadoJogador) error {
 	if len(as) > 0 {
 		st, err := tx.Prepare(`INSERT INTO amostras_brutas (passe_id, game_id, participante_id, ` + colunasBrutas + `)
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -365,12 +454,7 @@ func gravaBrutas(db *banco.DB, passeID, gameID int64, pid int, as []Amostra, es 
 			}
 		}
 	}
-	if _, err := tx.Exec(`UPDATE passes SET amostras = amostras + ?, t_atual_ms = MAX(t_atual_ms, ?), retravas = ?,
-			tentativas_trava = ?, amostras_sem_trava = ? WHERE id = ?`,
-		len(as), pr.TAtualMs, pr.Retravas, pr.Tentativas, pr.SemTrava, passeID); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return nil
 }
 
 func lePtr(n sql.NullFloat64) *float64 { return nf(n) }

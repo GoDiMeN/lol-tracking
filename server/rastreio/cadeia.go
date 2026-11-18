@@ -123,13 +123,60 @@ type marco struct {
 const (
 	distanciaRecall = 3000.0
 	raioFonte       = 1800.0
+	// janelaSaltoRecallMs: o salto para a fonte acontece em menos que isto.
+	janelaSaltoRecallMs = 3000
+	// RenascerAtrasadoMs: chegada à fonte com o jogador morto até tanto tempo
+	// antes é o RENASCER com a câmera atrasada (ela grava um ponto velho antes
+	// de ir para a fonte: Orianna 11:10, Draven 11:45 da 3304217746), não recall.
+	RenascerAtrasadoMs int64 = 5000
 )
+
+// ChegadasPorRecall é a ÚNICA definição de recall do projeto (o item "recall"
+// da cadeia, a chegada "recall" do na_base e a etiqueta de atividade "recall"
+// da análise usam esta): as amostras em que o jogador vivo surge a menos de
+// raioFonte da fonte do próprio time, vindo de fora dela, a mais de
+// distanciaRecall de um ponto onde estava até janelaSaltoRecallMs antes, sem
+// morte nesse meio e sem estar morto até RenascerAtrasadoMs antes. O ponto de
+// partida não precisa ser a amostra imediatamente anterior: a câmera às vezes
+// grava um ponto no meio do caminho (Orianna, 7:47 da 3304217746: 9612 → 12006
+// → 14334 em meio segundo).
+func ChegadasPorRecall(as []Amostra, time int) map[int]bool {
+	r := map[int]bool{}
+	if time != 100 && time != 200 {
+		return r
+	}
+	fonte := FonteDoTime(time)
+	naFonte := func(a Amostra) bool { return math.Hypot(*a.X-fonte[0], *a.Y-fonte[1]) < raioFonte }
+	ant := -1 // última amostra viva com posição, sem morte depois dela
+	ultimaMorte := int64(math.MinInt64 / 2)
+	for i, a := range as {
+		if a.Morto {
+			ant, ultimaMorte = -1, a.TMs
+			continue
+		}
+		if !temPos(a) {
+			continue
+		}
+		if ant >= 0 && naFonte(a) && !naFonte(as[ant]) && a.TMs-ultimaMorte > RenascerAtrasadoMs {
+			for k := ant; k >= 0 && a.TMs-as[k].TMs < janelaSaltoRecallMs; k-- {
+				if as[k].Morto {
+					break
+				}
+				if temPos(as[k]) && math.Hypot(*a.X-*as[k].X, *a.Y-*as[k].Y) > distanciaRecall {
+					r[i] = true
+					break
+				}
+			}
+		}
+		ant = i
+	}
+	return r
+}
 
 func marcosDe(c *ContextoCadeia) []marco {
 	as := c.Amostras
-	fonte := FonteDoTime(c.Time)
+	recalls := ChegadasPorRecall(as, c.Time)
 	var ms []marco
-	ultimoVivo := -1
 	for i := range as {
 		if i > 0 && as[i].Morto != as[i-1].Morto {
 			if as[i].Morto {
@@ -138,21 +185,9 @@ func marcosDe(c *ContextoCadeia) []marco {
 				ms = append(ms, marco{i, "renascimento"})
 			}
 		}
-		if as[i].Morto || !temPos(as[i]) {
-			continue
+		if recalls[i] {
+			ms = append(ms, marco{i, "recall"})
 		}
-		if ultimoVivo >= 0 && !as[ultimoVivo].Morto {
-			a, b := as[ultimoVivo], as[i]
-			semMorte := true
-			for k := ultimoVivo; k <= i; k++ {
-				semMorte = semMorte && !as[k].Morto
-			}
-			if semMorte && b.TMs-a.TMs < 3000 && math.Hypot(*b.X-*a.X, *b.Y-*a.Y) > distanciaRecall &&
-				math.Hypot(*b.X-fonte[0], *b.Y-fonte[1]) < raioFonte {
-				ms = append(ms, marco{i, "recall"})
-			}
-		}
-		ultimoVivo = i
 	}
 	return ms
 }

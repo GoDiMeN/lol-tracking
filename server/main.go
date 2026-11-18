@@ -14,6 +14,7 @@ import (
 
 	"loltracking/server/analise"
 	"loltracking/server/aprendizado"
+	"loltracking/server/atributos"
 	"loltracking/server/banco"
 	"loltracking/server/campeao"
 	"loltracking/server/estado"
@@ -49,13 +50,18 @@ func main() {
 	var nomes campeao.Nomes
 	// dd nil no modo teste: as imagens respondem 404 e nada sai para a rede.
 	var dd *campeao.DataDragon
+	// Dados estáticos da versão da partida (base dos campeões, itens): no modo
+	// teste, uma tabela fixa pequena.
+	var estaticos campeao.FonteEstaticos
 	if cfg.ModoTeste {
 		cliLCU = lcu.NovoFalso()
 		nomes = campeao.Fixo(lcu.CampeoesFalsos)
+		estaticos = campeao.EstaticosDoTeste()
 	} else {
 		cliLCU = lcu.NovoReal(cfg.Lockfile)
 		dd = campeao.NovoDataDragon(cfg.Dados)
 		nomes = dd
+		estaticos = campeao.NovosEstaticos(cfg.Dados)
 	}
 	chaveRiot := riot.Novo(cfg.TokenRiot, cfg.ModoTeste)
 
@@ -64,6 +70,15 @@ func main() {
 	var depsReplay replay.Deps
 	if cfg.ModoTeste {
 		jogo := replay.NovoFalso(replay.RelogioReal{})
+		// Cada jogador perde a trava de 3:20 a 3:35 nas 3 primeiras passagens
+		// (o passe e as 2 tentativas da repescagem ao fim dele): o rastreio
+		// termina com 1 trecho sem amostra, que a repescagem de passe gravado
+		// (botão da tela da partida) recupera. É o caso da Leona da 3304217746.
+		jogo.PerdasTrava = []replay.PerdaTravaFalsa{{Indice: -1, De: 200, Ate: 215, Vezes: 3}}
+		// Sentinelas do minimapa falso (passe de visão de time): duas de cada
+		// time, no rio e na selva, com prazo como as amarelas.
+		jogo.Sentinelas = []replay.SentinelaFalsa{{Time: 100, X: 5200, Y: 9200, De: 70, Ate: 190}, {Time: 100, X: 9600, Y: 5500, De: 300, Ate: 420},
+			{Time: 200, X: 9700, Y: 4800, De: 120, Ate: 240}, {Time: 200, X: 4300, Y: 10200, De: 380, Ate: 500}}
 		cliLCU.(*lcu.Falso).AoAssistir = func(gameID int64) {
 			if p, err := partida.Le(db, gameID); err == nil {
 				var elenco []replay.JogadorFalso
@@ -85,17 +100,19 @@ func main() {
 			Tela: janela, GameCfg: replay.GameCfgDe(cfg.Lockfile)}
 	}
 	cfgRastreio := rastreio.Config{CapturaACadaS: cfg.CapturaACadaS}
+	leitor, err := visao.Novo()
+	if err != nil {
+		log.Fatalf("gabaritos da leitura da tela: %v", err)
+	}
+	// A leitura do minimapa dos passes de visão de time é a de verdade nos dois
+	// modos: o jogo falso desenha o minimapa na geometria e nas cores medidas.
+	cfgRastreio.Minimapa = leitor
 	if cfg.ModoTeste {
 		// Tela inventada a partir do tempo do jogo falso: a interface mostra a
 		// "última leitura" e o mapa com play sem o jogo de verdade.
 		cfgRastreio.Leitor = rastreio.LeitorFalso{}
 	} else {
-		// Leitura da tela por gabarito (tarefa 3). No modo teste a tela é falsa:
-		// fica o LeitorNulo e as colunas da tela saem nulas.
-		leitor, err := visao.Novo()
-		if err != nil {
-			log.Fatalf("gabaritos da leitura da tela: %v", err)
-		}
+		// Leitura da tela por gabarito (tarefa 3).
 		cfgRastreio.Leitor = leitor
 		cfgRastreio.Riot = chaveRiot
 	}
@@ -152,6 +169,7 @@ func main() {
 	}
 	aprendizado.Registra(mux, aprendizado.Novo(aprendizado.Deps{DB: db, LCU: cliLCU, Riot: fonteRiot, Fila: fila,
 		Partida: partida.Deps{DB: db, LCU: cliLCU, Campeoes: nomes}, Hub: hub, Analise: depsAnalise}))
+	atributos.Registra(mux, atributos.Deps{DB: db, Estaticos: estaticos})
 	campeao.RegistraImagens(mux, campeao.NovasImagens(dd, cfg.Dados))
 
 	if cfg.Renderer != "" {

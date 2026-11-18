@@ -69,6 +69,118 @@ func TestTeclaDo(t *testing.T) {
 			t.Fatalf("%q não pode", k)
 		}
 	}
+	// As 3 da visão de time entram; as vizinhas (F4, F12, Esc, espaço) não.
+	for _, k := range []rune{TeclaF1, TeclaF2, TeclaF3} {
+		if !TeclaPermitida(k) {
+			t.Fatalf("%s tem de ser permitida", NomeTecla(k))
+		}
+	}
+	for _, k := range []rune{0xF700, 0xF704, 0xF70C, 0x1B, ' '} {
+		if TeclaPermitida(k) {
+			t.Fatalf("%U não pode", k)
+		}
+	}
+	if len(teclasPermitidas) != 13 {
+		t.Fatalf("a lista tem %d teclas; são 13 (as 10 de seleção e F1–F3)", len(teclasPermitidas))
+	}
+	for tm, esperado := range map[int]rune{100: TeclaF1, 200: TeclaF2, 0: TeclaF3} {
+		if k, err := TeclaDaVisao(tm); err != nil || k != esperado {
+			t.Errorf("visão %d: %s %v", tm, NomeTecla(k), err)
+		}
+	}
+	if _, err := TeclaDaVisao(300); err == nil {
+		t.Fatal("time 300 não existe")
+	}
+}
+
+// A troca de visão passa pelas mesmas travas de qualquer tecla: sem a Replay
+// API respondendo, com a fase errada ou sem foco, nenhuma tecla sai.
+func TestMudaVisaoSoNoReplay(t *testing.T) {
+	f, l, d := ambiente()
+	ctx := context.Background()
+	s, err := Abre(ctx, d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Fecha()
+	if err := s.MudaVisao(ctx, 100); err != nil || f.Visao() != 100 {
+		t.Fatalf("F1: %v, visão %d", err, f.Visao())
+	}
+	if err := s.MudaVisao(ctx, 200); err != nil || f.Visao() != 200 {
+		t.Fatalf("F2: %v, visão %d", err, f.Visao())
+	}
+	if err := s.MudaVisao(ctx, 0); err != nil || f.Visao() != 0 {
+		t.Fatalf("F3: %v, visão %d", err, f.Visao())
+	}
+	if strings.Join(f.Teclas, ",") != "F1,F2,F3" {
+		t.Fatalf("teclas %v", f.Teclas)
+	}
+	l.fase = "InProgress"
+	var ef *ErroFase
+	if err := s.MudaVisao(ctx, 100); !errors.As(err, &ef) {
+		t.Fatalf("partida ao vivo: %v", err)
+	}
+	l.fase = "None"
+	f.SemFoco = true
+	if err := s.MudaVisao(ctx, 100); err == nil {
+		t.Fatal("sem foco não pode mandar tecla")
+	}
+	f.SemFoco = false
+	s.Fecha()
+	if err := s.MudaVisao(ctx, 100); !errors.Is(err, ErrSemReplay) {
+		t.Fatalf("depois de fechar: %v", err)
+	}
+	if strings.Join(f.Teclas, ",") != "F1,F2,F3" {
+		t.Fatalf("saiu tecla que não devia: %v", f.Teclas)
+	}
+}
+
+// O minimapa do falso: na visão de um time, os inimigos só aparecem quando o
+// time os enxerga; os do próprio time sempre.
+func TestFalsoMinimapaPorTime(t *testing.T) {
+	f, _, d := ambiente()
+	ctx := context.Background()
+	s, err := Abre(ctx, d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Fecha()
+	conta := func() (azul, verm int) {
+		img, err := f.Captura(RegiaoVisao)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for y := 0; y < img.Rect.Dy(); y++ {
+			for x := 0; x < img.Rect.Dx(); x++ {
+				p := img.RGBAAt(x, y)
+				switch [3]uint8{p.R, p.G, p.B} {
+				case CorAnelAzul:
+					azul++
+				case CorAnelVermelho:
+					verm++
+				}
+			}
+		}
+		return
+	}
+	// Pausado: as duas capturas são do mesmo instante.
+	pb, _ := f.MudaPlayback(ctx, MudaPlayback{Tempo: Ptr(300.0), Pausado: Ptr(true)})
+	tm := pb.Tempo
+	vistosPeloAzul := 0
+	for i := 5; i < 10; i++ {
+		if f.VisivelPara(100, i, tm) {
+			vistosPeloAzul++
+		}
+	}
+	a0, v0 := conta()
+	s.MudaVisao(ctx, 100)
+	a1, v1 := conta()
+	if a1 != a0 {
+		t.Fatalf("o próprio time some na visão dele: %d × %d", a1, a0)
+	}
+	if vistosPeloAzul < 5 && v1 >= v0 {
+		t.Fatalf("na visão azul os vermelhos não vistos deviam sumir: %d × %d (vistos %d)", v1, v0, vistosPeloAzul)
+	}
 }
 
 func TestGameCfg(t *testing.T) {

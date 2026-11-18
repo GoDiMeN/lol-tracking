@@ -19,6 +19,12 @@ type dadosPartida struct {
 	riot        []abateRiot                      // nil = sem a linha do tempo da Riot
 	quadrosRiot map[int64]map[int]statsRiot      // por minuto (t_ms do quadro) e participante
 	wards       []wardRiot
+	// eventosSentinela: WARD_PLACED e WARD_KILL da Riot (sentinelas.go); sentCache: a
+	// lista montada na primeira vez.
+	eventosSentinela []eventoSentinela
+	sentCache        *cacheSentinelas
+	// visao: o resultado dos passes de visão de time (nil = não rodaram).
+	visao *rastreio.VisaoDaPartida
 }
 
 func (d *dadosPartida) participante(pid int) *partida.Participante {

@@ -39,8 +39,18 @@ var (
 	IntervaloEspera = 500 * time.Millisecond
 	// EntreTeclas: pausa entre o 1º e o 2º aperto (o duplo é o que prende a câmera).
 	EntreTeclas = 150 * time.Millisecond
-	// EsperaTrava: depois do 2º aperto, quanto esperar a câmera chegar antes de conferir.
+	// EsperaTrava: depois do 2º aperto, até quanto esperar a câmera chegar. Não é
+	// mais uma espera fixa: a conferência é repetida a cada IntervaloConfereTrava
+	// a partir de EsperaMinimaTrava, e a tentativa acaba na primeira que passa.
+	// Antes eram 600 ms parados em toda tentativa, mesmo quando a câmera já
+	// estava no jogador logo depois da tecla (a 4× são 2,4 s de jogo).
 	EsperaTrava = 600 * time.Millisecond
+	// EsperaMinimaTrava: a primeira conferência depois do 2º aperto. Conferir
+	// antes disso pegaria o quadro de antes da tecla.
+	EsperaMinimaTrava = 150 * time.Millisecond
+	// IntervaloConfereTrava: de quanto em quanto reconferir até EsperaTrava.
+	// Cada conferência são dois pedidos à API local (~4 ms cada, descobertas 4.1).
+	IntervaloConfereTrava = 100 * time.Millisecond
 	// MaxTentativasTrava: quantas vezes tentar prender a câmera antes de desistir.
 	MaxTentativasTrava = 5
 )
@@ -236,13 +246,14 @@ func FechaJogo(d Deps) error {
 	return nil
 }
 
-// Tecla manda uma tecla de seleção ao jogo, só se: a tecla é uma das 10, a
-// sessão provou que é replay e não fechou, a fase do cliente continua
-// permitida, a Replay API responde agora, e a janela do jogo está em primeiro
-// plano (conferido). Qualquer falha = nenhuma tecla.
+// Tecla manda uma tecla ao jogo, só se: a tecla está na lista (as 10 de
+// seleção e F1/F2/F3 da visão de time), a sessão provou que é replay e não
+// fechou, a fase do cliente continua permitida, a Replay API responde agora, e
+// a janela do jogo está em primeiro plano (conferido). Qualquer falha =
+// nenhuma tecla.
 func (s *Sessao) Tecla(ctx context.Context, t rune) error {
 	if !TeclaPermitida(t) {
-		return fmt.Errorf("tecla %q fora da lista de seleção de jogador", t)
+		return fmt.Errorf("tecla %s fora da lista de teclas permitidas", NomeTecla(t))
 	}
 	s.mu.Lock()
 	ok := s.confirmado && !s.fechada
@@ -260,6 +271,18 @@ func (s *Sessao) Tecla(ctx context.Context, t rune) error {
 		return err
 	}
 	return s.d.Teclado.Aperta(t)
+}
+
+// MudaVisao aperta UMA vez a tecla da visão de time (F1 azul, F2 vermelho, F3
+// todos), pelo mesmo caminho de qualquer tecla (Tecla: lista, prova de replay,
+// fase, foco). Quem chama confere pela tela que o painel do replay mudou: a
+// Replay API não diz de que time é a névoa (só o booleano fogOfWar).
+func (s *Sessao) MudaVisao(ctx context.Context, time int) error {
+	t, err := TeclaDaVisao(time)
+	if err != nil {
+		return err
+	}
+	return s.Tecla(ctx, t)
 }
 
 // Margem (pixels) que o centro do campeão precisa ter da borda para a trava
@@ -294,56 +317,65 @@ func ConfereTrava(r Render, js []Jogador, nome string, larg, alt float64) (bool,
 	return true, ""
 }
 
-// TravaCamera prende a câmera no jogador: com o jogo RODANDO (pausado o `T`
-// falha), aperta a tecla dele duas vezes, espera e confere. Tenta de novo até
-// MaxTentativasTrava. Devolve quantas tentativas usou. ErrMorto se o jogador
-// está morto (não há o que travar).
-func (s *Sessao) TravaCamera(ctx context.Context, nome string) (int, error) {
+// ApertaDuplo é a metade "tecla" de uma tentativa de trava: com o jogo RODANDO
+// (pausado o `T` falha), confere que o jogador está vivo e aperta a tecla dele
+// duas vezes, com EntreTeclas no meio (o duplo é o que prende). Cada aperto
+// passa por Tecla (lista de teclas, prova de replay, fase, foco). ErrMorto se o
+// jogador está morto. O motor usa sozinho para retravar sem parar de gravar
+// (a conferência ele faz nas próprias leituras).
+func (s *Sessao) ApertaDuplo(ctx context.Context, nome string) error {
 	tecla, err := TeclaDo(s.Jogadores, nome)
 	if err != nil {
+		return err
+	}
+	pb, err := s.d.API.Playback(ctx)
+	if err != nil {
+		return fmt.Errorf("%w (%v)", ErrSemReplay, err)
+	}
+	if pb.Pausado {
+		if _, err := s.d.API.MudaPlayback(ctx, MudaPlayback{Pausado: Ptr(false)}); err != nil {
+			return err
+		}
+	}
+	js, err := s.d.API.Jogadores(ctx)
+	if err != nil {
+		return err
+	}
+	for _, j := range js {
+		if j.NomeDeSelecao() == nome && j.Morto {
+			return ErrMorto
+		}
+	}
+	if err := s.Tecla(ctx, tecla); err != nil {
+		return err
+	}
+	if err := s.d.Relogio.Dorme(ctx, EntreTeclas); err != nil {
+		return err
+	}
+	return s.Tecla(ctx, tecla)
+}
+
+// TravaCamera prende a câmera no jogador: aperta a tecla dele duas vezes
+// (ApertaDuplo) e confere de IntervaloConfereTrava em IntervaloConfereTrava,
+// de EsperaMinimaTrava até EsperaTrava, saindo na primeira conferência boa.
+// Tenta de novo até MaxTentativasTrava. Devolve quantas tentativas usou.
+// ErrMorto se o jogador está morto (não há o que travar).
+func (s *Sessao) TravaCamera(ctx context.Context, nome string) (int, error) {
+	if _, err := TeclaDo(s.Jogadores, nome); err != nil {
 		return 0, err
 	}
 	motivo := ""
 	for tentativa := 1; tentativa <= MaxTentativasTrava; tentativa++ {
-		pb, err := s.d.API.Playback(ctx)
-		if err != nil {
-			return tentativa - 1, fmt.Errorf("%w (%v)", ErrSemReplay, err)
-		}
-		if pb.Pausado {
-			if _, err := s.d.API.MudaPlayback(ctx, MudaPlayback{Pausado: Ptr(false)}); err != nil {
+		if err := s.ApertaDuplo(ctx, nome); err != nil {
+			if errors.Is(err, ErrMorto) || errors.Is(err, ErrSemReplay) {
 				return tentativa - 1, err
 			}
-		}
-		js, err := s.d.API.Jogadores(ctx)
-		if err != nil {
-			return tentativa - 1, err
-		}
-		for _, j := range js {
-			if j.NomeDeSelecao() == nome && j.Morto {
-				return tentativa - 1, ErrMorto
-			}
-		}
-		if err := s.Tecla(ctx, tecla); err != nil {
 			return tentativa, err
 		}
-		if err := s.d.Relogio.Dorme(ctx, EntreTeclas); err != nil {
-			return tentativa, err
-		}
-		if err := s.Tecla(ctx, tecla); err != nil {
-			return tentativa, err
-		}
-		if err := s.d.Relogio.Dorme(ctx, EsperaTrava); err != nil {
-			return tentativa, err
-		}
-		r, err := s.d.API.Render(ctx)
+		ok, m, err := s.esperaTrava(ctx, nome)
 		if err != nil {
 			return tentativa, err
 		}
-		js, err = s.d.API.Jogadores(ctx)
-		if err != nil {
-			return tentativa, err
-		}
-		ok, m := s.ConfereTrava(r, js, nome)
 		if ok {
 			return tentativa, nil
 		}
@@ -353,4 +385,32 @@ func (s *Sessao) TravaCamera(ctx context.Context, nome string) (int, error) {
 		motivo = m
 	}
 	return MaxTentativasTrava, fmt.Errorf("%w %s (%s)", ErrTravaFalhou, nome, motivo)
+}
+
+// esperaTrava confere a trava repetidamente até EsperaTrava depois do 2º aperto.
+func (s *Sessao) esperaTrava(ctx context.Context, nome string) (bool, string, error) {
+	inicio := s.d.Relogio.Agora()
+	if err := s.d.Relogio.Dorme(ctx, EsperaMinimaTrava); err != nil {
+		return false, "", err
+	}
+	for {
+		r, err := s.d.API.Render(ctx)
+		if err != nil {
+			return false, "", err
+		}
+		js, err := s.d.API.Jogadores(ctx)
+		if err != nil {
+			return false, "", err
+		}
+		ok, m := s.ConfereTrava(r, js, nome)
+		if ok || m == "morto" {
+			return ok, m, nil
+		}
+		if s.d.Relogio.Agora().Sub(inicio)+IntervaloConfereTrava > EsperaTrava {
+			return false, m, nil
+		}
+		if err := s.d.Relogio.Dorme(ctx, IntervaloConfereTrava); err != nil {
+			return false, "", err
+		}
+	}
 }

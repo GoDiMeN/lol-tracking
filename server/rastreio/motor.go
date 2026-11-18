@@ -40,6 +40,11 @@ type Config struct {
 	CapturaACadaS float64
 	// DepoisDaAmostra é chamado a cada amostra (os testes usam para pausar no meio).
 	DepoisDaAmostra func(passeID int64, a Amostra)
+	// Minimapa: a leitura do minimapa do passe de visão de time (pacote
+	// visao). Nil = os passes de visão são recusados.
+	Minimapa LeitorDeMinimapa
+	// VelocidadeVisao: a velocidade do replay nos passes de visão (padrão 8).
+	VelocidadeVisao float64
 }
 
 func (c Config) comPadroes() Config {
@@ -57,6 +62,9 @@ func (c Config) comPadroes() Config {
 	}
 	if c.CapturaACadaS <= 0 {
 		c.CapturaACadaS = 30
+	}
+	if c.VelocidadeVisao <= 0 {
+		c.VelocidadeVisao = VelocidadeVisaoPadrao
 	}
 	return c
 }
@@ -215,8 +223,6 @@ func (m *motor) esperaSeek(ctx context.Context, alvoS float64) error {
 // Devolve a causa se o contexto foi cancelado (ErrPausado/ErrCancelado), ou o
 // erro. As amostras ficam nas tabelas de trabalho; quem fecha é finalizaPasse.
 func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (EstatPasse, error) {
-	var st EstatPasse
-	cfg := m.cfg
 	mudaEstadoPasse(m.db, p.ID, Rodando, "")
 	duracaoMs := int64(m.s.Duracao * 1000)
 	m.db.Exec(`UPDATE passes SET duracao_ms = ? WHERE id = ?`, duracaoMs, p.ID)
@@ -224,9 +230,92 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 		fimMs = duracaoMs
 	}
 	inicio := p.TAtualMs
-	st.TIniMs = inicio
 	m.ex.Emite("passe_inicio", map[string]any{"passe_id": p.ID, "participante_id": a.pid, "nome": a.nome,
 		"t_inicio_ms": inicio, "t_fim_ms": fimMs, "duracao_ms": duracaoMs})
+	pr := progresso{TAtualMs: inicio, Retravas: p.Retravas, Tentativas: p.TentativasTrava, SemTrava: p.AmostrasSemTrava}
+	return m.segue(ctx, trecho{p: p, a: a, inicio: inicio, fim: fimMs, pr: &pr,
+		destino: func(as []Amostra, es []EstadoJogador, pr progresso) error {
+			return gravaBrutas(m.db, p.ID, p.GameID, a.pid, as, es, pr)
+		}})
+}
+
+// trecho é um pedaço do replay que o motor segue e grava: o passe inteiro
+// (rodaPasse) ou um buraco sendo repescado (repescagem.go).
+type trecho struct {
+	p Passe
+	a alvo
+	// inicio: só grava leituras depois deste t (o seek cai RecuoRetomadaMs
+	// antes, para a trava já estar pronta); fim: para depois dele.
+	inicio, fim int64
+	pr          *progresso
+	// destino recebe cada lote de amostras e estados (com o progresso de agora).
+	destino func(as []Amostra, es []EstadoJogador, pr progresso) error
+	// repescagem: o evento "amostra" sai marcado (a tela mostra que é repescagem).
+	repescagem bool
+}
+
+// retrava é a retravada da câmera SEM parar de gravar: o motor aperta a tecla
+// dupla (ApertaDuplo, ~0,3 s real) e volta a ler; a conferência é a das
+// próprias leituras (ConfereTrava em cada amostra). Enquanto isso as amostras
+// do jogador saem com trava_perdida e sem posição, e o estado dos 10 (que não
+// depende da câmera) continua sendo gravado. Antes o motor parava em
+// TravaCamera (~0,9 s real por tentativa, até 5): a 4× eram até 18 s de jogo
+// sem nenhuma linha gravada.
+type retrava struct {
+	ativa      bool
+	tentativas int
+	esperando  bool
+	teclaEm    time.Time
+}
+
+// passoRetrava avança a retravada depois de uma leitura: ok = a leitura já
+// conferiu a trava; morto = o jogador morreu (a câmera volta sozinha ao renascer).
+func (m *motor) passoRetrava(ctx context.Context, rt *retrava, p Passe, a alvo, ok, morto bool, pr *progresso) error {
+	if !rt.ativa {
+		return nil
+	}
+	if ok {
+		rt.ativa = false
+		m.ex.Emite("trava", map[string]any{"passe_id": p.ID, "tentativas": rt.tentativas, "ok": true})
+		return nil
+	}
+	if morto {
+		rt.ativa = false
+		return nil
+	}
+	if rt.esperando && m.d.Relogio.Agora().Sub(rt.teclaEm) < replay.EsperaTrava {
+		return nil
+	}
+	if rt.tentativas >= replay.MaxTentativasTrava {
+		rt.ativa = false
+		m.ex.Emite("trava", map[string]any{"passe_id": p.ID, "tentativas": rt.tentativas, "ok": false,
+			"motivo": fmt.Sprintf("%s %s", replay.ErrTravaFalhou, a.nome)})
+		return nil
+	}
+	rt.tentativas++
+	pr.Tentativas++
+	err := m.s.ApertaDuplo(ctx, a.nome)
+	switch {
+	case err == nil:
+		rt.esperando, rt.teclaEm = true, m.d.Relogio.Agora()
+	case errors.Is(err, replay.ErrMorto):
+		rt.ativa = false
+	default:
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
+		return err
+	}
+	return nil
+}
+
+// segue é o laço de leitura: seek para perto de tr.inicio, trava a câmera e lê
+// até tr.fim, entregando as amostras e o estado dos 10 a tr.destino.
+func (m *motor) segue(ctx context.Context, tr trecho) (EstatPasse, error) {
+	var st EstatPasse
+	cfg := m.cfg
+	p, a, inicio, fimMs, pr := tr.p, tr.a, tr.inicio, tr.fim, tr.pr
+	st.TIniMs = inicio
 
 	// Na retomada o seek vai um pouco antes do ponto gravado: a trava (que cai
 	// em todo seek) leva ~1 s real, e assim ela já está pronta ao passar pelo
@@ -240,7 +329,6 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 		return st, err
 	}
 
-	pr := progresso{TAtualMs: inicio, Retravas: p.Retravas, Tentativas: p.TentativasTrava, SemTrava: p.AmostrasSemTrava}
 	var pendA []Amostra
 	var pendE []EstadoJogador
 	ultimaGravacao := time.Now()
@@ -248,7 +336,7 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 		if len(pendA) == 0 && len(pendE) == 0 {
 			return nil
 		}
-		err := gravaBrutas(m.db, p.ID, p.GameID, a.pid, pendA, pendE, pr)
+		err := tr.destino(pendA, pendE, *pr)
 		pendA, pendE = pendA[:0], pendE[:0]
 		ultimaGravacao = time.Now()
 		return err
@@ -260,6 +348,7 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 	}()
 
 	precisaTravar := true
+	var rt retrava
 	var perdidaDesde, renascidoEm int64 = -1, -1
 	ultimoEstado := int64(-1 << 40) // longe no passado, sem estourar na subtração
 	ultimaCaptura := int64(-1 << 40)
@@ -420,18 +509,26 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 				f := FonteDoTime(a.time)
 				am.X, am.Y = &f[0], &f[1]
 			default:
+				// Sem a câmera nele: a amostra sai sem posição e marcada (o
+				// buraco fica explícito no dado; finalizaPasse interpola os
+				// curtos e a repescagem refaz os longos).
 				am.Origem = OrigemInterpolada
 				am.TravaPerdida = true
 				pr.SemTrava++
-				if perdidaDesde < 0 {
-					perdidaDesde = tMs
-				}
-				if tMs-perdidaDesde > LimiteSemTravaMs {
-					precisaTravar = true
-					pr.Retravas++
-					perdidaDesde = -1
+				if !rt.ativa {
+					if perdidaDesde < 0 {
+						perdidaDesde = tMs
+					}
+					if tMs-perdidaDesde > LimiteSemTravaMs {
+						rt = retrava{ativa: true}
+						pr.Retravas++
+						perdidaDesde = -1
+					}
 				}
 			}
+		}
+		if err := m.passoRetrava(ctx, &rt, p, a, am.Origem == OrigemCamera, j.Morto, pr); err != nil {
+			return st, err
 		}
 		estavaMorto = j.Morto
 		pendA = append(pendA, am)
@@ -473,7 +570,7 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 		}
 		if time.Since(ultimoSSE) >= IntervaloEventoSSE {
 			ultimoSSE = time.Now()
-			ev := map[string]any{"passe_id": p.ID, "participante_id": a.pid, "t_ms": tMs, "origem": am.Origem,
+			ev := map[string]any{"passe_id": p.ID, "participante_id": a.pid, "t_ms": tMs, "origem": am.Origem, "repescagem": tr.repescagem,
 				"morto": am.Morto, "selecao": l.r.Selecao, "amostras": p.Amostras + st.Amostras, "retravas": pr.Retravas,
 				"ms_leitura": float64(l.dur.Microseconds()) / 1000}
 			if am.X != nil {

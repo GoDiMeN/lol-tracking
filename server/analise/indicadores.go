@@ -83,6 +83,12 @@ var Vocabulario = func() []DefIndicador {
 		{"dano_campeoes_10", "Dano a campeões até os 10 min", "dano", "riot", "todos", "maior", "damageStats da linha do tempo da Riot"},
 		{"dano_campeoes_15", "Dano a campeões até os 15 min", "dano", "riot", "todos", "maior", ""},
 		{"wards_ate14", "Sentinelas colocadas até os 14 min", "n", "riot", "todos", "maior", "WARD_PLACED da linha do tempo da Riot"},
+		{"sentinelas_rotas", "Sentinelas colocadas (até 14 min)", "n", "riot", "todos", "maior", "WARD_PLACED da Riot, qualquer tipo, na fase rotas (marco fixo de 14 min)"},
+		{"sentinelas_meio", "Sentinelas colocadas (14–25 min)", "n", "riot", "todos", "maior", ""},
+		{"sentinelas_final", "Sentinelas colocadas (depois dos 25)", "n", "riot", "todos", "maior", ""},
+		{"sentinelas_controle", "Sentinelas de controle colocadas", "n", "riot", "todos", "maior", "CONTROL_WARD"},
+		{"sentinelas_destruidas", "Sentinelas inimigas destruídas", "n", "riot", "todos", "maior", "WARD_KILL da Riot (killerId)"},
+		{"sentinelas_metade_inimiga", "Sentinelas na metade inimiga do mapa", "n", "riot", "rastreados", "", "posição ESTIMADA (onde ele estava ao colocar, raio ~700): sempre aproximado"},
 		{"tempo_morto_s", "Tempo morto", "s", "estado", "todos", "menor", "no trecho rastreado (estado dos 10)"},
 		{"tempo_vida_baixa_s", "Tempo com vida baixa", "s", "estado", "todos", "menor", "vivo com menos de 30% (quadro lateral), no trecho rastreado"},
 		{"habilidades_por_min", "Habilidades usadas por minuto", "por_min", "rastreio", "rastreados", "", "habilidade_usada da cadeia ÷ minutos vivo rastreados"},
@@ -90,6 +96,12 @@ var Vocabulario = func() []DefIndicador {
 		{"cs_divergencias", "Minutos com CS divergente", "n", "estado", "todos", "", "CS do jogo fora da dezena do CS da linha do tempo"},
 	}
 	nomesFase := map[string]string{"rotas": "até 14 min", "meio": "14–25 min", "final": "depois dos 25"}
+	for _, f := range Fases {
+		v = append(v, DefIndicador{"pct_visivel_inimigo_" + f, "% do tempo vivo à vista do inimigo (" + nomesFase[f] + ")", "%", "visao",
+			"rastreados", "", "do passe de visão do time inimigo (minimapa): tempo à vista ÷ (à vista + fora da visão); o indeterminado fica de fora"})
+	}
+	v = append(v, DefIndicador{"ganks_fora_da_visao_n", "Ganks começados fora da visão do inimigo", "n", "visao", "cacador", "maior",
+		"trechos gankando que começaram com ele fora da visão do time inimigo (passe de visão)"})
 	rotGrupo := map[string]string{"rota_propria": "na própria rota", "outra_rota": "em outra rota", "rio": "no rio", "covas": "nas covas",
 		"selva_propria": "na própria selva", "selva_inimiga": "na selva inimiga", "base_propria": "na base", "base_inimiga": "na base inimiga"}
 	for _, f := range Fases {
@@ -99,7 +111,8 @@ var Vocabulario = func() []DefIndicador {
 		}
 	}
 	rotAtv := map[string]string{AMorto: "morto", ANaBase: "na base", ALutando: "lutando", ATrocando: "trocando", AObjetivo: "em objetivo",
-		ATorre: "em torre", AFarmando: "farmando", AColetando: "coletando ouro (suporte)", AGankando: "gankando", ACounterGank: "counter gank", ARoaming: "em roaming", ARotacionando: "rotacionando para luta", AAndando: "andando", AParado: "parado"}
+		ATorre: "em torre", AFarmando: "farmando", AColetando: "coletando ouro (suporte)", AGankando: "gankando", ACounterGank: "counter gank", ARoaming: "em roaming", ARotacionando: "rotacionando para luta", AAndando: "andando", AParado: "parado",
+		ARecall: "em recall", ADive: "em dive (sob torre inimiga)", AInvadindo: "invadindo a selva inimiga", ASplitPush: "em split push", AAgrupado: "agrupado com o time"}
 	for _, f := range Fases {
 		for _, a := range Atividades {
 			v = append(v, DefIndicador{"pct_atv_" + a + "_" + f, "% do tempo " + rotAtv[a] + " (" + nomesFase[f] + ")", "%", "rastreio",
@@ -176,8 +189,10 @@ func (d *dadosPartida) indicadores(retratos []Retrato) []Indicador {
 		d.indicadoresLinha(c)
 		d.indicadoresRetrato(c, retratos)
 		d.indicadoresEstado(c)
+		d.indicadoresSentinelas(c)
 		if len(d.amostras[part.ParticipanteID]) > 0 {
 			d.indicadoresRastreio(c)
+			d.indicadoresVisao(c)
 		}
 		todos = append(todos, c.inds...)
 	}

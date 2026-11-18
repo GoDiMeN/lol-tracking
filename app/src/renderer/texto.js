@@ -114,6 +114,12 @@ export const ATIVIDADES = {
   rotacionando: 'rotacionando',
   parado: 'parado',
   andando: 'andando',
+  // As etiquetas novas (dados.md, ordem de prioridade): "recall" é a palavra do dono.
+  recall: 'recall',
+  dive: 'dive',
+  invadindo: 'invadindo',
+  split_push: 'split push',
+  agrupado: 'agrupado',
 };
 
 export function juntaNomes(nomes) {
@@ -134,6 +140,12 @@ export function atividadeTexto(trecho, nomes = {}) {
   if (trecho.atividade === 'roaming' && com.length) return `roaming em ${juntaNomes(com)}`;
   // "counter gank em Vi": `com` = o caçador inimigo que estava gankando.
   if (trecho.atividade === 'counter_gank' && com.length) return `counter gank em ${juntaNomes(com)}`;
+  // "dive em Garen": `com` = os inimigos debaixo da torre deles (a torre vai no título).
+  if (trecho.atividade === 'dive' && com.length) return `dive em ${juntaNomes(com)}`;
+  // "invadindo (lobos (lado azul))": limpando um acampamento da selva inimiga.
+  if (trecho.atividade === 'invadindo' && trecho.alvo) return `invadindo (${trecho.alvo})`;
+  if (trecho.atividade === 'split_push' && trecho.alvo) return `split push (${trecho.alvo})`;
+  if (trecho.atividade === 'agrupado' && com.length) return `agrupado com ${juntaNomes(com)}`;
   // "objetivo: dragão infernal", "torre do meio".
   if (trecho.atividade === 'objetivo' && trecho.alvo) return `objetivo: ${trecho.alvo}`;
   if (trecho.atividade === 'torre' && trecho.alvo) return trecho.alvo;
@@ -169,6 +181,7 @@ export const GRUPOS_CADEIA = [
   { id: 'habilidades', rotulo: 'habilidades', tipos: ['habilidade_usada', 'passiva_em_recarga'] },
   { id: 'vida', rotulo: 'vida baixa', tipos: ['vida_baixa', 'recuperou'] },
   { id: 'base', rotulo: 'base e recall', tipos: ['na_base', 'recall'] },
+  { id: 'visao', rotulo: 'sentinelas', tipos: ['sentinela_colocada', 'sentinela_destruida'] },
   { id: 'itens', rotulo: 'itens e nível', tipos: ['compra', 'venda', 'nivel'] },
   { id: 'zonas', rotulo: 'mudou de zona', tipos: ['mudou_zona'] },
   { id: 'atividade', rotulo: 'atividade', tipos: ['atividade'] },
@@ -233,6 +246,11 @@ export function itemCadeia(item, nomes = {}) {
       return `visitou a ${nomeZona(d.rota)} por ${segs(d.duracao_ms)} · ${desfecho(d.desfecho)}`;
     case 'na_base':
       return `na base por ${segs(d.duracao_ms)}`;
+    // Sentinelas (linha do tempo da Riot; o lugar é onde ele estava: estimado).
+    case 'sentinela_colocada':
+      return `colocou sentinela ${d.tipo_nome || d.tipo}${d.zona ? ` · ${nomeZona(d.zona)} (estimado)` : ''}${d.metade_inimiga ? ' · metade inimiga' : ''}`;
+    case 'sentinela_destruida':
+      return `destruiu sentinela ${d.tipo_nome || d.tipo}${d.zona ? ` · ${nomeZona(d.zona)}` : ''}`;
     case 'atividade':
       return `${atividadeTexto(d, nomes)} por ${segs(d.duracao_ms)}${d.zona ? ` · ${nomeZona(d.zona)}` : ''}`;
     // Ondas de tropas (estimadas pela posição dos jogadores da rota; servidor, ondas.go).
@@ -392,7 +410,7 @@ export function origemPosicao(origem) {
     case 'linha_do_tempo':
       return 'aproximada (posição por minuto)';
     case 'interpolada':
-      return 'entre duas leituras';
+      return 'estimada entre duas leituras';
   }
   return 'sem posição';
 }

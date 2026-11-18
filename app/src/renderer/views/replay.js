@@ -5,7 +5,8 @@
 //
 // Os dados vêm em janelas de 60 s (replay-dados.js) com pré-busca da seguinte; entre dois quadros
 // do servidor (0,5 s) a posição é interpolada, salvo salto (teleporte: recall, W da LeBlanc...).
-// Teclas: espaço play/pausa, ← → ±5 s, F tela cheia, Esc fecha o painel / sai.
+// Teclas: espaço play/pausa, ← → ±5 s, F (ou F11) tela cheia, Esc fecha o painel / sai da tela
+// cheia / sai.
 
 import { api, imagemItem } from '../api.js';
 import { duracao } from '../formato.js';
@@ -34,9 +35,13 @@ import {
   textoEmAndamento,
   ouroNoInstante,
 } from '../placar.js';
-import { bonusDoJogador, patchDaVersao, PATCH_DOS_BONUS } from '../bonus.js';
+import { bonusDoJogador, patchDaVersao, PATCH_DOS_BONUS, baraoNoMinuto } from '../bonus.js';
+import { ATRIBUTOS, decompoe, textoObjetivo, formataAtributo, idsDoInventario, ouroDosItens, adversarioDeRota } from '../atributos.js';
 import { el, botao, link, retrato, partidaComNomes, participantePrincipal, erroNaTela, preferencia, guardaPreferencia } from '../ui.js';
 import { ondasNoInstante, textoEstado, textoOnda, textoCurto } from '../ondas.js';
+import * as telaCheia from '../telacheia.js';
+import { noMapa, colocadasAte, tituloSentinela } from '../sentinelas.js';
+import { estadosNoInstante, sentinelasLidasEm, temSentinelasLidas, tituloSentinelaLida, tituloEstado, TEXTO_ESTADO } from '../visao.js';
 
 const VELOCIDADES = [1, 2, 4, 8];
 const SVG = 'http://www.w3.org/2000/svg';
@@ -53,11 +58,13 @@ export async function desenha(raiz, rota, ctx) {
   let fases;
   let linhaDoTempo;
   let ondas;
+  let sentinelas;
+  let visaoResp;
   try {
     // Fases e linha do tempo são do placar: faltando (partida sem a linha do tempo guardada),
     // o placar mostra "—" no que depende delas e o resto da tela segue. As ondas também: sem
     // elas, a caixa "ondas" fica desabilitada.
-    [info, { eventos }, zonas, { partidas: rastreadas }, fases, linhaDoTempo, ondas] = await Promise.all([
+    [info, { eventos }, zonas, { partidas: rastreadas }, fases, linhaDoTempo, ondas, sentinelas, visaoResp] = await Promise.all([
       partidaComNomes(gameId),
       api.eventos(gameId),
       api.zonas(),
@@ -65,6 +72,10 @@ export async function desenha(raiz, rota, ctx) {
       api.fases(gameId).then((r) => r.fases).catch(() => null),
       api.linhaDoTempo(gameId).catch(() => null),
       api.ondas(gameId).catch(() => null),
+      // Sentinelas: sem elas (sem a linha do tempo da Riot), a caixa fica desabilitada com o motivo.
+      api.sentinelas(gameId).catch(() => null),
+      // Visão dos times (passes de visão): sem ela, a caixa "visão" fica desabilitada.
+      api.visao(gameId).catch(() => null),
     ]);
   } catch (err) {
     raiz.replaceChildren(el('div', 'replay-erro', [erroNaTela(err), link('← Voltar', `#partida/${gameId}`, 'btn')]));
@@ -122,22 +133,53 @@ export async function desenha(raiz, rota, ctx) {
   ondasLab.title = ondas
     ? `Onde está a onda de tropas em cada rota, estimada pela posição dos jogadores rastreados da rota. ${(ondas.limites || []).join(' ')}`
     : 'Sem as ondas desta partida (falta a linha do tempo guardada?).';
-  const ajuda = el('span', 'sub rp-teclas', 'espaço play/pausa · ← → 5 s · F tela cheia · Esc sai');
-  // Tela cheia de verdade (a do sistema): a tecla F quase ninguém achava. No Electron a API
-  // de tela cheia do HTML põe a janela inteira em tela cheia.
-  const alternaTelaCheia = () => {
-    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-    else document.documentElement.requestFullscreen?.().catch(() => {});
-  };
-  const botaoCheia = botao('⛶ tela cheia', 'rp-cheia', alternaTelaCheia);
-  botaoCheia.title = 'Tela cheia (F)';
-  const aoMudarCheia = () => {
-    const ligada = Boolean(document.fullscreenElement);
+  // Sentinelas: cada uma viva no instante, no lugar ESTIMADO (onde quem colocou estava), com o
+  // círculo da incerteza. Se os passes de visão leram sentinelas do minimapa, elas substituem as
+  // estimadas (lugar exato, de quando apareceram a quando sumiram). Desligado por padrão.
+  const visaoDados = visaoResp?.visao || null;
+  const sentLidas = temSentinelasLidas(visaoDados);
+  const temSentinelas = Boolean(sentinelas?.riot) || sentLidas;
+  const cbSent = el('input');
+  cbSent.type = 'checkbox';
+  cbSent.checked = temSentinelas && preferencia('replay.sentinelas', '0') === '1';
+  cbSent.disabled = !temSentinelas;
+  const sentLab = el('label', 'check', [cbSent, el('span', '', 'sentinelas')]);
+  sentLab.title = sentLidas
+    ? 'Sentinelas lidas no minimapa pelos passes de visão: lugar exato, de quando o marcador apareceu a quando sumiu (só o marcador comum foi medido).'
+    : temSentinelas
+      ? `Sentinelas vivas no instante, na cor do time. ${(sentinelas.regras || []).join(' ')}`
+      : `Sem sentinelas: ${sentinelas?.motivo || 'não deu para ler as sentinelas desta partida.'}`;
+  // Visão: com a visão de um time ligada, os inimigos que aquele time NÃO via no instante ficam
+  // esmaecidos (o anel continua no lugar real) e os indeterminados ganham um "?".
+  const selVisao = el('select', 'rp-sel-visao');
+  selVisao.setAttribute('aria-label', 'Visão de um time');
+  for (const [v, rot] of [['', 'desligada'], ['100', 'do time azul'], ['200', 'do time vermelho']]) {
+    const o = el('option', '', rot);
+    o.value = v;
+    o.disabled = Boolean(v) && !visaoDados?.times?.some((x) => String(x.time) === v);
+    selVisao.append(o);
+  }
+  const temVisao = Boolean(visaoDados?.times?.length);
+  selVisao.disabled = !temVisao;
+  selVisao.value = temVisao ? preferencia('replay.visao', '') : '';
+  if (selVisao.selectedOptions[0]?.disabled) selVisao.value = '';
+  const visaoLab = el('label', 'check', [el('span', '', 'visão'), selVisao]);
+  visaoLab.title = temVisao
+    ? 'Quem do outro time o time escolhido via em cada instante (lido do minimapa nos passes de visão). Esmaecido = fora da visão (o anel marca o lugar real); "?" = não deu para decidir.'
+    : visaoResp?.disponivel
+      ? 'Sem a visão dos times: na tela da partida, use "rastrear a visão dos times".'
+      : `Sem a visão dos times${visaoResp?.motivo ? `: ${visaoResp.motivo}` : '.'}`;
+  let observador = Number(selVisao.value) || 0;
+  const ajuda = el('span', 'sub rp-teclas', 'espaço play/pausa · ← → 5 s · F tela cheia · Esc fecha o painel / sai');
+  // Tela cheia de verdade: o MESMO estado do app inteiro (telacheia.js: a da janela no Electron,
+  // a mesma do F11 e da barra de título; a da página no navegador). A tecla F quase ninguém achava.
+  const botaoCheia = botao('⛶ tela cheia', 'rp-cheia', () => telaCheia.alterna());
+  botaoCheia.title = 'Tela cheia (F ou F11)';
+  const desligaCheia = telaCheia.aoMudar((ligada) => {
     botaoCheia.textContent = ligada ? '⛶ sair da tela cheia' : '⛶ tela cheia';
     botaoCheia.setAttribute('aria-pressed', String(ligada));
-  };
-  document.addEventListener('fullscreenchange', aoMudarCheia);
-  const topo = el('header', 'rp-topo', [sair, titulo, zonasLab, torresLab, ondasLab, etiquetasLab, ajuda, botaoCheia]);
+  });
+  const topo = el('header', 'rp-topo', [sair, titulo, zonasLab, torresLab, ondasLab, sentLab, visaoLab, etiquetasLab, ajuda, botaoCheia]);
 
   const palco = el('div', 'rp-palco');
   const mapa = el('div', 'rp-mapa');
@@ -174,6 +216,8 @@ export async function desenha(raiz, rota, ctx) {
     camadaOndas.append(m);
     marcasOnda.set(r, m);
   }
+  const camadaSent = el('div', 'rp-sentinelas');
+  camadaSent.hidden = !cbSent.checked;
   const camadaJog = el('div', 'rp-jogadores');
   // Traços e anéis das chamadas: SVG nas mesmas coordenadas em pixels das figuras, por baixo delas.
   const svgCham = document.createElementNS(SVG, 'svg');
@@ -186,12 +230,12 @@ export async function desenha(raiz, rota, ctx) {
   const aviso = el('div', 'rp-aviso');
   aviso.hidden = true;
   // Os eventos ficam por cima das figuras: o ✕ do abate cai justo onde está a vítima.
-  mapa.append(img, canvas, camadaTorres, camadaOndas, camadaJog, camadaEv, aviso);
+  mapa.append(img, canvas, camadaTorres, camadaSent, camadaOndas, camadaJog, camadaEv, aviso);
   palco.append(mapa);
 
   const legenda = el('div', 'rp-legenda', [
     el('span', '', [el('i', 'k-exata'), 'rastreado']),
-    el('span', '', [el('i', 'k-aprox'), 'posição aproximada (por minuto)']),
+    el('span', '', [el('i', 'k-aprox'), 'posição aproximada (por minuto) ou estimada entre duas leituras']),
     el('span', '', [el('i', 'k-morto'), 'morto']),
   ]);
   if (!rastreados.length) legenda.append(el('span', 'sub', 'ninguém rastreado nesta partida: todos aproximados'));
@@ -243,9 +287,18 @@ export async function desenha(raiz, rota, ctx) {
     guardaPreferencia('replay.torres', cbTorres.checked ? '1' : '0');
     camadaTorres.hidden = !cbTorres.checked;
   });
+  cbSent.addEventListener('change', () => {
+    guardaPreferencia('replay.sentinelas', cbSent.checked ? '1' : '0');
+    camadaSent.hidden = !cbSent.checked;
+  });
   cbOndas.addEventListener('change', () => {
     guardaPreferencia('replay.ondas', cbOndas.checked ? '1' : '0');
     camadaOndas.hidden = !cbOndas.checked;
+  });
+  selVisao.addEventListener('change', () => {
+    guardaPreferencia('replay.visao', selVisao.value);
+    observador = Number(selVisao.value) || 0;
+    ultimoPainel = 0;
   });
 
   // Marcas na barra de tempo: abates (cor do time de quem matou) e objetivos.
@@ -287,6 +340,29 @@ export async function desenha(raiz, rota, ctx) {
   let arranjo = criaArranjo({ ret });
   let retDoArranjo = ret;
   let reiniciaDesvios = true;
+  // Painel do jogador: o que está aberto (decomposição de um atributo, detalhe de um item) fica
+  // aqui, fora do DOM, porque o painel é redesenhado enquanto o tempo anda.
+  let atrAberto = null;
+  let itemAberto = null;
+  let assinaturaPainel = '';
+  // Dados estáticos da versão da partida (base dos campeões, itens) e o bônus dos dragões medido
+  // no degrau: chegam depois, sem segurar a tela; até lá o painel mostra só os números lidos.
+  let estaticos = null;
+  let bonusMedido = null;
+  api
+    .estaticos(gameId)
+    .then((r) => {
+      estaticos = r;
+      assinaturaPainel = '';
+    })
+    .catch(() => {});
+  api
+    .bonusObjetivos(gameId)
+    .then((r) => {
+      bonusMedido = r;
+      assinaturaPainel = '';
+    })
+    .catch(() => {});
   let dtTela = 16; // ms de tela desde o quadro anterior (suavização do deslocamento)
   // Jogador destacado (mouse no retrato, no ponto ou na linha da lista).
   let destacado = null;
@@ -318,7 +394,10 @@ export async function desenha(raiz, rota, ctx) {
     // Ponto da atividade: canto de baixo à esquerda (o balão da habilidade fica em cima à direita).
     const ponto = el('i', 'f-ponto');
     ponto.hidden = true;
-    f.append(el('span', 'f-ret', [ret, hab, ponto]), nome, atv);
+    // "?" da caixa visão: não deu para decidir se o time escolhido via este jogador.
+    const duvida = el('span', 'f-duvida', '?');
+    duvida.hidden = true;
+    f.append(el('span', 'f-ret', [ret, hab, ponto, duvida]), nome, atv);
     f.addEventListener('click', (ev) => {
       ev.stopPropagation();
       escolhido = escolhido === pt.participante_id ? null : pt.participante_id;
@@ -339,7 +418,7 @@ export async function desenha(raiz, rota, ctx) {
     anel.style.display = 'none';
     camadaTracos.append(traco);
     camadaAneis.append(anel);
-    figuras.set(pt.participante_id, { f, atv, hab, ponto, anel, traco, pt });
+    figuras.set(pt.participante_id, { f, atv, hab, ponto, duvida, anel, traco, pt });
   }
 
   // destaca: o jogador sob o mouse (retrato, ponto ou linha da lista) fica marcado nos dois lugares.
@@ -468,6 +547,71 @@ export async function desenha(raiz, rota, ctx) {
     }
   }
 
+  // Sentinelas vivas: uma marca por sentinela (criada uma vez, mostrada/escondida conforme o tempo).
+  const marcasSent = new Map();
+  let assinaturaSent = '';
+  function desenhaSentinelas() {
+    if (camadaSent.hidden || !temSentinelas) return;
+    if (sentLidas) {
+      desenhaSentinelasLidas();
+      return;
+    }
+    const vivas = noMapa(sentinelas.sentinelas, t);
+    const ass = vivas.map((s) => s.t_ms + ':' + s.participante_id).join(',');
+    if (ass === assinaturaSent) return;
+    assinaturaSent = ass;
+    const ficam = new Set();
+    for (const s of vivas) {
+      const k = `${s.participante_id}:${s.t_ms}`;
+      ficam.add(k);
+      if (marcasSent.has(k)) continue;
+      const { left, top } = emPorcento(s.x, s.y);
+      const diam = ((2 * (s.raio || 0)) / 14990) * 100;
+      const cor = s.time === 200 ? 'vermelho' : 'azul';
+      const m = el('div', `sent ${cor}${s.tipo === 'CONTROL_WARD' ? ' controle' : ''}${s.comum ? '' : ' desconhecida'}`, [el('i', 'sent-raio'), el('i', 'sent-ponto')]);
+      m.style.left = `${left}%`;
+      m.style.top = `${top}%`;
+      m.style.width = `${diam}%`;
+      m.style.height = `${diam}%`;
+      m.lastChild.title = tituloSentinela(s, nomes);
+      camadaSent.append(m);
+      marcasSent.set(k, m);
+    }
+    for (const [k, m] of marcasSent) {
+      if (!ficam.has(k)) {
+        m.remove();
+        marcasSent.delete(k);
+      }
+    }
+  }
+
+  // Sentinelas lidas do minimapa (passes de visão): lugar exato, sem o círculo da incerteza.
+  function desenhaSentinelasLidas() {
+    const vivas = sentinelasLidasEm(visaoDados, t);
+    const ass = vivas.map((s) => `${s.time}:${s.de_ms}:${s.x}`).join(',');
+    if (ass === assinaturaSent) return;
+    assinaturaSent = ass;
+    const ficam = new Set();
+    for (const s of vivas) {
+      const k = `lida:${s.time}:${s.de_ms}:${s.x}:${s.y}`;
+      ficam.add(k);
+      if (marcasSent.has(k)) continue;
+      const { left, top } = emPorcento(s.x, s.y);
+      const m = el('div', `sent lida ${s.time === 200 ? 'vermelho' : 'azul'}`, [el('i', 'sent-ponto')]);
+      m.style.left = `${left}%`;
+      m.style.top = `${top}%`;
+      m.lastChild.title = tituloSentinelaLida(s);
+      camadaSent.append(m);
+      marcasSent.set(k, m);
+    }
+    for (const [k, m] of marcasSent) {
+      if (!ficam.has(k)) {
+        m.remove();
+        marcasSent.delete(k);
+      }
+    }
+  }
+
   // Balão da habilidade usada: a última de cada rastreado nos últimos HABILIDADE_MS.
   function desenhaHabilidades() {
     const ate = achaIndice(habilidades, t);
@@ -512,9 +656,19 @@ export async function desenha(raiz, rota, ctx) {
     const desenho = arranjo.passo(px, dtTela, { lado, reinicia: reiniciaDesvios, velocidade: tocando ? vel : 1 });
     reiniciaDesvios = false;
     const etiquetasLigadas = cbEtiquetas.checked;
+    // Visão do time escolhido no instante: participante → visivel | fora | indeterminado | ''.
+    const estVisao = observador ? estadosNoInstante(visaoDados, observador, t) : null;
     for (const j of q.jogadores) {
       const fg = figuras.get(j.participante_id);
       if (!fg) continue;
+      const ev = (!j.morto && estVisao?.get(j.participante_id)) || '';
+      fg.f.classList.toggle('fora-da-visao', ev === 'fora');
+      fg.f.classList.toggle('visao-incerta', ev === 'indeterminado');
+      fg.duvida.hidden = ev !== 'indeterminado';
+      if (fg.ev !== ev) {
+        fg.ev = ev;
+        fg.duvida.title = tituloEstado(ev, observador);
+      }
       if (j.x === null || j.x === undefined) {
         fg.f.hidden = true;
         fg.anel.style.display = 'none';
@@ -530,21 +684,28 @@ export async function desenha(raiz, rota, ctx) {
       fg.f.style.left = `${d.rx}px`;
       fg.f.style.top = `${d.ry}px`;
       fg.f.style.setProperty('--ret', `${Math.round(ret * d.escala * 10) / 10}px`);
-      // Anel e traço: a verdade. Aparecem junto com o deslocamento (transição contínua).
+      // Anel e traço: a verdade. Aparecem junto com o deslocamento (transição contínua). Fora da
+      // visão do time escolhido, o anel fica sempre (o retrato esmaece, o lugar real continua).
+      const foraVisao = ev === 'fora';
       const mostra = !j.morto && d.traco > 0.02;
-      fg.anel.style.display = mostra ? '' : 'none';
+      fg.anel.style.display = mostra || foraVisao ? '' : 'none';
       fg.traco.style.display = mostra ? '' : 'none';
-      if (mostra) {
+      fg.anel.classList.toggle('fora-da-visao', foraVisao);
+      if (mostra || foraVisao) {
         fg.anel.setAttribute('cx', d.ax.toFixed(1));
         fg.anel.setAttribute('cy', d.ay.toFixed(1));
-        fg.anel.style.opacity = String(d.traco);
+        fg.anel.style.opacity = String(foraVisao ? Math.max(0.9, d.traco) : d.traco);
+      }
+      if (mostra) {
         fg.traco.setAttribute('x1', d.ax.toFixed(1));
         fg.traco.setAttribute('y1', d.ay.toFixed(1));
         fg.traco.setAttribute('x2', d.rx.toFixed(1));
         fg.traco.setAttribute('y2', d.ry.toFixed(1));
         fg.traco.style.opacity = String(d.traco * 0.9);
       }
-      const aprox = !j.rastreado || j.origem === 'linha_do_tempo';
+      // Estimada entre duas leituras (buraco curto, servidor: rastreio/consulta.go): o mesmo
+      // estilo do aproximado; a legenda e o painel dizem de onde veio.
+      const aprox = !j.rastreado || j.origem === 'linha_do_tempo' || j.origem === 'interpolada';
       fg.f.classList.toggle('aprox', aprox);
       fg.f.classList.toggle('morto', Boolean(j.morto));
       fg.f.classList.toggle('escolhido', escolhido === j.participante_id);
@@ -581,6 +742,11 @@ export async function desenha(raiz, rota, ctx) {
     const agora = performance.now();
     if (!forca && agora - ultimoPainel < 250) return;
     ultimoPainel = agora;
+    // Nada mudou (pausado, mesmo quadro): não redesenha, para o mouse em cima de um item ou de
+    // um ícone não perder a dica a cada 250 ms.
+    const assinatura = [escolhido, Math.round(t), ultimoQuadro?.q?.t_ms, atrAberto, itemAberto, Boolean(estaticos), Boolean(bonusMedido), Boolean(ultimoQuadro?.dados), observador].join('|');
+    if (!forca && assinatura === assinaturaPainel) return;
+    assinaturaPainel = assinatura;
     painel.classList.toggle('lista', !escolhido);
     if (!escolhido) {
       desenhaLista();
@@ -668,37 +834,10 @@ export async function desenha(raiz, rota, ctx) {
 
     const at = j.atributos || {};
     if (rastreado && Object.values(at).some((v) => v !== null && v !== undefined)) {
-      blocos.push(
-        el('h3', '', 'Atributos'),
-        el('div', 'kv compacto', [
-          el('span', '', 'Dano de ataque'),
-          el('b', '', numero(at.ad)),
-          el('span', '', 'Poder de habilidade'),
-          el('b', '', numero(at.ap)),
-          el('span', '', 'Armadura'),
-          el('b', '', numero(at.armadura)),
-          el('span', '', 'Resist. mágica'),
-          el('b', '', numero(at.rm)),
-          el('span', '', 'Vel. de ataque'),
-          el('b', '', numero(at.vel_ataque, 2)),
-          el('span', '', 'Vel. de movimento'),
-          el('b', '', numero(at.vel_mov)),
-        ]),
-      );
+      blocos.push(el('h3', '', 'Atributos'), blocoAtributos(pt, j));
     }
 
-    const itens = (j.itens || []).filter((x) => x && x.id);
-    const caixaItens = el('div', 'rp-itens');
-    for (const it of itens) {
-      const im = el('img');
-      im.src = imagemItem(it.id);
-      im.alt = `item ${it.id}`;
-      im.title = `item ${it.id}${it.qtd > 1 ? ` × ${it.qtd}` : ''}`;
-      im.addEventListener('error', () => im.replaceWith(el('span', 'item-vazio', String(it.id))));
-      caixaItens.append(im);
-    }
-    if (!itens.length) caixaItens.append(el('span', 'sub', 'sem itens'));
-    blocos.push(el('h3', '', 'Itens'), caixaItens);
+    blocos.push(el('h3', '', 'Itens'), ...blocoItens(pt, j));
     blocos.push(...blocoObjetivos(pt, j));
 
     const tr = rastreado ? atividadeNoInstante(ultimoQuadro.dados.atividades, escolhido, t) : null;
@@ -712,10 +851,8 @@ export async function desenha(raiz, rota, ctx) {
     painel.replaceChildren(...blocos);
   }
 
-  // "Objetivos do time": cada bônus que o time do jogador tem agora, o que ele dá e quanto
-  // isso é para ESTE jogador, pelos atributos lidos da tela (que já incluem o bônus: a parte
-  // de um bônus de p% no valor atual é atual × p/(1+p)). Valores da tabela de bonus.js.
-  function blocoObjetivos(pt, j) {
+  // Objetivos do time do jogador no instante: placar (dragões) e o estado do Barão/Ancião.
+  function objetivosDoTime(pt) {
     const pl = placarNoInstante(prepPlacar, t)[pt.time];
     const ultimo = (tipo) => {
       let r = null;
@@ -724,12 +861,149 @@ export async function desenha(raiz, rota, ctx) {
     };
     const tBarao = ultimo('barao');
     const tAnciao = ultimo('anciao');
-    const blocos = bonusDoJogador({
-      j,
-      placarTime: pl,
+    return {
+      pl,
       tBarao,
       estadoBarao: tBarao === null ? null : bonusComPrazo(prepPlacar, pt.participante_id, tBarao, DURACAO_BARAO_MS, t),
       estadoAnciao: tAnciao === null ? null : bonusComPrazo(prepPlacar, pt.participante_id, tAnciao, DURACAO_ANCIAO_MS, t),
+    };
+  }
+
+  // Atributos: um por linha; os que têm bônus de objetivo do time ganham o ícone do dragão (a
+  // dica diz quanto do número vem dele). Clicar abre a decomposição: base do campeão no nível +
+  // itens + objetivos + "runas e efeitos temporários" (a sobra), ou "não explicado" se a conta
+  // passar do lido.
+  function blocoAtributos(pt, j) {
+    const at = j.atributos || {};
+    const obj = objetivosDoTime(pt);
+    // Só o Barão certo entra na conta ('incerto' = morreu perto do abate: pode não ter recebido).
+    const barao = obj.estadoBarao === 'ativo' ? baraoNoMinuto(obj.tBarao) : null;
+    const c = estaticos?.campeoes?.[pt.participante_id];
+    const ids = idsDoInventario(j.itens);
+    const caixa = el('div', 'rp-atr');
+    for (const a of ATRIBUTOS) {
+      const lido = at[a.chave];
+      const d =
+        c && lido !== null && lido !== undefined
+          ? decompoe({ atr: a.chave, lido, c, nivel: j.nivel || 1, ids, itens: estaticos.itens, dragoes: obj.pl.dragoes, resumo: bonusMedido?.resumo, barao })
+          : null;
+      const icones = el('span', 'rp-atr-icones');
+      const dica = textoObjetivo(a.nome, d);
+      for (const p of d?.partes.filter((x) => x.objetivo && (x.valor > 0 || x.ativo === false)) || []) {
+        const i = el('img', `rp-atr-icone${p.ativo === false ? ' inativo' : ''}`);
+        i.src = iconeObjetivo(p.sub === 'BARON' ? 'barao' : 'dragao', p.sub);
+        i.alt = p.rotulo;
+        i.draggable = false;
+        icones.append(i);
+      }
+      const linha = el('button', `rp-atr-linha${atrAberto === a.chave ? ' aberto' : ''}`, [el('span', 'rp-atr-nome', a.nome), icones, el('b', 'num', numero(lido, a.casas))]);
+      linha.type = 'button';
+      linha.title = dica ? `${dica}\n(clique para a conta inteira)` : d ? 'Clique para ver de onde vem o número' : estaticos ? '' : 'Sem os dados da versão da partida (sem rede na primeira vez?)';
+      linha.setAttribute('aria-expanded', String(atrAberto === a.chave));
+      linha.disabled = !d;
+      linha.addEventListener('click', () => {
+        atrAberto = atrAberto === a.chave ? null : a.chave;
+        desenhaPainel(true);
+      });
+      caixa.append(linha);
+      if (atrAberto === a.chave && d) caixa.append(decomposicao(d));
+    }
+    if (!estaticos) caixa.append(el('p', 'sub', 'Sem os dados da versão da partida: sem a decomposição.'));
+    return caixa;
+  }
+
+  function decomposicao(d) {
+    const f = (v) => formataAtributo(v, d.casas);
+    const linhas = el('div', 'rp-decomp');
+    for (const p of d.partes) {
+      const r = el('div', `rp-dc${p.objetivo ? ' obj' : ''}`, [el('span', '', p.rotulo), el('b', 'num', `${p.valor >= 0 ? '+' : ''}${f(p.valor)}`)]);
+      if (p.detalhe) r.append(el('small', 'sub', p.detalhe));
+      linhas.append(r);
+    }
+    if (!d.nao_explicado) {
+      const r = el('div', 'rp-dc sobra', [el('span', '', 'runas e efeitos temporários'), el('b', 'num', `+${f(d.sobra)}`)]);
+      r.append(el('small', 'sub', 'o que sobra: runas, fragmentos, acúmulos, elixires, passivas de item e de campeão que dão atributo conforme a situação'));
+      linhas.append(r);
+    } else {
+      const r = el('div', 'rp-dc nao-expl', [el('span', '', 'não explicado'), el('b', 'num', `−${f(d.nao_explicado)}`)]);
+      r.append(el('small', 'sub', 'a conta passa do número lido: redução vinda de inimigo, dado da versão diferente do jogo ou leitura errada'));
+      linhas.append(r);
+    }
+    linhas.append(el('div', 'rp-dc total', [el('span', '', '= lido da tela'), el('b', 'num', f(d.lido))]));
+    for (const av of d.avisos) linhas.append(el('small', 'sub', av));
+    linhas.append(el('small', 'sub', `Base e itens: dados do jogo da versão ${estaticos?.versao_dados || '?'} (Data Dragon e CommunityDragon).`));
+    return linhas;
+  }
+
+  // Itens: passar o mouse mostra nome, custo e atributos; clicar fixa o detalhe embaixo (com o
+  // texto dos efeitos). Embaixo dos ícones, o ouro nos itens e a diferença para o adversário de rota.
+  function blocoItens(pt, j) {
+    const itens = (j.itens || []).filter((x) => x && x.id);
+    const caixaItens = el('div', 'rp-itens');
+    const est = estaticos?.itens || {};
+    for (const it of itens) {
+      const dado = est[it.id];
+      const b = el('button', `rp-item${itemAberto === it.id ? ' aberto' : ''}`);
+      b.type = 'button';
+      const im = el('img');
+      im.src = imagemItem(it.id);
+      im.alt = dado?.nome || `item ${it.id}`;
+      im.addEventListener('error', () => im.replaceWith(el('span', 'item-vazio', String(it.id))));
+      b.append(im);
+      const qtd = it.qtd > 1 ? ` × ${it.qtd}` : '';
+      b.title = dado
+        ? `${dado.nome}${qtd} · ${numero(dado.custo, 0)} de ouro${dado.linhas?.length ? `\n${dado.linhas.join('\n')}` : ''}\n(clique para os efeitos)`
+        : `item ${it.id}${qtd}`;
+      b.setAttribute('aria-pressed', String(itemAberto === it.id));
+      b.addEventListener('click', () => {
+        itemAberto = itemAberto === it.id ? null : it.id;
+        desenhaPainel(true);
+      });
+      caixaItens.append(b);
+    }
+    if (!itens.length) caixaItens.append(el('span', 'sub', 'sem itens'));
+    const saida = [caixaItens];
+    if (estaticos) {
+      const ouro = ouroDosItens(idsDoInventario(j.itens), est);
+      const linha = el('p', 'rp-ouro-itens', [el('span', 'sub', 'Ouro nos itens '), el('b', 'num', numero(ouro, 0))]);
+      const adv = adversarioDeRota(p.participantes, pt.participante_id);
+      const dados = ultimoQuadro?.dados;
+      const q = dados ? dados.quadros[Math.max(0, achaIndice(dados.quadros, t))] : null;
+      const ja = adv && q?.jogadores.find((x) => x.participante_id === adv.participante_id);
+      if (ja) {
+        const dif = ouro - ouroDosItens(idsDoInventario(ja.itens), est);
+        linha.append(
+          el('span', 'sub', ` · contra ${adv.campeao} `),
+          el('b', `num ${dif > 0 ? 'tx-ok' : dif < 0 ? 'tx-cr' : ''}`, `${dif > 0 ? '+' : dif < 0 ? '−' : '±'}${numero(Math.abs(dif), 0)}`),
+        );
+        linha.title = `Custo somado dos itens no inventário agora, contra o adversário direto de rota (${adv.campeao}, mesma posição).`;
+      }
+      saida.push(linha);
+    }
+    if (itemAberto && !itens.some((x) => x.id === itemAberto)) itemAberto = null;
+    const aberto = itemAberto ? est[itemAberto] : null;
+    if (aberto) {
+      const det = el('div', 'rp-item-det', [el('div', 'rp-item-det-cab', [el('b', '', aberto.nome), el('span', 'num sub', `${numero(aberto.custo, 0)} de ouro`)])]);
+      if (aberto.linhas?.length) det.append(el('ul', 'rp-item-linhas', aberto.linhas.map((l) => el('li', '', l))));
+      det.append(aberto.descricao ? el('p', 'rp-item-desc', aberto.descricao) : el('p', 'sub', 'Sem efeito além dos atributos.'));
+      det.append(el('small', 'sub', 'Texto do jogo (Data Dragon): os números que dependem de nível ou de atributo não vêm no texto.'));
+      saida.push(det);
+    }
+    return saida;
+  }
+
+  // "Objetivos do time": cada bônus que o time do jogador tem agora, o que ele dá e quanto
+  // isso é para ESTE jogador, pelos atributos lidos da tela (que já incluem o bônus: a parte
+  // de um bônus de p% no valor atual é atual × p/(1+p)). Valores da tabela de bonus.js.
+  function blocoObjetivos(pt, j) {
+    const obj = objetivosDoTime(pt);
+    const blocos = bonusDoJogador({
+      j,
+      placarTime: obj.pl,
+      tBarao: obj.tBarao,
+      estadoBarao: obj.estadoBarao,
+      estadoAnciao: obj.estadoAnciao,
+      medidos: bonusMedido?.resumo,
     });
     const fonte =
       patchJogo === PATCH_DOS_BONUS
@@ -761,6 +1035,8 @@ export async function desenha(raiz, rota, ctx) {
       return;
     }
     const q = dados.quadros[Math.max(0, achaIndice(dados.quadros, t))];
+    const estVisao = observador ? estadosNoInstante(visaoDados, observador, t) : null;
+    if (observador) blocos.push(el('p', 'sub', `visão do time ${observador === 200 ? 'vermelho' : 'azul'}: quem do outro time ele via agora`));
     for (const time of [100, 200]) {
       blocos.push(el('h3', time === 200 ? 'tm-v' : 'tm-a', time === 200 ? 'Time vermelho' : 'Time azul'));
       for (const pt of p.participantes.filter((x) => x.time === time)) {
@@ -772,10 +1048,14 @@ export async function desenha(raiz, rota, ctx) {
         const cheio = el('b');
         cheio.style.width = `${fr === null ? 0 : Math.round(Math.min(1, Math.max(0, fr)) * 100)}%`;
         vida.append(cheio);
-        const linha = el('button', `rp-linha${j?.morto ? ' morto' : ''}`, [
+        // Caixa visão: "à vista" / "fora da visão" / "visão incerta" para os inimigos do time escolhido.
+        const ev = (!j?.morto && estVisao?.get(pt.participante_id)) || '';
+        const tagVisao = ev ? el('span', `rp-visao ${ev}`, TEXTO_ESTADO[ev]) : null;
+        if (tagVisao) tagVisao.title = tituloEstado(ev, observador);
+        const linha = el('button', `rp-linha${j?.morto ? ' morto' : ''}${ev === 'fora' ? ' fora-da-visao' : ''}`, [
           retrato(pt, 30),
           el('div', 'rp-l-meio', [
-            el('div', 'rp-l-nome', [el('b', '', pt.campeao), el('span', 'sub', pt.nome)]),
+            el('div', 'rp-l-nome', [el('b', '', pt.campeao), el('span', 'sub', pt.nome), ...(tagVisao ? [tagVisao] : [])]),
             el('span', `f-atv ${j?.morto ? 'morto' : tr?.atividade || ''}`, texto),
             vida,
           ]),
@@ -930,6 +1210,13 @@ export async function desenha(raiz, rota, ctx) {
     const ou = (x, f) => (x === null || x === undefined ? '—' : f(x));
     blocos.push(linha('CS', ou(a.cs, numero), ou(v.cs, numero), { titulo: 'Tropas e monstros abatidos pelo time (soma do quadro de estados).' }));
     blocos.push(linha('nível médio', ou(a.nivel_medio, (n) => numero(n)), ou(v.nivel_medio, (n) => numero(n))));
+    // Sentinelas colocadas por time até agora (linha do tempo da Riot).
+    if (temSentinelas) {
+      const sc = colocadasAte(sentinelas.sentinelas, t);
+      blocos.push(linha('sentinelas', String(sc[100]), String(sc[200]), { titulo: 'Sentinelas colocadas pelo time até agora (WARD_PLACED da linha do tempo da Riot, qualquer tipo).' }));
+    } else {
+      blocos.push(linha('sentinelas', '—', '—', { titulo: `Sem sentinelas: ${sentinelas?.motivo || 'não deu para ler'}` }));
+    }
     // Gráficos (montados uma vez; aqui só anda a marca do play).
     blocos.push(graficos.el);
     graficos.atualiza(t);
@@ -1014,6 +1301,7 @@ export async function desenha(raiz, rota, ctx) {
     desenhaEventos();
     desenhaTorres();
     desenhaOndas();
+    desenhaSentinelas();
     desenhaHabilidades();
     desenhaPainel();
     desenhaPlacar();
@@ -1057,13 +1345,16 @@ export async function desenha(raiz, rota, ctx) {
       vaiPara(t + (ev.key === 'ArrowLeft' ? -5000 : 5000));
     } else if (ev.key === 'f' || ev.key === 'F') {
       ev.preventDefault();
-      alternaTelaCheia();
+      telaCheia.alterna();
     } else if (ev.key === 'Escape') {
-      if (document.fullscreenElement) return; // o próprio navegador sai da tela cheia
+      // Painel aberto: o Esc fecha o painel. Sem painel e em tela cheia: o Esc fica para o app sair
+      // da tela cheia (app.js). Fora da tela cheia: sai do mapa com play. Quem usa marca o evento.
       if (escolhido) {
+        ev.preventDefault();
         escolhido = null;
         desenhaPainel(true);
-      } else {
+      } else if (!telaCheia.estaLigada()) {
+        ev.preventDefault();
         location.hash = sair.getAttribute('href');
       }
     }
@@ -1080,7 +1371,7 @@ export async function desenha(raiz, rota, ctx) {
     vivo = false;
     obs.disconnect();
     document.removeEventListener('keydown', tecla);
-    document.removeEventListener('fullscreenchange', aoMudarCheia);
-    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    // A tela cheia continua ao sair do mapa: é a do app inteiro, não só desta tela.
+    desligaCheia();
   };
 }

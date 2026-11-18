@@ -17,6 +17,8 @@ import (
 func Registra(mux *http.ServeMux, f *Fila) {
 	c := &controller{f: f}
 	mux.HandleFunc("POST /api/partidas/{id}/rastreio", c.cria)
+	mux.HandleFunc("GET /api/partidas/{id}/rastreio/repescagem", c.planoRepescagem)
+	mux.HandleFunc("POST /api/partidas/{id}/rastreio/repescagem", c.repesca)
 	mux.HandleFunc("GET /api/rastreios", c.lista)
 	mux.HandleFunc("GET /api/rastreios/{id}", c.le)
 	mux.HandleFunc("POST /api/rastreios/{id}/pausar", c.pausa)
@@ -29,6 +31,56 @@ func Registra(mux *http.ServeMux, f *Fila) {
 	mux.HandleFunc("GET /api/partidas/{id}/momento", c.momento)
 	mux.HandleFunc("GET /api/partidas/{id}/eventos", c.eventos)
 	mux.HandleFunc("GET /api/partidas/{id}/cadeia", c.cadeia)
+	mux.HandleFunc("GET /api/partidas/{id}/visao", c.visao)
+	mux.HandleFunc("POST /api/partidas/{id}/visao/rastreio", c.rastreiaVisao)
+}
+
+// GET /api/partidas/{id}/visao — os passes de visão de time da partida, o
+// resultado (visao.json) e se dá para rastrear agora.
+func (c *controller) visao(w http.ResponseWriter, r *http.Request) {
+	id, err := idDe(r)
+	var e EstadoVisaoPartida
+	if err == nil {
+		e, err = c.f.EstadoDaVisao(id)
+	}
+	if err != nil {
+		c.erro(w, err, "ler a visão dos times")
+		return
+	}
+	web.WriteJSON(w, http.StatusOK, e)
+}
+
+// POST /api/partidas/{id}/visao/rastreio {"velocidade": 8?}
+func (c *controller) rastreiaVisao(w http.ResponseWriter, r *http.Request) {
+	id, err := idDe(r)
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	var corpo struct {
+		Velocidade float64 `json:"velocidade"`
+		DeMs       int64   `json:"de_ms"`
+		AteMs      int64   `json:"ate_ms"`
+	}
+	if err := web.LeJSON(w, r, &corpo); err != nil {
+		web.WriteErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	exID, pvs, err := c.f.RastreiaVisao(r.Context(), id, PedidoVisao{Velocidade: corpo.Velocidade, TInicioMs: corpo.DeMs, TFimMs: corpo.AteMs})
+	if err != nil {
+		c.erro(w, err, "começar o rastreio da visão dos times")
+		return
+	}
+	est := 0.0
+	if e, err := c.f.EstadoDaVisao(id); err == nil {
+		est = e.EstimativaS
+		if len(pvs) > 0 && pvs[0].Velocidade > 0 && pvs[0].Velocidade != e.VelocidadePadrao {
+			if pt, err := partida.Le(c.f.d.DB, id); err == nil {
+				est = EstimativaVisaoS(float64(pt.DuracaoS), pvs[0].Velocidade)
+			}
+		}
+	}
+	web.WriteJSON(w, http.StatusAccepted, map[string]any{"execucao": map[string]string{"id": exID}, "passes": pvs, "estimativa_s": est})
 }
 
 type controller struct{ f *Fila }
@@ -41,8 +93,14 @@ func (c *controller) erro(w http.ResponseWriter, err error, acao string) {
 	case errors.As(err, &inv):
 		web.WriteErr(w, http.StatusBadRequest, inv.Msg)
 	case errors.As(err, &ocu):
-		web.WriteJSON(w, http.StatusConflict, map[string]any{"erro": ocu.Error(), "rastreio_id": ocu.RastreioID,
-			"execucao": map[string]string{"id": ocu.Execucao}})
+		corpo := map[string]any{"erro": ocu.Error(), "rastreio_id": ocu.RastreioID, "execucao": map[string]string{"id": ocu.Execucao}}
+		if ocu.RepescagemDe != 0 {
+			corpo["repescagem_de"] = ocu.RepescagemDe
+		}
+		if ocu.VisaoDe != 0 {
+			corpo["visao_de"] = ocu.VisaoDe
+		}
+		web.WriteJSON(w, http.StatusConflict, corpo)
 	case errors.As(err, &est):
 		web.WriteErr(w, http.StatusConflict, est.Msg)
 	case errors.Is(err, partida.ErrNaoEncontrada):
@@ -114,6 +172,8 @@ func (c *controller) cria(w http.ResponseWriter, r *http.Request) {
 		// termina (0 = fim da partida). Para rastrear só o começo (fase de rotas).
 		DeMs  int64 `json:"de_ms"`
 		AteMs int64 `json:"ate_ms"`
+		// Visao: os dois passes de visão de time no fim.
+		Visao bool `json:"visao"`
 	}
 	if err := web.LeJSON(w, r, &corpo); err != nil {
 		web.WriteErr(w, http.StatusBadRequest, err.Error())
@@ -124,13 +184,58 @@ func (c *controller) cria(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ras, exID, err := c.f.Cria(r.Context(), id, Pedido{Jogadores: corpo.Jogadores, Velocidade: corpo.Velocidade,
-		TInicioMs: corpo.DeMs, TFimMs: corpo.AteMs})
+		TInicioMs: corpo.DeMs, TFimMs: corpo.AteMs, Visao: corpo.Visao})
 	if err != nil {
 		c.erro(w, err, "criar o rastreio")
 		return
 	}
 	ras.Execucao = &IDExec{ID: exID}
 	web.WriteJSON(w, http.StatusAccepted, map[string]any{"rastreio": ras, "execucao": map[string]string{"id": exID}})
+}
+
+// GET /api/partidas/{id}/rastreio/repescagem — os buracos que a repescagem
+// tentaria agora e a execução de repescagem desta partida (se houve).
+func (c *controller) planoRepescagem(w http.ResponseWriter, r *http.Request) {
+	id, err := idDe(r)
+	var planos []PlanoRepescagem
+	if err == nil {
+		planos, err = PlanoDeRepescagem(c.f.d.DB, id, nil)
+	}
+	if err != nil {
+		c.erro(w, err, "ler os trechos sem amostra")
+		return
+	}
+	var exec any
+	exID, ok, rodando := c.f.ExecucaoDaRepescagem(id)
+	if ok {
+		exec = map[string]any{"id": exID}
+	}
+	web.WriteJSON(w, http.StatusOK, map[string]any{"game_id": id, "limiar_ms": LimiarRepescagemMs, "passes": planos,
+		"total": TotalDeBuracos(planos), "execucao": exec, "rodando": rodando})
+}
+
+// POST /api/partidas/{id}/rastreio/repescagem {"participantes": [ids]?, "velocidade": 4?}
+func (c *controller) repesca(w http.ResponseWriter, r *http.Request) {
+	id, err := idDe(r)
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	var corpo struct {
+		Participantes []int   `json:"participantes"`
+		Velocidade    float64 `json:"velocidade"`
+	}
+	if err := web.LeJSON(w, r, &corpo); err != nil {
+		web.WriteErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	exID, planos, err := c.f.Repesca(r.Context(), id, PedidoRepescagem{Participantes: corpo.Participantes, Velocidade: corpo.Velocidade})
+	if err != nil {
+		c.erro(w, err, "começar a repescagem")
+		return
+	}
+	web.WriteJSON(w, http.StatusAccepted, map[string]any{"execucao": map[string]string{"id": exID}, "passes": planos,
+		"total": TotalDeBuracos(planos)})
 }
 
 // GET /api/rastreios?limite=50

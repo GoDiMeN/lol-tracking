@@ -12,6 +12,13 @@
 //   - morto_se_mexendo: o desenho do morto andou;
 //   - desvio_acima: o retrato longe do anel acima do limite;
 //   - etiqueta_piscando: a etiqueta trocou e voltou ao texto anterior em menos de 1 s de jogo.
+// E os do pedido de 2026-11-17 (noite: "fica toda hora girando"; 7:28, Senna e Draven):
+//   - retrato_sobre_anel: um retrato em cima de um anel VISÍVEL (o de outro jogador deslocado, ou o
+//     dele mesmo quando deslocado) por mais de COBRE_MS de tela seguidos;
+//   - troca_de_direcao: a direção do deslocamento de um jogador virou mais de 60° menos de
+//     TROCA_DIRECAO_MS de tela depois da virada anterior (o retrato "girando");
+//   - volta_e_sai: o retrato voltou para cima do lugar real e saiu de novo em menos de
+//     VOLTA_E_SAI_MS de tela (o pisca-pisca).
 // Aviso (contado à parte, não é pulo): etiquetas_cobrindo, duas etiquetas uma em cima da outra.
 
 import { quadroNoInstante, atividadeEstavel, inicioDaJanela, criaRotulador, JANELA_MS } from './replay-dados.js';
@@ -20,6 +27,19 @@ import { criaArranjo, PARAMS } from './chamadas.js';
 import { atividadeCurta, atividadeTexto, ATIVIDADES } from './texto.js';
 
 export const VELOCIDADES_VALIDADAS = [1, 2, 4, 8];
+// Limites (ms de TELA) dos três do pedido de 2026-11-17.
+export const COBRE_MS = 400; // atravessar um anel deslizando (~0,3 s) não é "ficar em cima"
+export const COBRE_PROPRIO_MS = 400; // sair de cima do próprio anel leva ~150 ms: só o que fica
+export const TROCA_DIRECAO_MS = 3000;
+export const VOLTA_E_SAI_MS = 3000;
+const difAng = (a, b) => {
+  let d = a - b;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return d;
+};
+// cobre: o quadrado do retrato (centro r, lado s) cobre o ponto do anel?
+const cobre = (rx, ry, s, ax, ay) => Math.abs(ax - rx) < s / 2 + 3 && Math.abs(ay - ry) < s / 2 + 3;
 const QUADRO_TELA_MS = 1000 / 60;
 
 // etiquetaDoJogador: a etiqueta que a tela põe embaixo do retrato, antes de segurar o detalhe
@@ -93,6 +113,9 @@ function validaUmaVelocidade({ janelas, duracaoMs, times, nomes, de, ate, ret, l
   const ant = new Map(); // id → {ax, ay, rx, ry, ox, oy, morto, dox, doy}
   const rotulos = new Map(); // id → {texto, desde, anterior}
   const inversoes = new Map(); // id → [t de tela das inversões]
+  const cobrindo = new Map(); // "i|j" → desde (tela)
+  const direcao = new Map(); // id → {ang, em}
+  const voltou = new Map(); // id → {fora: bool, em}
   const passoMax = (PARAMS.vmax * ret * QUADRO_TELA_MS) / 1000;
   let quadros = 0;
   let tela = 0;
@@ -161,6 +184,39 @@ function validaUmaVelocidade({ janelas, duracaoMs, times, nomes, de, ate, ret, l
       }
       cur.texto = texto;
     }
+    // Retrato em cima de anel visível; direção do deslocamento; volta e sai.
+    const vivosAgora = [...agora.entries()].filter(([, c]) => !c.morto);
+    const cobrindoAgora = new Set();
+    for (const [i, ci] of vivosAgora) {
+      const s = ret * (ci.esc || 1);
+      const off = Math.hypot(ci.ox, ci.oy);
+      for (const [j, cj] of vivosAgora) {
+        const offj = Math.hypot(cj.ox, cj.oy);
+        if (offj < ret * 0.1) continue; // anel de quem está em cima do lugar real não aparece
+        if (i === j && off < ret * 0.1) continue;
+        if (!cobre(ci.rx, ci.ry, s, cj.ax, cj.ay)) continue;
+        const k = `${i}|${j}`;
+        cobrindoAgora.add(k);
+        const desde = cobrindo.get(k) ?? tela;
+        cobrindo.set(k, desde);
+        if (tela - desde >= (i === j ? COBRE_PROPRIO_MS : COBRE_MS)) anota(glitches, 'retrato_sobre_anel', t, i === j ? [i] : [i, j], (tela - desde) / 1000);
+      }
+      if (off > ret * 0.5) {
+        const ang = Math.atan2(ci.oy, ci.ox);
+        const d = direcao.get(i);
+        if (!d) direcao.set(i, { ang, em: null });
+        else if (Math.abs(difAng(ang, d.ang)) > Math.PI / 3) {
+          if (d.em !== null && tela - d.em < TROCA_DIRECAO_MS) anota(glitches, 'troca_de_direcao', t, [i], (tela - d.em) / 1000);
+          direcao.set(i, { ang, em: tela });
+        }
+      } else if (off < ret * 0.05) direcao.delete(i);
+      const v = voltou.get(i);
+      if (off > ret * 0.3) {
+        if (v && !v.fora && tela - v.em < VOLTA_E_SAI_MS) anota(glitches, 'volta_e_sai', t, [i], (tela - v.em) / 1000);
+        if (!v || !v.fora) voltou.set(i, { fora: true, em: tela });
+      } else if (off < ret * 0.05 && v?.fora) voltou.set(i, { fora: false, em: tela });
+    }
+    for (const k of [...cobrindo.keys()]) if (!cobrindoAgora.has(k)) cobrindo.delete(k);
     // Troca de lado: dois retratos vivos perto um do outro com o vetor entre eles invertido.
     const ids = [...agora.keys()].filter((id) => !agora.get(id).morto && ant.has(id) && !ant.get(id).morto);
     for (let i = 0; i < ids.length; i++) {

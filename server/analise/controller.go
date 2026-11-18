@@ -28,6 +28,7 @@ func Registra(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("GET /api/partidas/{id}/cs", c.cs)
 	mux.HandleFunc("GET /api/partidas/{id}/fases", c.fases)
 	mux.HandleFunc("GET /api/partidas/{id}/ondas", c.ondas)
+	mux.HandleFunc("GET /api/partidas/{id}/sentinelas", c.sentinelas)
 }
 
 // GET /api/partidas/{id}/fases
@@ -301,4 +302,20 @@ func (c *controller) ondas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.WriteJSON(w, http.StatusOK, o)
+}
+
+// GET /api/partidas/{id}/sentinelas — as sentinelas colocadas e destruídas
+// (linha do tempo da Riot), com a posição estimada; calculado na hora.
+func (c *controller) sentinelas(w http.ResponseWriter, r *http.Request) {
+	id, err := idPartida(r)
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	s, err := LeSentinelas(c.d.DB, id)
+	if err != nil {
+		c.erro(w, err, "ler as sentinelas")
+		return
+	}
+	web.WriteJSON(w, http.StatusOK, s)
 }

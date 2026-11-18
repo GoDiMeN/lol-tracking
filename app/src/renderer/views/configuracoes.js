@@ -108,6 +108,35 @@ function preferencias() {
     });
     tema.append(el('label', 'opcao', [r, el('span', '', rot)]));
   }
-  corpo.append(vel, tema);
+  // Janela: guardada pelo processo principal (precisa saber antes de criar a janela), não no
+  // localStorage. Só existe dentro do app; no navegador a tela cheia é a do navegador (F11).
+  const janela = el('fieldset', 'opcoes');
+  janela.append(el('legend', '', 'Janela'));
+  const cb = el('input');
+  cb.type = 'checkbox';
+  cb.checked = true;
+  const ponte = window.janelaApp;
+  cb.disabled = !ponte?.preferencias;
+  janela.append(el('label', 'opcao', [cb, el('span', '', 'abrir em tela cheia (padrão: sim)')]));
+  if (ponte?.preferencias) {
+    ponte
+      .preferencias()
+      .then((p) => {
+        cb.checked = p.tela_cheia !== false;
+      })
+      .catch(() => {});
+    cb.addEventListener('change', async () => {
+      try {
+        await ponte.guardaPreferencias({ tela_cheia: cb.checked });
+        toast(cb.checked ? 'O app vai abrir em tela cheia.' : 'O app vai abrir em janela.', 'ok');
+      } catch (err) {
+        toast(`Não guardei: ${err.message}`, 'erro');
+      }
+    });
+    janela.append(el('p', 'sub', 'Vale na próxima vez que o app abrir. Para sair ou voltar agora: o botão ⛶ na barra de cima, F11 ou Esc.'));
+  } else {
+    janela.append(el('p', 'sub', 'Só dentro do app Lane (aqui no navegador, use o F11 do navegador).'));
+  }
+  corpo.append(vel, tema, janela);
   return cartao('Preferências deste computador', 'guardadas ao mudar', corpo);
 }
