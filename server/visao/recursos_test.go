@@ -31,6 +31,9 @@ func TestPainelDeRecursosDiferentes(t *testing.T) {
 		{"passiva_vex_pronta", f(0), f(1068), f(1120), 7},
 		// Garen não tem barra de recurso: mana nula, o resto lido normalmente.
 		{"passiva_garen_5", f(5), nil, nil, 3},
+		// Garen sem a caixa da barra de recurso desenhada (acontece quando ele é
+		// selecionado depois de outro jogador): o painel tem de ser achado igual.
+		{"recurso_sem_caixa", f(2), nil, nil, 6},
 		{"recurso_furia_cheia", f(0), f(100), f(100), 8},
 		{"recurso_energia_nivel9", f(0), f(47), f(300), 9},
 	}

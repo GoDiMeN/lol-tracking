@@ -57,9 +57,14 @@ var (
 	rVida = ret{x0: 102, y0: 1137, x1: 235, y1: 1158}
 	// Texto do recurso sobre a barra azul (glifos nas linhas 1170–1183).
 	rMana = ret{x0: 102, y0: 1166, x1: 235, y1: 1188}
-	// Linhas escuras que separam as barras: com elas o painel está na tela.
+	// Linhas escuras fixas do painel: com elas o painel está na tela. A primeira
+	// é a borda de baixo da barra de vida; a segunda, a borda de cima da barra
+	// de experiência (y 1193). A segunda NÃO pode ser a borda da barra de
+	// recurso (y 1189, como era): em campeão sem recurso (Garen) o jogo às
+	// vezes nem desenha a caixa dessa barra, e o painel era dado como ausente
+	// (partida 3304217746: 176 leituras em 1537 amostras vivas do Garen).
 	rSeparador1 = ret{x0: 106, y0: 1160, x1: 230, y1: 1161}
-	rSeparador2 = ret{x0: 106, y0: 1189, x1: 230, y1: 1190}
+	rSeparador2 = ret{x0: 106, y0: 1193, x1: 230, y1: 1194}
 	// Nível no canto do retrato.
 	rNivel = ret{x0: 64, y0: 1190, x1: 98, y1: 1213}
 	// Atributos: duas colunas de três (o ícone fica fora da região).
