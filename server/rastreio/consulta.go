@@ -1,7 +1,6 @@
 package rastreio
 
 import (
-	"encoding/json"
 	"errors"
 	"math"
 	"sort"
@@ -306,7 +305,7 @@ type RespostaCadeia struct {
 // ListaCadeia devolve a cadeia do participante (tipos vazio = todos).
 func ListaCadeia(db *banco.DB, gameID int64, pid int, tipos map[string]bool) (RespostaCadeia, error) {
 	rc := RespostaCadeia{ParticipanteID: pid, Itens: []ItemCadeia{}}
-	ps, err := lePasses(db, `WHERE p.game_id = ? AND p.participante_id = ? AND EXISTS (SELECT 1 FROM cadeia c WHERE c.passe_id = p.id)
+	ps, err := lePasses(db, `WHERE p.game_id = ? AND p.participante_id = ? AND EXISTS (SELECT 1 FROM passes_compactos c WHERE c.passe_id = p.id)
 		ORDER BY (p.estado = 'concluido') DESC, p.id DESC LIMIT 1`, gameID, pid)
 	if err != nil {
 		return rc, err
@@ -315,24 +314,17 @@ func ListaCadeia(db *banco.DB, gameID int64, pid int, tipos map[string]bool) (Re
 		return rc, ErrSemAmostras
 	}
 	rc.PasseID = ps[0].ID
-	linhas, err := db.Query(`SELECT t_ms, tipo, dados FROM cadeia WHERE passe_id = ? ORDER BY t_ms, id`, rc.PasseID)
+	itens, _, err := leCadeia(db, rc.PasseID, gameID)
 	if err != nil {
 		return rc, err
 	}
-	defer linhas.Close()
-	for linhas.Next() {
-		var it ItemCadeia
-		var dados string
-		if err := linhas.Scan(&it.TMs, &it.Tipo, &dados); err != nil {
-			return rc, err
-		}
+	for _, it := range itens {
 		if len(tipos) > 0 && !tipos[it.Tipo] {
 			continue
 		}
-		json.Unmarshal([]byte(dados), &it.Dados)
 		rc.Itens = append(rc.Itens, it)
 	}
-	return rc, linhas.Err()
+	return rc, nil
 }
 
 // PartidaRastreada é uma linha da lista de partidas rastreadas.

@@ -22,6 +22,9 @@ import (
 // que é o banco do app, sem esconder Query/Exec.
 type DB struct {
 	*sql.DB
+	// Pasta é onde está o arquivo do banco: os arquivos pesados das partidas
+	// (pacote arquivo) ficam ao lado dele.
+	Pasta string
 }
 
 // Abre cria a pasta do arquivo e abre o SQLite. Os pragmas vão no DSN porque
@@ -50,7 +53,7 @@ func Abre(caminho string) (*DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("abrir o sqlite em %s: %w", caminho, err)
 	}
-	return &DB{sqlDB}, nil
+	return &DB{DB: sqlDB, Pasta: filepath.Dir(caminho)}, nil
 }
 
 // AbreMemoria é o banco dos testes: um arquivo na pasta temporária do teste,

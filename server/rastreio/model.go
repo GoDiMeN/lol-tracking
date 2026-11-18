@@ -112,21 +112,9 @@ func Migra(db *banco.DB) error {
 			t_ini_ms   INTEGER NOT NULL,
 			t_fim_ms   INTEGER NOT NULL,
 			bytes      INTEGER NOT NULL,
-			blob       BLOB NOT NULL,
 			gravado_em TEXT NOT NULL,
 			PRIMARY KEY (passe_id, conteudo)
 		)`,
-		`CREATE TABLE IF NOT EXISTS cadeia (
-			id              INTEGER PRIMARY KEY AUTOINCREMENT,
-			passe_id        INTEGER NOT NULL,
-			game_id         INTEGER NOT NULL,
-			participante_id INTEGER NOT NULL,
-			t_ms            INTEGER NOT NULL,
-			tipo            TEXT NOT NULL,
-			dados           TEXT NOT NULL DEFAULT '{}'
-		)`,
-		`CREATE INDEX IF NOT EXISTS cadeia_passe ON cadeia (passe_id, t_ms)`,
-		`CREATE INDEX IF NOT EXISTS cadeia_partida ON cadeia (game_id, participante_id, t_ms)`,
 		`CREATE TABLE IF NOT EXISTS eventos (
 			id               INTEGER PRIMARY KEY AUTOINCREMENT,
 			game_id          INTEGER NOT NULL,
@@ -158,6 +146,10 @@ func Migra(db *banco.DB) error {
 		if err := banco.AdicionaColuna(db, "passes", c[0], c[1]); err != nil {
 			return err
 		}
+	}
+	// Banco de antes dos arquivos: converte uma vez e remove as estruturas antigas.
+	if err := converteFormatoAntigo(db); err != nil {
+		return fmt.Errorf("converter o banco para o formato de arquivos: %w", err)
 	}
 	// Recarga da passiva (Vex e afins): coluna nova na tabela de trabalho.
 	if err := banco.AdicionaColuna(db, "amostras_brutas", "cd_p", "REAL"); err != nil {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"loltracking/server/arquivo"
 	"loltracking/server/banco"
 )
 
@@ -15,13 +16,15 @@ const (
 
 // ResultadoFinal é o resumo de um passe fechado.
 type ResultadoFinal struct {
-	Amostras   int
-	Estados    int
-	Bytes      int
-	BytesTime  int
-	Cadeia     int
-	Calibracao Calibracao
-	Taxa       float64
+	Amostras  int
+	Estados   int
+	Bytes     int
+	BytesTime int
+	// BytesCadeia: bytes em disco do arquivo da cadeia.
+	BytesCadeia int
+	Cadeia      int
+	Calibracao  Calibracao
+	Taxa        float64
 }
 
 // recalculaPosicoes aplica a calibração às amostras de câmera e preenche as
@@ -107,7 +110,6 @@ func finalizaPasse(db *banco.DB, p Passe, lt LinhaDoTempo, time int, base Calibr
 	if err != nil {
 		return r, fmt.Errorf("compactar o estado dos 10: %w", err)
 	}
-	r.Bytes, r.BytesTime = len(blobA), len(blobE)
 	// A cadeia sai do bloco já decodificado (posição arredondada, como ficou
 	// gravado): assim RegeraCadeia depois dá exatamente a mesma cadeia.
 	ba, err := Decodifica(blobA)
@@ -130,24 +132,37 @@ func finalizaPasse(db *banco.DB, p Passe, lt LinhaDoTempo, time int, base Calibr
 			semTrava++
 		}
 	}
+	// Os arquivos vão antes da transação: se ela falhar, sobra um arquivo que a
+	// próxima finalização regrava; o contrário (linha no banco sem arquivo)
+	// deixaria o passe ilegível.
+	if r.Bytes, err = arquivo.Grava(db, p.GameID, nomeBloco(p.ID, ConteudoAmostras), blobA); err != nil {
+		return r, fmt.Errorf("gravar as amostras: %w", err)
+	}
+	if r.BytesTime, err = arquivo.Grava(db, p.GameID, nomeBloco(p.ID, ConteudoTime), blobE); err != nil {
+		return r, fmt.Errorf("gravar o estado dos 10: %w", err)
+	}
+	if r.BytesCadeia, err = gravaCadeia(db, p.ID, p.GameID, itens); err != nil {
+		return r, err
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return r, err
 	}
 	defer tx.Rollback()
 	agora := banco.Agora()
-	grava := func(conteudo string, blob []byte, n int, ini, fim int64) error {
-		_, err := tx.Exec(`INSERT INTO passes_compactos (passe_id, conteudo, versao, n, t_ini_ms, t_fim_ms, bytes, blob, gravado_em)
-			VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (passe_id, conteudo) DO UPDATE SET versao = excluded.versao, n = excluded.n,
-			t_ini_ms = excluded.t_ini_ms, t_fim_ms = excluded.t_fim_ms, bytes = excluded.bytes, blob = excluded.blob,
-			gravado_em = excluded.gravado_em`, p.ID, conteudo, VersaoFormato, n, ini, fim, len(blob), blob, agora)
+	// No banco fica só a referência, com os bytes que estão no disco.
+	grava := func(conteudo string, bytesNoDisco int, n int, ini, fim int64) error {
+		_, err := tx.Exec(`INSERT INTO passes_compactos (passe_id, conteudo, versao, n, t_ini_ms, t_fim_ms, bytes, gravado_em)
+			VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (passe_id, conteudo) DO UPDATE SET versao = excluded.versao, n = excluded.n,
+			t_ini_ms = excluded.t_ini_ms, t_fim_ms = excluded.t_fim_ms, bytes = excluded.bytes,
+			gravado_em = excluded.gravado_em`, p.ID, conteudo, VersaoFormato, n, ini, fim, bytesNoDisco, agora)
 		return err
 	}
 	ini, fim := int64(0), int64(0)
 	if len(as) > 0 {
 		ini, fim = as[0].TMs, as[len(as)-1].TMs
 	}
-	if err := grava(ConteudoAmostras, blobA, len(as), ini, fim); err != nil {
+	if err := grava(ConteudoAmostras, r.Bytes, len(as), ini, fim); err != nil {
 		return r, err
 	}
 	iniE, fimE := int64(math.MaxInt64), int64(0)
@@ -157,12 +172,10 @@ func finalizaPasse(db *banco.DB, p Passe, lt LinhaDoTempo, time int, base Calibr
 	if len(es) == 0 {
 		iniE = 0
 	}
-	if err := grava(ConteudoTime, blobE, len(es), iniE, fimE); err != nil {
+	if err := grava(ConteudoTime, r.BytesTime, len(es), iniE, fimE); err != nil {
 		return r, err
 	}
-	if err := gravaCadeiaTx(tx, p.ID, p.GameID, p.ParticipanteID, itens); err != nil {
-		return r, err
-	}
+
 	if _, err := tx.Exec(`DELETE FROM amostras_brutas WHERE passe_id = ?`, p.ID); err != nil {
 		return r, err
 	}

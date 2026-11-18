@@ -1,7 +1,6 @@
 package rastreio
 
 import (
-	"database/sql"
 	"fmt"
 	"math"
 	"sort"
@@ -397,40 +396,6 @@ func geraTrava(c *ContextoCadeia) []ItemCadeia {
 	return itens
 }
 
-func gravaCadeiaTx(tx *sql.Tx, passeID, gameID int64, pid int, itens []ItemCadeia) error {
-	if _, err := tx.Exec(`DELETE FROM cadeia WHERE passe_id = ?`, passeID); err != nil {
-		return err
-	}
-	st, err := tx.Prepare(`INSERT INTO cadeia (passe_id, game_id, participante_id, t_ms, tipo, dados) VALUES (?,?,?,?,?,?)`)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	for _, it := range itens {
-		if it.Dados == nil {
-			it.Dados = map[string]any{}
-		}
-		if _, err := st.Exec(passeID, gameID, pid, it.TMs, it.Tipo, jsonTexto(it.Dados)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// leCompacto lê e decodifica um conteúdo compactado do passe.
-func leCompacto(db *banco.DB, passeID int64, conteudo string) (Bloco, bool, error) {
-	var blob []byte
-	err := db.QueryRow(`SELECT blob FROM passes_compactos WHERE passe_id = ? AND conteudo = ?`, passeID, conteudo).Scan(&blob)
-	if err == sql.ErrNoRows {
-		return Bloco{}, false, nil
-	}
-	if err != nil {
-		return Bloco{}, false, err
-	}
-	b, err := Decodifica(blob)
-	return b, err == nil, err
-}
-
 // contextoDoPasse monta o contexto de geração a partir do banco (blob).
 func contextoDoPasse(db *banco.DB, p Passe) (*ContextoCadeia, error) {
 	ba, ok, err := leCompacto(db, p.ID, ConteudoAmostras)
@@ -468,13 +433,8 @@ func RegeraCadeia(db *banco.DB, passeID int64) (int, error) {
 		return 0, err
 	}
 	itens := GeraCadeia(c)
-	tx, err := db.Begin()
-	if err != nil {
+	if _, err := gravaCadeia(db, p.ID, p.GameID, itens); err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
-	if err := gravaCadeiaTx(tx, p.ID, p.GameID, p.ParticipanteID, itens); err != nil {
-		return 0, err
-	}
-	return len(itens), tx.Commit()
+	return len(itens), nil
 }

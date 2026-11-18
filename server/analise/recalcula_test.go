@@ -6,9 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
+	"loltracking/server/arquivo"
 	"loltracking/server/banco"
 	"loltracking/server/campeao"
 	"loltracking/server/lcu"
@@ -124,10 +126,27 @@ func (a *ambiente) pede(t *testing.T, metodo, caminho string) (int, map[string]a
 func fotografia(t *testing.T, db *banco.DB) string {
 	t.Helper()
 	var b strings.Builder
+	// Retratos e cadeias estão em arquivo: entra o conteúdo de cada um.
+	nomes, _ := arquivo.Tamanhos(db, partidaTeste)
+	var ordenados []string
+	for nome := range nomes {
+		if nome == arquivoRetratos || strings.HasSuffix(nome, "-cadeia.tsv") {
+			ordenados = append(ordenados, nome)
+		}
+	}
+	sort.Strings(ordenados)
+	if len(ordenados) < 2 {
+		t.Fatalf("esperava o arquivo dos retratos e ao menos uma cadeia: %v", ordenados)
+	}
+	for _, nome := range ordenados {
+		texto, _, err := arquivo.Le(db, partidaTeste, nome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.WriteString(nome + "\n" + string(texto))
+	}
 	for _, q := range []string{
-		`SELECT n || dados FROM retratos_abate ORDER BY n`,
 		`SELECT participante_id || indicador || COALESCE(valor, 'nulo') || aproximado || detalhe FROM indicadores ORDER BY participante_id, indicador`,
-		`SELECT passe_id || t_ms || tipo || dados FROM cadeia ORDER BY passe_id, t_ms, tipo, dados`,
 	} {
 		linhas, err := db.Query(q)
 		if err != nil {
@@ -278,6 +297,12 @@ func TestRotasDaAnalise(t *testing.T) {
 		t.Fatal(c, m)
 	}
 	if c, _ := a.pede(t, "POST", "/api/partidas/1/analise"); c != 404 {
+		t.Fatal(c)
+	}
+	if c, m := a.pede(t, "GET", "/api/partidas/"+id+"/ondas"); c != 200 || len(m["rotas"].([]any)) != 3 || m["limites"] == nil {
+		t.Fatal(c, m)
+	}
+	if c, _ := a.pede(t, "GET", "/api/partidas/1/ondas"); c != 404 {
 		t.Fatal(c)
 	}
 }

@@ -1,6 +1,7 @@
 package analise
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"loltracking/server/arquivo"
 	"loltracking/server/banco"
 	"loltracking/server/partida"
 	"loltracking/server/rastreio"
@@ -21,22 +23,13 @@ import (
 // e refaz as linhas da partida), menos a linha do tempo da Riot, que é cópia
 // do que a Riot devolveu (não muda depois da partida). Ver dados.md.
 func Migra(db *banco.DB) error {
+	if err := converteFormatoAntigo(db); err != nil {
+		return fmt.Errorf("converter a análise para o formato de arquivos: %w", err)
+	}
+	if err := migraQualidade(db); err != nil {
+		return err
+	}
 	return banco.Executa(db,
-		`CREATE TABLE IF NOT EXISTS linhas_do_tempo_riot (
-			game_id    INTEGER PRIMARY KEY,
-			bruto      TEXT NOT NULL,
-			gravada_em TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS retratos_abate (
-			game_id      INTEGER NOT NULL,
-			n            INTEGER NOT NULL,
-			t_ms         INTEGER NOT NULL,
-			vitima       INTEGER NOT NULL,
-			matador      INTEGER NOT NULL,
-			dados        TEXT NOT NULL,
-			calculado_em TEXT NOT NULL,
-			PRIMARY KEY (game_id, n)
-		)`,
 		`CREATE TABLE IF NOT EXISTS indicadores (
 			game_id         INTEGER NOT NULL,
 			participante_id INTEGER NOT NULL,
@@ -137,6 +130,17 @@ func Recalcula(ctx context.Context, d Deps, gameID int64) (Resumo, error) {
 	}
 	r.Passes = len(passes)
 
+	// 1b. A checagem de qualidade do dado de cada passe (qualidade.go): só aponta, não muda nada.
+	if pt, err := partida.Le(db, gameID); err == nil {
+		timeDe := map[int]int{}
+		for _, x := range pt.Participantes {
+			timeDe[x.ParticipanteID] = x.Time
+		}
+		if err := confereQualidadeDaPartida(db, gameID, passes, timeDe); err != nil {
+			r.Avisos = append(r.Avisos, "a checagem de qualidade do dado não rodou: "+err.Error())
+		}
+	}
+
 	// 2. O que a partida tem de cada um.
 	dp, err := carrega(db, gameID)
 	if err != nil {
@@ -160,16 +164,11 @@ func Recalcula(ctx context.Context, d Deps, gameID int64) (Resumo, error) {
 	defer tx.Rollback()
 	agora := banco.Agora()
 	r.CalculadaEm = agora
-	for _, q := range []string{`DELETE FROM retratos_abate WHERE game_id = ?`, `DELETE FROM indicadores WHERE game_id = ?`} {
-		if _, err := tx.Exec(q, gameID); err != nil {
-			return r, err
-		}
+	if err := gravaRetratos(db, gameID, retratos); err != nil {
+		return r, err
 	}
-	for _, rt := range retratos {
-		if _, err := tx.Exec(`INSERT INTO retratos_abate (game_id, n, t_ms, vitima, matador, dados, calculado_em) VALUES (?,?,?,?,?,?,?)`,
-			gameID, rt.N, rt.TMs, rt.Vitima, rt.Matador, jsonTexto(rt), agora); err != nil {
-			return r, err
-		}
+	if _, err := tx.Exec(`DELETE FROM indicadores WHERE game_id = ?`, gameID); err != nil {
+		return r, err
 	}
 	for _, in := range inds {
 		if _, err := tx.Exec(`INSERT INTO indicadores (game_id, participante_id, indicador, valor, aproximado, detalhe, calculado_em)
@@ -225,24 +224,115 @@ func LeResumo(db *banco.DB, gameID int64) (Resumo, bool, error) {
 
 // --- linha do tempo da Riot ---------------------------------------------------
 
+// Os retratos dos abates e a linha do tempo da Riot são pesados e ficam em
+// arquivo (pacote arquivo), não no banco:
+//
+//	retratos.jsonl   um retrato por linha (JSON), na ordem dos abates
+//	linha-riot.json  o JSON cru da match-v5 timeline
+const (
+	arquivoRetratos  = "retratos.jsonl"
+	arquivoLinhaRiot = "linha-riot.json"
+)
+
+func gravaRetratos(db *banco.DB, gameID int64, retratos []Retrato) error {
+	var b bytes.Buffer
+	for _, rt := range retratos {
+		b.WriteString(jsonTexto(rt))
+		b.WriteByte('\n')
+	}
+	if _, err := arquivo.Grava(db, gameID, arquivoRetratos, b.Bytes()); err != nil {
+		return fmt.Errorf("gravar os retratos: %w", err)
+	}
+	return nil
+}
+
 // GravaLinhaRiot guarda o JSON cru da match-v5 timeline.
 func GravaLinhaRiot(db *banco.DB, gameID int64, bruto []byte) error {
-	_, err := db.Exec(`INSERT INTO linhas_do_tempo_riot (game_id, bruto, gravada_em) VALUES (?,?,?)
-		ON CONFLICT (game_id) DO UPDATE SET bruto = excluded.bruto, gravada_em = excluded.gravada_em`, gameID, string(bruto), banco.Agora())
+	_, err := arquivo.Grava(db, gameID, arquivoLinhaRiot, bruto)
 	return err
 }
 
 // LeLinhaRiot devolve a linha do tempo da Riot guardada.
 func LeLinhaRiot(db *banco.DB, gameID int64) ([]byte, bool, error) {
-	var s string
-	err := db.QueryRow(`SELECT bruto FROM linhas_do_tempo_riot WHERE game_id = ?`, gameID).Scan(&s)
-	if err == sql.ErrNoRows {
-		return nil, false, nil
+	return arquivo.Le(db, gameID, arquivoLinhaRiot)
+}
+
+// converteFormatoAntigo roda uma vez num banco de antes dos arquivos: leva os
+// retratos e a linha do tempo da Riot para arquivo e REMOVE as duas tabelas.
+func converteFormatoAntigo(db *banco.DB) error {
+	existe := func(tabela string) (bool, error) {
+		var tem bool
+		err := db.QueryRow(`SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?`, tabela).Scan(&tem)
+		return tem, err
 	}
-	if err != nil {
-		return nil, false, err
+	if tem, err := existe("retratos_abate"); err != nil {
+		return err
+	} else if tem {
+		porPartida := map[int64]*bytes.Buffer{}
+		linhas, err := db.Query(`SELECT game_id, dados FROM retratos_abate ORDER BY game_id, n`)
+		if err != nil {
+			return err
+		}
+		for linhas.Next() {
+			var g int64
+			var dados string
+			if err := linhas.Scan(&g, &dados); err != nil {
+				linhas.Close()
+				return err
+			}
+			if porPartida[g] == nil {
+				porPartida[g] = &bytes.Buffer{}
+			}
+			porPartida[g].WriteString(dados)
+			porPartida[g].WriteByte('\n')
+		}
+		linhas.Close()
+		if err := linhas.Err(); err != nil {
+			return err
+		}
+		for g, b := range porPartida {
+			if _, err := arquivo.Grava(db, g, arquivoRetratos, b.Bytes()); err != nil {
+				return err
+			}
+		}
+		if _, err := db.Exec(`DROP TABLE retratos_abate`); err != nil {
+			return err
+		}
 	}
-	return []byte(s), true, nil
+	if tem, err := existe("linhas_do_tempo_riot"); err != nil {
+		return err
+	} else if tem {
+		var ids []int64
+		linhas, err := db.Query(`SELECT game_id FROM linhas_do_tempo_riot`)
+		if err != nil {
+			return err
+		}
+		for linhas.Next() {
+			var g int64
+			if err := linhas.Scan(&g); err != nil {
+				linhas.Close()
+				return err
+			}
+			ids = append(ids, g)
+		}
+		linhas.Close()
+		for _, g := range ids {
+			var bruto string
+			if err := db.QueryRow(`SELECT bruto FROM linhas_do_tempo_riot WHERE game_id = ?`, g).Scan(&bruto); err != nil {
+				return err
+			}
+			if _, err := arquivo.Grava(db, g, arquivoLinhaRiot, []byte(bruto)); err != nil {
+				return err
+			}
+		}
+		if _, err := db.Exec(`DROP TABLE linhas_do_tempo_riot`); err != nil {
+			return err
+		}
+		if _, err := db.Exec(`VACUUM`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // eventosRiot lê os eventos da linha do tempo da Riot no formato do rastreio
@@ -278,6 +368,28 @@ func init() {
 func jsonTexto(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// LeFases devolve as fases da partida (FasesDaPartida) pela linha do tempo do
+// LCU guardada. Não depende de rastreio nem de a análise ter rodado.
+func LeFases(db *banco.DB, gameID int64) ([]TrechoFase, int64, error) {
+	pt, err := partida.Le(db, gameID)
+	if err != nil {
+		return nil, 0, err
+	}
+	bruto, err := partida.LeLinhaDoTempo(db, gameID)
+	if errors.Is(err, partida.ErrNaoEncontrada) {
+		return nil, 0, ErrSemLinhaDoTempo
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	lt, err := rastreio.LeLinhaDoTempo(bruto)
+	if err != nil {
+		return nil, 0, err
+	}
+	duracao := int64(pt.DuracaoS) * 1000
+	return FasesDaPartida(lt.Eventos, duracao), duracao, nil
 }
 
 // carrega lê tudo o que a análise usa de uma partida (sem refazer a cadeia).

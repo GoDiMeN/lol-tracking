@@ -279,7 +279,23 @@ func doBloco[T any](b Bloco, defs []defCol[T]) []T {
 }
 
 // BlocoDeAmostras / AmostrasDoBloco: o conteúdo "amostras".
-func BlocoDeAmostras(as []Amostra) Bloco { return paraBloco(as, colunasAmostra) }
+// foraDoCompacto: colunas que só servem enquanto o passe roda. cam_* e tela_*
+// são a entrada da fórmula da posição, que já sai aplicada (e recalibrada) em
+// x e y ao fechar o passe; dt_ms é a janela da leitura. Juntas eram 54% do
+// bloco das amostras (medido no passe da Vi, partida 3304217746).
+var foraDoCompacto = map[string]bool{"cam_x": true, "cam_z": true, "tela_x": true, "tela_y": true, "dt_ms": true}
+
+var colunasAmostraCompacta = func() []defCol[Amostra] {
+	var cs []defCol[Amostra]
+	for _, c := range colunasAmostra {
+		if !foraDoCompacto[c.nome] {
+			cs = append(cs, c)
+		}
+	}
+	return cs
+}()
+
+func BlocoDeAmostras(as []Amostra) Bloco { return paraBloco(as, colunasAmostraCompacta) }
 func AmostrasDoBloco(b Bloco) []Amostra  { return doBloco(b, colunasAmostra) }
 func BlocoDeEstados(es []EstadoJogador) Bloco {
 	// Ordenado por jogador e tempo: as colunas de cada jogador ficam contínuas

@@ -132,6 +132,12 @@ func TestAmostrasIdaEVolta(t *testing.T) {
 	}
 	volta := AmostrasDoBloco(b)
 	for i := range as {
+		// Câmera, posição na tela e janela da leitura só existem enquanto o passe
+		// roda: não vão para o bloco e voltam vazias.
+		if volta[i].CamX != nil || volta[i].TelaX != nil || volta[i].DtMs != 0 {
+			t.Fatalf("amostra %d: coluna de trabalho foi para o bloco: %+v", i, volta[i])
+		}
+		as[i].CamX, as[i].CamZ, as[i].TelaX, as[i].TelaY, as[i].DtMs = nil, nil, nil, nil, 0
 		if !reflect.DeepEqual(as[i], volta[i]) {
 			t.Fatalf("amostra %d:\n%+v\n%+v", i, as[i], volta[i])
 		}

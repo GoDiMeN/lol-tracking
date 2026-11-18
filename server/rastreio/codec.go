@@ -38,6 +38,9 @@ const (
 	codCorrida = 1
 	codDelta2  = 2
 
+	// compressorNenhum: o corpo vai cru, porque quem comprime é o arquivo (zstd).
+	compressorNenhum = 0
+	// compressorFlate: só para LER blob antigo na conversão única da subida.
 	compressorFlate = 1
 )
 
@@ -86,8 +89,19 @@ func (e *escritor) texto(s string) {
 	e.WriteString(s)
 }
 
-// Codifica monta o blob.
+// Codifica monta o bloco: "LTC" + 0 + corpo, sem compressão, porque quem
+// comprime é o arquivo (pacote arquivo, zstd).
 func Codifica(b Bloco) ([]byte, error) {
+	c, err := corpoDoBloco(b)
+	if err != nil {
+		return nil, err
+	}
+	saida := make([]byte, 0, 4+len(c))
+	saida = append(saida, 'L', 'T', 'C', compressorNenhum)
+	return append(saida, c...), nil
+}
+
+func corpoDoBloco(b Bloco) ([]byte, error) {
 	var c escritor
 	c.uvarint(VersaoFormato)
 	c.uvarint(uint64(b.N))
@@ -97,17 +111,7 @@ func Codifica(b Bloco) ([]byte, error) {
 			return nil, err
 		}
 	}
-	var saida bytes.Buffer
-	saida.WriteString("LTC")
-	saida.WriteByte(compressorFlate)
-	z, _ := flate.NewWriter(&saida, flate.BestCompression)
-	if _, err := z.Write(c.Bytes()); err != nil {
-		return nil, err
-	}
-	if err := z.Close(); err != nil {
-		return nil, err
-	}
-	return saida.Bytes(), nil
+	return c.Bytes(), nil
 }
 
 func codificaColuna(c *escritor, col Coluna, n int) error {
@@ -250,12 +254,20 @@ func (l leitor) texto() (string, error) {
 
 // Decodifica lê o blob.
 func Decodifica(blob []byte) (Bloco, error) {
-	if len(blob) < 4 || string(blob[:3]) != "LTC" || blob[3] != compressorFlate {
+	if len(blob) < 4 || string(blob[:3]) != "LTC" {
 		return Bloco{}, ErrBlobInvalido
 	}
-	corpo, err := io.ReadAll(flate.NewReader(bytes.NewReader(blob[4:])))
-	if err != nil {
-		return Bloco{}, fmt.Errorf("%w: %v", ErrBlobInvalido, err)
+	var corpo []byte
+	switch blob[3] {
+	case compressorNenhum:
+		corpo = blob[4:]
+	case compressorFlate:
+		var err error
+		if corpo, err = io.ReadAll(flate.NewReader(bytes.NewReader(blob[4:]))); err != nil {
+			return Bloco{}, fmt.Errorf("%w: %v", ErrBlobInvalido, err)
+		}
+	default:
+		return Bloco{}, ErrBlobInvalido
 	}
 	l := leitor{bytes.NewReader(corpo)}
 	versao, err := l.uvarint()

@@ -3,6 +3,7 @@ module loltracking/server
 go 1.25.5
 
 require (
+	github.com/klauspost/compress v1.18.0
 	golang.org/x/sys v0.44.0
 	modernc.org/sqlite v1.53.0
 )

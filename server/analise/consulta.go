@@ -1,11 +1,13 @@
 package analise
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"sort"
 
+	"loltracking/server/arquivo"
 	"loltracking/server/banco"
 	"loltracking/server/rastreio"
 )
@@ -15,38 +17,36 @@ var ErrNaoAnalisada = errors.New("a partida ainda não foi analisada")
 
 // ListaRetratos devolve os retratos dos abates da última análise.
 func ListaRetratos(db *banco.DB, gameID int64) ([]Retrato, error) {
-	linhas, err := db.Query(`SELECT dados FROM retratos_abate WHERE game_id = ? ORDER BY n`, gameID)
-	if err != nil {
-		return nil, err
-	}
-	defer linhas.Close()
 	l := []Retrato{}
-	for linhas.Next() {
-		var s string
-		if err := linhas.Scan(&s); err != nil {
-			return nil, err
+	texto, ok, err := arquivo.Le(db, gameID, arquivoRetratos)
+	if err != nil || !ok {
+		return l, err
+	}
+	for _, linha := range bytes.Split(texto, []byte{'\n'}) {
+		if len(linha) == 0 {
+			continue
 		}
 		var r Retrato
-		if err := json.Unmarshal([]byte(s), &r); err != nil {
+		if err := json.Unmarshal(linha, &r); err != nil {
 			return nil, err
 		}
 		l = append(l, r)
 	}
-	return l, linhas.Err()
+	return l, nil
 }
 
 // LeRetrato devolve o retrato do abate n.
 func LeRetrato(db *banco.DB, gameID int64, n int) (Retrato, error) {
-	var s string
-	err := db.QueryRow(`SELECT dados FROM retratos_abate WHERE game_id = ? AND n = ?`, gameID, n).Scan(&s)
-	if err == sql.ErrNoRows {
-		return Retrato{}, ErrNaoAnalisada
-	}
+	l, err := ListaRetratos(db, gameID)
 	if err != nil {
 		return Retrato{}, err
 	}
-	var r Retrato
-	return r, json.Unmarshal([]byte(s), &r)
+	for _, r := range l {
+		if r.N == n {
+			return r, nil
+		}
+	}
+	return Retrato{}, ErrNaoAnalisada
 }
 
 // IndicadorComDef é o indicador com o rótulo e a unidade (para a tela).
@@ -155,6 +155,10 @@ type TrechoAtividade struct {
 	Zona           string   `json:"zona"`
 	Confianca      string   `json:"confianca"`
 	Sinais         []string `json:"sinais"`
+	// Alvo: qual objetivo ou estrutura (só em "objetivo" e "torre").
+	Alvo string `json:"alvo,omitempty"`
+	// Farmando: só em "coletando_ouro": o suporte também está farmando.
+	Farmando *bool `json:"farmando,omitempty"`
 }
 
 // ListaAtividades devolve os trechos de atividade que tocam [de, ate] dos
@@ -181,6 +185,10 @@ func ListaAtividades(db *banco.DB, gameID int64, pid int, de, ate int64) ([]Trec
 			t.Atividade, _ = it.Dados["atividade"].(string)
 			t.Zona, _ = it.Dados["zona"].(string)
 			t.Confianca, _ = it.Dados["confianca"].(string)
+			t.Alvo, _ = it.Dados["alvo"].(string)
+			if f, ok := it.Dados["farmando"].(bool); ok {
+				t.Farmando = &f
+			}
 			if c, ok := it.Dados["com"].([]any); ok {
 				for _, x := range c {
 					t.Com = append(t.Com, int(numero(x)))
