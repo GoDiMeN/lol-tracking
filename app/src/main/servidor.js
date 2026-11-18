@@ -87,12 +87,12 @@ function escapa(texto) {
 // paginaDeErro é a janela de quando o servidor não sobe. Sem script: vai por data: URL.
 function paginaDeErro(mensagem, linhas = []) {
   const pre = linhas.length ? `<pre>${escapa(linhas.join('\n'))}</pre>` : '';
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>LoL Tracking</title>
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Lane</title>
 <style>body{margin:0;padding:28px;background:#0d1017;color:#e8ecf3;font:14px/1.5 system-ui,"Segoe UI",sans-serif}
 h1{-webkit-app-region:drag}
 h1{font-size:17px;color:#f85149;margin:0 0 10px}pre{background:#12161f;border:1px solid #242e3d;border-radius:8px;padding:12px;
 white-space:pre-wrap;font:12px/1.4 ui-monospace,Consolas,monospace;color:#94a3b8;max-height:240px;overflow:auto}</style></head>
-<body><h1>Não foi possível iniciar o LoL Tracking</h1><p>${escapa(mensagem)}</p>${pre}</body></html>`;
+<body><h1>Não foi possível iniciar o Lane</h1><p>${escapa(mensagem)}</p>${pre}</body></html>`;
 }
 
 // --- Processo de verdade ------------------------------------------------------------------------

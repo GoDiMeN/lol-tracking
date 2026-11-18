@@ -17,7 +17,7 @@ medido no jogo de verdade: **leia antes de tocar em `lcu`, `replay` ou `visao`**
    fora de `lol-replays`. O cliente HTTP do LCU recusa rota fora da lista **antes** de mandar o pedido, e isso tem teste.
 2. **Nunca com partida ao vivo.** Se `GET /lol-gameflow/v1/gameflow-phase` não for `None`/`WatchInProgress`, o rastreio não começa e não manda tecla.
 3. **Tecla só no replay.** Entrada de teclado só vai para a janela `League of Legends (TM) Client` e só depois de a Replay API
-   (`/replay/playback`) responder, o que prova que é replay. Só as teclas de seleção de jogador (`1`–`5`, `Q W E R T`). Nada de clique de mouse. A única ação de mouse permitida é **mover o cursor para o meio da janela do replay** antes de travar a câmera (com o cursor numa borda o jogo arrasta a câmera e a trava cai); nunca clicar.
+   (`/replay/playback`) responder, o que prova que é replay. Só as teclas de seleção de jogador (`1`–`5`, `Q W E R T`) e as da visão de time do replay (`F1` = névoa do time azul, `F2` = do vermelho, `F3` = todos; autorizadas pelo dono em 2026-11-17 para as passadas de visibilidade, conferidas no jogo). Nada de clique de mouse. A única ação de mouse permitida é **mover o cursor para o meio da janela do replay** antes de travar a câmera (com o cursor numa borda o jogo arrasta a câmera e a trava cai); nunca clicar.
 4. **Não ler memória** do jogo nem injetar nada. Fontes: LCU, Replay API, Live Client Data, captura de tela.
 5. **Replay não fica aberto à toa.** Todo fluxo que abre o replay fecha ao terminar, ao falhar e ao cancelar
    (`POST https://127.0.0.1:2999/Exit`, espera até 15 s, depois encerra o processo `League of Legends`; nunca o `LeagueClient*`).

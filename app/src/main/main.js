@@ -1,4 +1,4 @@
-// O processo principal do LoL Tracking: mínimo de propósito.
+// O processo principal do Lane (o app; o repositório ainda se chama lol-tracking): mínimo de propósito.
 //
 // A interface é servida pelo servidor Go em http://127.0.0.1:{porta}/. Este arquivo garante que o
 // servidor esteja de pé (sobe um com `go run .` se o /health não responder), abre a janela apontada
@@ -16,10 +16,10 @@ let janela = null;
 // O servidor que este processo iniciou, ou null quando ele já estava de pé.
 let nosso = null;
 
-const ESPERA = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>LoL Tracking</title>
+const ESPERA = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Lane</title>
 <style>body{margin:0;height:100vh;display:grid;place-items:center;background:#0d1017;color:#e8ecf3;font:14px system-ui,"Segoe UI",sans-serif;-webkit-app-region:drag}
 small{display:block;color:#94a3b8;margin-top:6px}</style></head>
-<body><div>Iniciando o LoL Tracking…<small>a primeira abertura compila o servidor e pode levar um minuto</small></div></body></html>`;
+<body><div>Iniciando o Lane…<small>a primeira abertura compila o servidor e pode levar um minuto</small></div></body></html>`;
 
 const dataUrl = (html) => `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 
@@ -29,7 +29,9 @@ function criaJanela() {
     height: 820,
     minWidth: 900,
     minHeight: 600,
-    title: 'LoL Tracking',
+    title: 'Lane',
+    // O ícone da janela e da barra de tarefas (a bússola com o cristal).
+    icon: path.join(__dirname, '..', '..', 'assets', 'icone.ico'),
     // O --fundo escuro do protótipo: sem clarão branco antes da página pintar.
     backgroundColor: '#0d1017',
     autoHideMenuBar: true,
@@ -88,6 +90,9 @@ ipcMain.handle('janela:maximiza', () => {
   return janela.isMaximized();
 });
 ipcMain.handle('janela:fecha', () => janela?.close());
+
+// Sem isto o Windows agrupa a janela na barra de tarefas sob o ícone do Electron.
+app.setAppUserModelId('br.nzt.lane');
 
 // Uma instância só: a segunda tentaria subir outro servidor na mesma porta.
 if (!app.requestSingleInstanceLock()) {

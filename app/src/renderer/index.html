@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <!-- Tudo vem do próprio servidor (mesma origem): nada de script, estilo ou conexão de fora. -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'">
-    <title>LoL Tracking</title>
+    <title>Lane</title>
+    <link rel="icon" type="image/png" href="icone.png">
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
@@ -13,7 +14,7 @@
     <div class="janela" id="janela">
       <!-- Barra de título do app (a janela não tem a moldura do Windows): mesma do workflow. -->
       <header class="titulo" id="titlebar">
-        <span class="marca" aria-label="LoL Tracking"><span class="marca-ponto"></span><span class="marca-texto">LoL <b>Tracking</b></span></span>
+        <span class="app-marca" aria-label="Lane"><img class="app-marca-icone" src="icone.png" alt="" width="24" height="24"><span class="app-marca-texto">Lane</span></span>
         <span class="dir" id="status" role="status"><span class="ponto" id="statusPonto"></span><span id="statusTexto">conectando ao servidor…</span></span>
         <div class="janela-botoes" id="janelaBotoes" hidden>
           <button type="button" class="win-btn" id="winMin" aria-label="Minimizar" title="Minimizar">&#x2014;</button>
