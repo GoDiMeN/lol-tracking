@@ -184,6 +184,105 @@ func TestAtividade(t *testing.T) {
 	}
 }
 
+// O suporte com o item ao lado do atirador farmando é "coletando ouro"; se o CS
+// dele também sobe no minuto, o trecho leva farmando = true (e muda de trecho).
+func TestColetandoOuroEFarmando(t *testing.T) {
+	bot := Ponto{11500, 1500}
+	if z, _ := Zona(bot.X, bot.Y); z != ZRotaBaixo {
+		t.Fatalf("ponto de teste fora da rota de baixo: %s", z)
+	}
+	var sup, adc trajeto
+	sup.anda(0, 120000, bot, bot, cheia)
+	adc.anda(0, 120000, Ponto{bot.X + 300, bot.Y}, Ponto{bot.X + 300, bot.Y}, nil)
+	c := ctx(5, 100, "UTILITY", sup.as)
+	c.Outros[4] = adc.as
+	for tm := int64(0); tm < 120000; tm += 1000 {
+		e := rastreio.EstadoJogador{TMs: tm, ParticipanteID: 5}
+		e.Slots[0] = rastreio.SlotItem{ID: 3865, Qtd: 1}
+		c.Estados = append(c.Estados, e)
+	}
+	// Minuto 1: só o atirador farma; minuto 2: o suporte também (5 CS).
+	c.Linha = rastreio.LinhaDoTempo{Quadros: []rastreio.QuadroLT{
+		{TMs: 0, Jogadores: map[int]rastreio.JogadorLT{4: {CS: 0}, 5: {CS: 0}}},
+		{TMs: 60000, Jogadores: map[int]rastreio.JogadorLT{4: {CS: 8}, 5: {CS: 0}}},
+		{TMs: 120000, Jogadores: map[int]rastreio.JogadorLT{4: {CS: 16}, 5: {CS: 5}}},
+	}}
+	itens := geraAtividade(c)
+	// Os primeiros 3 s não têm a janela de deslocamento ainda (andando): fora da conta.
+	if len(itens) == 3 && itens[0].Dados["atividade"] == AAndando {
+		itens = itens[1:]
+	}
+	if len(itens) != 2 || itens[0].Dados["atividade"] != AColetando || itens[0].Dados["farmando"] != false ||
+		itens[1].Dados["atividade"] != AColetando || itens[1].Dados["farmando"] != true {
+		t.Fatalf("%+v", itens)
+	}
+}
+
+// Counter gank: os dois caçadores chegam à mesma luta no meio. O 7 encosta
+// num inimigo no meio antes; o 2 chega depois e é o counter gank (com = o 7).
+// Do passe do 7: gankando, e o alvo é só o de rota (o 3), não o caçador 2.
+func TestCounterGank(t *testing.T) {
+	posicoes := map[int]string{1: "TOP", 2: "JUNGLE", 3: "MIDDLE", 4: "BOTTOM", 5: "UTILITY", 6: "TOP", 7: "JUNGLE", 8: "MIDDLE", 9: "BOTTOM", 10: "UTILITY"}
+	var j2, j7, m3, m8 trajeto
+	j2.anda(0, 24000, Ponto{1124, 9000}, Ponto{6900, 7050}, cheia) // vem do topo, chega aos 24 s
+	j2.anda(24000, 30000, Ponto{6900, 7050}, Ponto{6900, 7050}, cheia)
+	j7.anda(0, 14000, Ponto{11500, 5200}, Ponto{6900, 6800}, cheia) // vem do outro lado, chega aos 14 s
+	j7.anda(14000, 30000, Ponto{6900, 6800}, Ponto{6900, 6800}, cheia)
+	m3.anda(0, 30000, meio2, meio2, cheia)
+	m8.anda(0, 30000, Ponto{7300, 7250}, Ponto{7300, 7250}, cheia)
+	if z, _ := Zona(meio2.X, meio2.Y); z != ZRotaMeio {
+		t.Fatalf("meio2 fora do meio: %s", z)
+	}
+	c2 := ctx(2, 100, "JUNGLE", j2.as)
+	c2.Posicoes = posicoes
+	c2.Outros[7], c2.Outros[3], c2.Outros[8] = j7.as, m3.as, m8.as
+	atv, com, sinais := prepara(c2).ganhoOuCounter(24000, ZRotaMeio, []int{7, 8}, nil)
+	if atv != ACounterGank || len(com) != 1 || com[0] != 7 {
+		t.Fatalf("passe do 2: %s %v %v", atv, com, sinais)
+	}
+	c7 := ctx(7, 200, "JUNGLE", j7.as)
+	c7.Posicoes = posicoes
+	c7.Outros[2], c7.Outros[3], c7.Outros[8] = j2.as, m3.as, m8.as
+	atv, com, sinais = prepara(c7).ganhoOuCounter(24000, ZRotaMeio, []int{3, 2}, nil)
+	if atv != AGankando || len(com) != 1 || com[0] != 3 || len(sinais) != 1 {
+		t.Fatalf("passe do 7: %s %v %v", atv, com, sinais)
+	}
+	// O caçador inimigo que já estava parado ali não é counter gank: o 2 fica
+	// gankando o de rota.
+	var parado trajeto
+	parado.anda(0, 30000, Ponto{6900, 6800}, Ponto{6900, 6800}, cheia)
+	c2b := ctx(2, 100, "JUNGLE", j2.as)
+	c2b.Posicoes = posicoes
+	c2b.Outros[7], c2b.Outros[3], c2b.Outros[8] = parado.as, m3.as, m8.as
+	if atv, com, _ = prepara(c2b).ganhoOuCounter(24000, ZRotaMeio, []int{7, 8}, nil); atv != AGankando || len(com) != 1 || com[0] != 8 {
+		t.Fatalf("caçador parado: %s %v", atv, com)
+	}
+}
+
+// As fases: a de rotas acaba na primeira TORRE (o inibidor não conta), no
+// máximo aos 14 min; o fim de jogo começa no marco fixo de 25 min.
+func TestFasesDaPartida(t *testing.T) {
+	torre := []rastreio.EventoLT{
+		{Tipo: "BUILDING_KILL", TMs: 500000, Bruto: []byte(`{"buildingType":"INHIBITOR_BUILDING"}`)},
+		{Tipo: "BUILDING_KILL", TMs: 674337, Bruto: []byte(`{"buildingType":"TOWER_BUILDING"}`)},
+	}
+	fs := FasesDaPartida(torre, 1711000)
+	if len(fs) != 3 || fs[0].Fase != "rotas" || *fs[0].AteMs != 674337 || fs[1].Fase != "meio" || fs[1].DeMs != 674337 ||
+		fs[1].Motivo != "caiu a primeira torre aos 11:14" || fs[2].Fase != "final" || fs[2].DeMs != Param.FaseMeioMs || fs[2].AteMs != nil {
+		t.Fatalf("%+v", fs)
+	}
+	// Torre só depois dos 14 min: vale o marco fixo.
+	tarde := []rastreio.EventoLT{{Tipo: "BUILDING_KILL", TMs: 900000, Bruto: []byte(`{"buildingType":"TOWER_BUILDING"}`)}}
+	fs = FasesDaPartida(tarde, 1200000)
+	if len(fs) != 2 || *fs[0].AteMs != Param.FaseRotasMs || fs[1].Motivo != "marco fixo de 14:00: nenhuma torre caiu antes" {
+		t.Fatalf("%+v", fs)
+	}
+	// Partida curta (rendição aos 13 min, sem torre): só a fase de rotas.
+	if fs = FasesDaPartida(nil, 780000); len(fs) != 1 {
+		t.Fatalf("%+v", fs)
+	}
+}
+
 // A vida do inimigo caindo (quadro lateral) também conta como troca, e o
 // objetivo: perto do dragão até 40 s antes de ele cair.
 func TestAtividadeObjetivoEVidaDoOutro(t *testing.T) {

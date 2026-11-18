@@ -19,7 +19,7 @@ export async function pede(metodo, caminho, corpo, fetchFn = globalThis.fetch) {
   try {
     r = await fetchFn(caminho, opcoes);
   } catch {
-    throw new ErroApi(0, 'o servidor do LoL Tracking não respondeu');
+    throw new ErroApi(0, 'o servidor do Lane não respondeu');
   }
   if (r.status === 204) return null;
   let dados = null;
@@ -70,6 +70,10 @@ export const api = {
   saidas: (gameId, pid) => pede('GET', `/api/partidas/${gameId}/saidas-de-rota?participante=${pid}`),
   atividades: (gameId, de, ate) => pede('GET', `/api/partidas/${gameId}/atividades?de=${de}&ate=${ate}`),
   cs: (gameId, pid) => pede('GET', `/api/partidas/${gameId}/cs?participante=${pid}`),
+  fases: (gameId) => pede('GET', `/api/partidas/${gameId}/fases`),
+  ondas: (gameId) => pede('GET', `/api/partidas/${gameId}/ondas`),
+  // JSON cru do LCU (contrato: exceção ao envelope); o placar usa o ouro por minuto.
+  linhaDoTempo: (gameId) => pede('GET', `/api/partidas/${gameId}/linha-do-tempo`),
 
   // Estudo (tarefa 4)
   estudos: () => pede('GET', '/api/estudos'),
@@ -83,6 +87,20 @@ export const api = {
   tiraPartida: (id, gameId) => pede('DELETE', `/api/estudos/${id}/partidas/${gameId}`),
   comparacao: (id) => pede('GET', `/api/estudos/${id}/comparacao`),
   composicao: (id, nome) => pede('GET', `/api/estudos/${id}/indicadores/${encodeURIComponent(nome)}`),
+
+  // Aprendizado por elo
+  regioesAprendizado: () => pede('GET', '/api/aprendizado/regioes'),
+  coletas: () => pede('GET', '/api/aprendizado/coletas'),
+  criaColeta: (corpo) => pede('POST', '/api/aprendizado/coletas', corpo),
+  coleta: (id) => pede('GET', `/api/aprendizado/coletas/${id}`),
+  pausaColeta: (id) => pede('POST', `/api/aprendizado/coletas/${id}/pausar`),
+  retomaColeta: (id) => pede('POST', `/api/aprendizado/coletas/${id}/retomar`),
+  cancelaColeta: (id) => pede('POST', `/api/aprendizado/coletas/${id}/cancelar`),
+  espacoColeta: (id) => pede('GET', `/api/aprendizado/coletas/${id}/espaco`),
+  estudoDoJogador: (jogadorId, corpo) => pede('POST', `/api/aprendizado/jogadores/${jogadorId}/estudo`, corpo),
+  // Rastreio das partidas de um estudo (uma coleta sem descoberta: pausar/cancelar pelas rotas da coleta).
+  rastreioEstudo: (id) => pede('GET', `/api/estudos/${id}/rastreio`),
+  rastreiaEstudo: (id, corpo = {}) => pede('POST', `/api/estudos/${id}/rastreio`, corpo),
 };
 
 export const imagemCampeao = (id) => `/api/imagens/campeao/${Number(id) || 0}`;

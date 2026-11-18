@@ -44,6 +44,37 @@ var (
 
 const partidasPorJogador = 25
 
+// Jogadores de referência do aprendizado por elo (modo teste e testes): para
+// cada um dos 8 elos, ReferenciasPorElo jogadores "Ref <elo> <n>#br1". O
+// mesmo esquema de partidas dos outros (as 12 mais novas no patch instalado,
+// ARAM a cada 5), com estas manias, para a descoberta ter o que separar:
+//   - n%4 == 3: não é mono (troca de campeão toda partida);
+//   - os outros: mono, 75% das ranqueadas solo no mesmo campeão;
+//   - n%5 == 4: todas as partidas em patch antigo (sem partida rastreável).
+const ReferenciasPorElo = 15
+
+// ElosReferencia é a ordem dos elos dos jogadores de referência.
+var ElosReferencia = []string{"SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"}
+
+// ReferenciaFalsa é o n-ésimo (0..14) jogador de referência do elo (índice em ElosReferencia).
+func ReferenciaFalsa(elo, n int) Invocador {
+	return Invocador{Puuid: fmt.Sprintf("puuid-ref-%d-%d", elo, n), Nome: fmt.Sprintf("Ref %s %d", ElosReferencia[elo], n+1), Tag: "br1"}
+}
+
+// donos do falso: 0 o logado, 1 o rival, 2... os de referência.
+const donosFalsos = 2 + 8*ReferenciasPorElo
+
+func invocadorDoDono(dono int) Invocador {
+	switch dono {
+	case 0:
+		return FalsoLogado
+	case 1:
+		return FalsoRival
+	}
+	r := dono - 2
+	return ReferenciaFalsa(r/ReferenciasPorElo, r%ReferenciasPorElo)
+}
+
 // NovoFalso cria o cliente falso no estado inicial.
 func NovoFalso() *Falso {
 	f := &Falso{PassoDownload: 25, replays: map[int64]*MetadataReplay{}}
@@ -68,7 +99,20 @@ func donoFalso(puuid string) (int, bool) {
 	case FalsoRival.Puuid:
 		return 1, true
 	}
+	var e, n int
+	if _, err := fmt.Sscanf(puuid, "puuid-ref-%d-%d", &e, &n); err == nil && e >= 0 && e < len(ElosReferencia) &&
+		n >= 0 && n < ReferenciasPorElo && puuid == ReferenciaFalsa(e, n).Puuid {
+		return 2 + e*ReferenciasPorElo + n, true
+	}
 	return 0, false
+}
+
+// referencia diz se o dono é de referência e qual o n dele no elo.
+func referencia(dono int) (n int, ok bool) {
+	if dono < 2 {
+		return 0, false
+	}
+	return (dono - 2) % ReferenciasPorElo, true
 }
 
 // idFalso: o gameId da i-ésima partida (0 = mais nova) do dono.
@@ -78,7 +122,7 @@ func idFalso(dono, i int) int64 {
 
 // deIDFalso faz o caminho inverso; ok=false para id que não é do falso.
 func deIDFalso(id int64) (dono, i int, ok bool) {
-	for d := 0; d < 2; d++ {
+	for d := 0; d < donosFalsos; d++ {
 		delta := idFalso(d, 0) - id
 		if delta >= 0 && delta%1000 == 0 && delta/1000 < partidasPorJogador {
 			return d, int(delta / 1000), true
@@ -106,14 +150,35 @@ var CampeoesFalsos = map[int]string{
 
 var ordemCampeoes = []int{54, 11, 166, 22, 147, 17, 19, 7, 901, 99, 157, 777, 64, 412, 51}
 
+// slotDoDono é o participantId do dono na i-ésima partida. O logado e o rival
+// giram pelas 10 vagas; o de referência joga sempre na mesma posição (a n%5:
+// topo, selva, meio, atirador, suporte), alternando o time, para a função
+// principal dele (aprendizado) ter o que achar.
+func slotDoDono(dono, i int) int {
+	if n, ok := referencia(dono); ok {
+		return n%5 + 1 + 5*(i%2)
+	}
+	return i%10 + 1
+}
+
 // partidaFalsa monta a partida inteira no formato do LCU.
 func partidaFalsa(dono, i int) map[string]any {
 	id := idFalso(dono, i)
-	donoInv := FalsoLogado
-	if dono == 1 {
-		donoInv = FalsoRival
+	donoInv := invocadorDoDono(dono)
+	versao := versaoFalsa(i)
+	// Campeão do dono de referência: o principal (mono) em 3 de cada 4
+	// ranqueadas solo; o não mono troca toda partida.
+	campeaoDono := 0
+	if n, ok := referencia(dono); ok {
+		campeaoDono = ordemCampeoes[(dono+i)%len(ordemCampeoes)]
+		if n%4 != 3 && i%5 != 1 {
+			campeaoDono = ordemCampeoes[dono%len(ordemCampeoes)]
+		}
+		if n%5 == 4 {
+			versao = versaoFalsa(i + 14)
+		}
 	}
-	slot := i%10 + 1
+	slot := slotDoDono(dono, i)
 	vencedor := 100
 	if i%3 == 0 {
 		vencedor = 200
@@ -133,6 +198,9 @@ func partidaFalsa(dono, i int) map[string]any {
 		campeao := ordemCampeoes[(i+k)%len(ordemCampeoes)]
 		if k == slot && dono == 0 && i < 3 {
 			campeao = 166 // o logado joga de Akshan nas três mais novas
+		}
+		if k == slot && campeaoDono != 0 {
+			campeao = campeaoDono
 		}
 		cs := 20 + (i*7+k*13)%180
 		participantes = append(participantes, map[string]any{
@@ -165,7 +233,7 @@ func partidaFalsa(dono, i int) map[string]any {
 	}
 	return map[string]any{
 		"gameId": id, "platformId": "BR1", "gameCreation": criacao, "gameDuration": duracao,
-		"queueId": fila, "mapId": mapa, "seasonId": 0, "gameVersion": versaoFalsa(i),
+		"queueId": fila, "mapId": mapa, "seasonId": 0, "gameVersion": versao,
 		"gameMode": modo, "gameType": "MATCHED_GAME", "endOfGameResult": "GameComplete",
 		"teams":        []any{map[string]any{"teamId": 100, "win": vit(100)}, map[string]any{"teamId": 200, "win": vit(200)}},
 		"participants": participantes, "participantIdentities": identidades,
@@ -183,8 +251,8 @@ func (f *Falso) BuscaAlias(ctx context.Context, nome, tag string) (Invocador, er
 	if err := f.confere(); err != nil {
 		return Invocador{}, err
 	}
-	for _, inv := range []Invocador{FalsoLogado, FalsoRival} {
-		if strings.EqualFold(inv.Nome, nome) && strings.EqualFold(inv.Tag, tag) {
+	for d := 0; d < donosFalsos; d++ {
+		if inv := invocadorDoDono(d); strings.EqualFold(inv.Nome, nome) && strings.EqualFold(inv.Tag, tag) {
 			return inv, nil
 		}
 	}
@@ -203,7 +271,7 @@ func (f *Falso) Historico(ctx context.Context, puuid string, inicio, fim int) (j
 	for i := 0; i < partidasPorJogador; i++ {
 		p := partidaFalsa(dono, i)
 		// Como no LCU de verdade: no histórico só vem o participante dono.
-		slot := i % 10
+		slot := slotDoDono(dono, i) - 1
 		p["participants"] = []any{p["participants"].([]any)[slot]}
 		p["participantIdentities"] = []any{p["participantIdentities"].([]any)[slot]}
 		delete(p, "teams")

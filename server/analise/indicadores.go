@@ -50,6 +50,10 @@ var Vocabulario = func() []DefIndicador {
 		{"cs_perdido_saidas_est", "CS perdido nas saídas (estimado)", "cs", "rastreio", "rotador", "menor", "ritmo de CS dos 2 min antes × duração de cada saída da fase de rotas"},
 		{"mortes_fora_da_rota", "Mortes fora da rota", "n", "rastreio", "rotador", "menor", "mortes no meio de uma saída de rota (qualquer fase)"},
 		{"mortes_saida_vida_baixa", "Mortes saindo da rota com pouca vida", "n", "rastreio", "rotador", "menor", "morreu numa saída que começou com menos de 40% de vida"},
+		{"freeze_a_favor_s", "Onda em freeze a favor (fase de rotas)", "s", "rastreio", "rotador", "", "soma dos trechos freeze do próprio time na rota dele (onda parada perto da própria torre); estimado pela posição dos jogadores, sem contar tropas"},
+		{"freeze_contra_s", "Onda em freeze contra (fase de rotas)", "s", "rastreio", "rotador", "menor", "soma dos trechos freeze do time inimigo na rota dele; estimado"},
+		{"ondas_na_torre_inimiga_n", "Ondas batendo na torre inimiga (fase de rotas)", "n", "rastreio", "rotador", "", "trechos onda_na_torre na torre do outro time (crash); estimado"},
+		{"ondas_perdidas_rotas_n", "Ondas perdidas na fase de rotas", "n", "rastreio", "rotador", "menor", "ondas que chegaram ao ponto de encontro sem ele lá (morto, na base ou longe); não vale para o suporte; estimado"},
 		{"visitas_rota_ate14_n", "Visitas a rotas até os 14 min", "n", "rastreio", "cacador", "", "entradas do caçador numa rota (gank/visita) na fase de rotas"},
 		{"visitas_rota_ate14_com_abate", "Visitas a rotas com abate até os 14 min", "n", "rastreio", "cacador", "maior", "visitas da fase de rotas que tiveram abate ou assistência"},
 		{"mortes", "Mortes", "n", "linha_do_tempo", "todos", "menor", ""},
@@ -95,7 +99,7 @@ var Vocabulario = func() []DefIndicador {
 		}
 	}
 	rotAtv := map[string]string{AMorto: "morto", ANaBase: "na base", ALutando: "lutando", ATrocando: "trocando", AObjetivo: "em objetivo",
-		ATorre: "em torre", AFarmando: "farmando", AAndando: "andando"}
+		ATorre: "em torre", AFarmando: "farmando", AColetando: "coletando ouro (suporte)", AGankando: "gankando", ACounterGank: "counter gank", ARoaming: "em roaming", ARotacionando: "rotacionando para luta", AAndando: "andando", AParado: "parado"}
 	for _, f := range Fases {
 		for _, a := range Atividades {
 			v = append(v, DefIndicador{"pct_atv_" + a + "_" + f, "% do tempo " + rotAtv[a] + " (" + nomesFase[f] + ")", "%", "rastreio",
@@ -456,6 +460,7 @@ func (d *dadosPartida) indicadoresRastreio(c *coleta) {
 			aproxTudo := cobertura(as, 0, d.duracaoMs()) < d.duracaoMs()*9/10
 			c.conta("mortes_fora_da_rota", mortesFora, aproxTudo, cobTudo)
 			c.conta("mortes_saida_vida_baixa", mortesBaixa, aproxTudo, cobTudo)
+			d.indicadoresOndas(c, cadeia, part.Posicao, detRotas)
 		} else {
 			var visitas, comAbate []Momento
 			for _, it := range cadeia {

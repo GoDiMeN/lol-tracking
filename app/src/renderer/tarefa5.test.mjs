@@ -230,6 +230,9 @@ test('texto: recargas, zonas e atividade', () => {
   assert.equal(atividadeTexto({ atividade: 'trocando', com: [8] }, nomes), 'trocando com LeBlanc');
   assert.equal(atividadeTexto({ atividade: 'lutando', com: [7, 6, 8] }, nomes), 'lutando com Warwick, Teemo e LeBlanc');
   assert.equal(atividadeTexto({ atividade: 'na_base', com: [] }), 'na base');
+  assert.equal(atividadeTexto({ atividade: 'counter_gank', com: [7] }, nomes), 'counter gank em Warwick');
+  assert.equal(atividadeTexto({ atividade: 'coletando_ouro', com: [7], farmando: true }, nomes), 'coletando ouro e farmando');
+  assert.equal(atividadeTexto({ atividade: 'coletando_ouro', com: [7], farmando: false }, nomes), 'coletando ouro');
 });
 
 test('texto: itens da cadeia em frase de jogador', () => {
@@ -302,6 +305,30 @@ test('mapa: separa figuras sobrepostas sem passar do desvio máximo', async () =
   const t = separa([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }], 100, { maxDesvio: 20 });
   for (const p of t) assert.ok(Math.hypot(p.x, p.y) <= 22, 'no máximo 20 px do lugar');
   assert.deepEqual(separa([{ x: 1, y: 1 }, { x: 1, y: 1 }], 30), separa([{ x: 1, y: 1 }, { x: 1, y: 1 }], 30), 'determinístico');
+});
+
+test('mapa: agrupa quem está junto, com histerese, e o leque fica fixo', async () => {
+  const { agrupa, leque, raioDoLeque } = await import('./mapa.js');
+  const pts = [{ id: 1, x: 100, y: 100 }, { id: 2, x: 120, y: 100 }, { id: 3, x: 500, y: 500 }];
+  const a = agrupa(pts, { junta: 40, solta: 60 });
+  assert.deepEqual(a.grupos, [[0, 1]], 'quem está longe não entra');
+  // Afastaram para 50: fora de "junta", mas o par já estava ligado e só solta acima de 60.
+  const b = agrupa([{ id: 1, x: 100, y: 100 }, { id: 2, x: 150, y: 100 }], { junta: 40, solta: 60, ligados: a.ligados });
+  assert.equal(b.grupos.length, 1, 'histerese segura o grupo');
+  const c = agrupa([{ id: 1, x: 100, y: 100 }, { id: 2, x: 150, y: 100 }], { junta: 40, solta: 60 });
+  assert.equal(c.grupos.length, 0, 'sem ligação anterior, 50 não junta');
+  // Cadeia: 1 perto de 2, 2 perto de 3 = um grupo só.
+  assert.deepEqual(agrupa([{ id: 1, x: 0, y: 0 }, { id: 2, x: 30, y: 0 }, { id: 3, x: 60, y: 0 }], { junta: 40, solta: 60 }).grupos, [[0, 1, 2]]);
+  const l2 = leque(2, 40);
+  assert.deepEqual(l2, [{ x: -20, y: 0 }, { x: 20, y: 0 }], 'dois lado a lado');
+  const l5 = leque(5, 40);
+  for (let i = 0; i < 5; i++) {
+    const p = l5[i];
+    const q = l5[(i + 1) % 5];
+    assert.ok(Math.abs(Math.hypot(q.x - p.x, q.y - p.y) - 40) < 1e-6, 'vizinhas a 40 px');
+    assert.ok(Math.abs(Math.hypot(p.x, p.y) - raioDoLeque(5, 40)) < 1e-6);
+  }
+  assert.deepEqual(leque(5, 40), l5, 'determinístico');
 });
 
 test('texto: eventos com o nome do campeão', async () => {

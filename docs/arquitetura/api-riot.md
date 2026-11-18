@@ -18,3 +18,19 @@ Nada do núcleo depende dela: sem chave válida o app usa só o LCU.
     ataque básico (`basic`), e quanto de dano físico/mágico/verdadeiro**. É o único registro exato de "quem atacou quem com o quê",
     e só existe em torno das mortes.
 - A chave nunca vai para log, resposta HTTP nem git.
+
+## Aprendizado por elo (league-v4 e account-v1)
+
+Os hosts por região ficam na tabela `server/riot/regioes.go` (por enquanto só `BR1`: plataforma `br1`, roteamento `americas`).
+O ranking **nunca** vem do LCU (a lista de rotas permitidas não tem rota de ranking).
+
+- `GET {plataforma}/lol/league/v4/{challenger|grandmaster|master}leagues/by-queue/RANKED_SOLO_5x5` → `{tier, entries: [...]}`
+  (a liga inteira).
+- `GET {plataforma}/lol/league/v4/entries/RANKED_SOLO_5x5/{TIER}/{I..IV}?page=N` → `[...]` (~205 por página, sem ordem).
+- Cada entrada: `puuid`, `leaguePoints`, `rank`, `wins`, `losses`, `veteran`, `inactive`, `freshBlood`, `hotStreak`
+  (e `summonerId`, que a Riot está tirando). O app usa `puuid` e os sinais para o critério de subida (`aprendizado/subida.go`).
+- `GET {roteamento}/riot/account/v1/accounts/by-puuid/{puuid}` → `{puuid, gameName, tagLine}`. O jogador é achado no LCU pelo
+  Riot ID (`gameName#tagLine`); o puuid da Riot não é usado no LCU.
+- Limite (`riot/liga.go`): por host, 20 pedidos/s e 100 a cada 2 min, contados no cliente; 429/503 obedecem `Retry-After`
+  (até 4 tentativas). Uma coleta dos 8 elos gasta ~8 pedidos de liga por elo abaixo de Mestre, 1 por elo do ápice e 1 de conta
+  por candidato olhado (10 a 60 por elo).

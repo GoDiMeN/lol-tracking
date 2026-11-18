@@ -153,7 +153,7 @@ PK `(passe_id, conteudo)`. `conteudo` = `amostras` ou `amostras_time`; `versao` 
 | `voltou_para_rota` | `rota`, `inicio_ms`, `duracao_ms` | fim de uma saída que voltou para a rota |
 | `entrou_em_rota` | `rota`, `trecho`, `fim_ms`, `duracao_ms`, `fase`, `fase_rotas`, `vida_pct`, `aconteceu`, `desfecho`, `x`, `y` | só caçador: ficou ≥ 6 s numa rota (gank/visita) |
 | `na_base` | `fim_ms`, `duracao_ms`, `chegada` (`inicio` `renasceu` `recall` `andando`) | cada estadia viva na própria base; recall = salto de > 3000 em < 3 s logo antes |
-| `atividade` | `atividade`, `fim_ms`, `duracao_ms`, `com` (participantes), `zona`, `sinais` (até 6 frases: por que), `confianca` (`alta` `media` `baixa`) | trechos de atividade DEDUZIDA (não é registro de golpe; `docs/decisoes/2026-11-17-atividade-deduzida.md`). Vocabulário e regra abaixo |
+| `atividade` | `atividade`, `fim_ms`, `duracao_ms`, `com` (participantes), `zona`, `sinais` (até 6 frases: por que), `confianca` (`alta` `media` `baixa`), `alvo` (só `objetivo`/`torre`), `farmando` (só `coletando_ouro`) | trechos de atividade DEDUZIDA (não é registro de golpe; `docs/decisoes/2026-11-17-atividade-deduzida.md`). Vocabulário e regra abaixo |
 
 **Atividade** (a primeira regra que couber, a cada amostra; trechos iguais seguidos se juntam; `andando`/`farmando` de menos de 3 s
 é absorvido pelo trecho anterior):
@@ -163,9 +163,14 @@ PK `(passe_id, conteudo)`. `conteudo` = `amostras` ou `amostras_time`; `versao` 
 3. `lutando` — com um inimigo **rastreado** a ≤ `AlcanceLuta` (1400) e mais alguém (2 inimigos, ou um aliado rastreado perto), e a vida de alguém caindo ≥ 4 pontos percentuais em 2 s (do seguido pelo painel; dos outros pelo quadro lateral). `com` = os envolvidos.
 4. `trocando` — o inimigo rastreado mais perto a ≤ `AlcanceTroca` (1000) e a vida de um dos dois caindo (alta com o painel lido). Também, com `com: []` e confiança baixa: rotador fora da rota com a própria vida caindo ≥ 8 pontos em 2 s sem inimigo rastreado perto (quem bateu não foi rastreado).
 5. `objetivo` / `torre` — a ≤ 1500 de onde caiu um monstro grande (até 40 s depois) ou uma torre/placa (até 20 s depois), derrubado pelo time dele (ou com ele). Placas vêm da linha do tempo da Riot, se guardada.
-6. `andando` — deslocou mais de 1000 em linha reta nos últimos 4 s (média).
-7. `farmando` — na rota, selva ou rio, com o CS da linha do tempo subindo ≥ 3/min naquele minuto (média; baixa se ninguém mais foi rastreado).
-8. `andando` — nenhum outro sinal (baixa).
+6. `farmando` — a ≤ `RaioAcampamento` (800) do centro de um acampamento da selva (`analise/acampamentos.go`), sem inimigo rastreado perto e com uma habilidade ou feitiço usado até 3 s antes ou depois (média). Vem antes do deslocamento: o caçador limpa em segundos e já sai andando.
+7. `andando` — deslocou mais de 1000 em linha reta nos últimos 4 s (média).
+8. `coletando_ouro` — só para quem tem o item de suporte no inventário naquele instante (`ItensDeSuporte`: 3865 e evoluções; vendeu, deixa de valer): na rota, selva ou rio, com um aliado rastreado a ≤ 1000 que está farmando naquele momento (parado, sem a vida cair, e com o CS da linha do tempo subindo ≥ 3/min no minuto) (média; `com` = o aliado). Campo `farmando` (bool, só nesta atividade): verdadeiro quando o CS do PRÓPRIO suporte também sobe ≥ `CSMinimoPorMin` (3/min) naquele minuto (a mesma regra do `farmando`); a tela diz "coletando ouro e farmando". Não é outra atividade: o trecho muda quando o campo muda.
+9. `farmando` — na rota, selva ou rio, com o CS da linha do tempo subindo ≥ 3/min naquele minuto (média; baixa se ninguém mais foi rastreado).
+10. `parado` — nenhum outro sinal e deslocou ≤ `DeslocamentoParado` (250) nos últimos 4 s (baixa).
+11. `andando` — nenhum outro sinal (baixa).
+
+Depois de montados os trechos (`rotulaAproximacoes`): um trecho `andando` que termina numa luta ou troca com inimigo vira a aproximação, até 25 s antes dela e só se nesse tempo o jogador percorreu ≥ 1500 até o lugar da luta: `gankando` para o caçador chegando numa rota, `roaming` para quem é de rota e está fora da própria rota (`com` = os inimigos da luta), `rotacionando` para qualquer um depois do fim da fase de rotas (primeira torre, no máximo 14 min; `GET /api/partidas/{id}/fases`). No `gankando`, `com` = só os inimigos de ROTA da luta (o caçador inimigo que chegou junto sai da lista; se não houver nenhum de rota, ficam todos). **`counter_gank`**: se um caçador inimigo da mesma luta também veio andando de longe (percorreu ≥ 1500 nos 25 s antes da luta) e chegou ao primeiro contato DEPOIS do outro, ele é o counter gank (`com` = o caçador que gankou). Contato = o primeiro instante, de 25 s antes da luta até 5 s depois (`JanelaContatoDepoisMs`), a ≤ `AlcanceTroca` (1000) de um inimigo que está na zona da luta, pelas posições rastreadas (o contexto de um passe não tem as etiquetas dos outros); diferença menor que `MargemCounterMs` (0,5 s) = chegaram juntos, os dois ficam `gankando`. Só caçador e só na fase de rotas: quem é de rota e chega para responder continua `roaming`. Partida 3304217746: a Vi encosta na Diana aos 3:56,6 e o Shaco na Vi aos 4:02,4 → Vi `gankando` Diana, Shaco `counter_gank` em Vi. `objetivo` e `torre` levam `alvo` (ex.: `dragão infernal`, `torre do meio`, `placa da torre de baixo`).
 
 **Zonas** (`analise.Zona(x, y)`, fronteiras em `server/analise/fronteiras.go`, conferência em `docs/arquitetura/zonas.png`):
 `base_azul`/`base_vermelha` (subzona `fonte` ou `base`), `rota_topo`/`rota_meio`/`rota_baixo` (subzona `lado_azul`, `centro`,
@@ -174,6 +179,36 @@ monstro, `arredores` a ≤ 1300), `selva_azul_cima`, `selva_azul_baixo`, `selva_
 `fora_do_mapa`. Ordem de decisão: base, rota (a mais perto), cova, rio, selva (pelo lado do rio e da diagonal do meio).
 Do ponto de vista de um jogador (`GrupoRelativo`): `rota_propria`, `outra_rota`, `rio`, `covas`, `selva_propria`,
 `selva_inimiga`, `base_propria`, `base_inimiga`.
+
+**Ondas de tropas** (`server/analise/ondas.go`, `ondas_relogio.go`; nenhuma tropa é rastreada: tudo sai do que já está gravado).
+O **relógio** numera as ondas a partir da saída das tropas (evento `MinionsSpawning` do jogo em `eventos`; sem ele, 0:30, a regra
+do patch 26.x): de 30 em 30 s até 14:00, de 25 em 25 s até 30:00, de 20 em 20 s depois; canhão na 3ª onda e a cada 3 ondas até
+14 min, a cada 2 até 25 min, toda onda depois (`RegrasOndas`, com a fonte no comentário). A chegada ao ponto de encontro de cada
+rota sai da velocidade das tropas (350; nas laterais com o bônus da 2ª onda até 14:00) e de uma distância ESTIMADA. O **eixo**
+de cada rota (`EixoRota`) é a coordenada `s` da base azul (0) à vermelha, sobre `RotaTopo` (topo), o espelho dela (baixo) e
+`RotaMeio`; as torres (`TorresDasRotas`) ficam no eixo. A **posição da onda** em cada segundo é a dos jogadores RASTREADOS da
+rota (BOTTOM e UTILITY = baixo), vivos, na zona da rota, parados (sem andar > 1000 em 4 s) e fora de luta (sem abate a < 2000 em
+± 8 s, sem inimigo de fora da rota a < 1400): com os dois lados, o meio entre eles (confiança `alta`); com um lado só, o jogador
+mais `MeiaDistanciaOnda` (500) para o lado do outro (`media`); sem ninguém, desconhecida. Mediana em 10 s. Depois do fim da fase
+de rotas só conta quem está farmando (CS ≥ 3/min no minuto), e nunca depois dos 14 min. Cada **janela de onda** vai da chegada de
+uma onda à da seguinte; a posição dela é a mediana (com ≥ 30% da janela coberta). **Estados** (itens da cadeia de cada jogador
+da rota; `time` 100/200, `a_favor` do ponto de vista dele):
+
+| tipo | quando | `time` |
+|---|---|---|
+| `onda_na_torre` | onda a ≤ `AlcanceTorreOnda` (1000) da torre de pé mais avançada de um time, ou placa/torre daquela rota caindo na janela | dono da torre |
+| `onda_voltando` | logo depois de `onda_na_torre` (ou já voltando), a onda se afasta daquela torre ≥ 450 por onda | dono da torre |
+| `empurrando` | a onda anda ≥ `AvancoEmpurrando` (450) por onda; `velocidade` `lenta` ou `rapida` (≥ `AvancoRapido`, 1200), `avanco_por_onda` | quem empurra |
+| `freeze` | ≥ `OndasFreeze` (2) ondas seguidas numa faixa de ≤ `FaixaFreeze` (900), andando ≤ meia faixa, fora do alcance da torre, a ≥ `DeslocamentoFreeze` (400) do ponto de encontro para o lado de um time, com um rastreado de rota desse time presente e farmando (CS ≥ 3/min no trecho) | quem segura (o da torre perto) |
+| `onda_parada` | parada como acima, mas no meio da rota ou sem o jogador daquele lado farmando; ou uma janela solta que andou < 450 | lado de que está mais perto (0 = meio) |
+
+Dados dos estados: `rota`, `fim_ms`, `duracao_ms`, `ondas` (números), `time`, `a_favor`, `confianca`, `s`, `x`, `y`, `sinais`,
+`fase_rotas`, e `velocidade`/`avanco_por_onda` nos que andam. **`onda_perdida`** (só para quem é de rota, não o suporte, e só na
+fase de rotas): a onda chegou ao ponto de encontro e o jogador não passou a ≤ `RaioPresencaOnda` (1800) dela, vivo e na rota, em
+`JanelaPresencaOndaMs` (25 s); não conta se a onda estava batendo na torre do inimigo (sair depois do crash é o certo). Dados:
+`rota`, `onda`, `canhao`, `motivo` (`morto`, `na_base`, `longe`), `zona`, `distancia` (da onda), `onda_s`, `posicao_onda`
+(`estimada` ou `encontro` = sem estimativa, o ponto de encontro natural), `x`, `y`. **Limites**: sem contar tropas não se sabe o
+tamanho da onda ("devagar/rápido" é só a velocidade do avanço); depois da fase de rotas a estimativa perde sentido.
 
 ### `eventos`
 Os eventos da partida, das duas fontes: `linha_do_tempo` (importada ao criar o rastreio) e `jogo` (`eventdata`, coletado no
@@ -260,8 +295,9 @@ PK `(game_id, participante_id, indicador)`; `valor` (nulo = não deu para calcul
 `cobertura_ms`, etc.), `calculado_em`. Índice `(indicador, game_id)`.
 
 Vocabulário (`analise.Vocabulario`, também em `GET /api/indicadores` com rótulo, unidade, fonte e direção "melhor"):
-`saidas_rota_ate14_n`, `saidas_rota_ate14_tempo_s`, `cs_perdido_saidas_est`, `mortes_fora_da_rota`, `mortes_saida_vida_baixa`
-(rotador rastreado); `visitas_rota_ate14_n`, `visitas_rota_ate14_com_abate` (caçador rastreado); `mortes`, `mortes_ate14`,
+`saidas_rota_ate14_n`, `saidas_rota_ate14_tempo_s`, `cs_perdido_saidas_est`, `mortes_fora_da_rota`, `mortes_saida_vida_baixa`,
+`freeze_a_favor_s`, `freeze_contra_s`, `ondas_na_torre_inimiga_n`, `ondas_perdidas_rotas_n` (este não vale para o suporte; os
+quatro das ondas são sempre aproximados e só da fase de rotas) (rotador rastreado); `visitas_rota_ate14_n`, `visitas_rota_ate14_com_abate` (caçador rastreado); `mortes`, `mortes_ate14`,
 `abates`, `assistencias`, `participacao_abates`, `cs_10`, `cs_15`, `cs_por_min`, `ouro_10/15`, `xp_10/15`, `dif_cs_10/15`,
 `dif_ouro_10/15`, `dif_xp_10/15` (contra o adversário direto: mesma posição no outro time) — linha do tempo, os 10;
 `dano_campeoes_10/15`, `wards_ate14` — Riot, os 10; `mortes_com_r_em_recarga`, `mortes_com_flash_em_recarga`, `mortes_com_passiva_em_recarga`, `abates_com_passiva_em_recarga` (os dois da passiva só existem se ela entrou em recarga alguma vez no passe) (só mortes com a
@@ -276,6 +312,43 @@ Uma linha por partida analisada: `game_id` PK, `calculada_em`, `rastreados` (JSO
 `indicadores`, `avisos` (JSON), `ms`.
 
 Parâmetros das regras (limiares) em `server/analise/parametros.go` (`analise.Param`, também em `GET /api/indicadores`).
+
+## aprendizado
+
+Coletas de partidas de referência por elo (contrato: "Aprendizado por elo"). Região por enquanto só `BR1`.
+
+### `aprendizado_coletas`
+`id`, `regiao` (`BR1`), `elos` (JSON, do menor para o maior), `partidas_por_jogador` (1–3), `quem` (`jogador`/`todos`),
+`velocidade`, `estado` (`rodando pausado concluido cancelado falhou`; na subida do servidor `rodando` vira `pausado`), `fase`
+(`descoberta rastreio fim`), `pausa_pedida` (0/1: pausa graciosa pedida e ainda não alcançada), `erro`, `criado_em`,
+`atualizado_em`, `terminado_em`, `so_descobrir` (0/1: só acha os jogadores, termina sem rastrear), `funcao` (vazio ou a
+função principal exigida dos jogadores; os outros contam no descarte `outra_funcao`), `estudo_id` (0; > 0 = o
+rastreio das partidas desse estudo: sem elos nem jogadores, começa na fase `rastreio`, `regiao` vazia, fora da lista do
+cartão).
+
+### `aprendizado_elos`
+PK `(coleta_id, elo)`; `ordem`, `estado` (`pendente descobrindo pronto`), `candidatos_vistos` (quantos da lista ordenada já foram
+olhados: a retomada continua dali), `descartes` (JSON `{inativo, veterano, poucas_partidas, travado, nao_achado, nao_mono,
+sem_historico, sem_partida}`; `sem_partida` = sem vitória rastreável no histórico, não ocupa vaga), `aviso` (ex.: achou menos de 10).
+
+### `aprendizado_jogadores`
+`id`, `coleta_id`, `regiao`, `elo`, `posicao` (na ordem de subida), `lp`, `divisao`, `vitorias`, `derrotas`, `taxa_vitoria`,
+`fresh_blood`, `veteran`, `hot_streak`, `pontuacao_subida` (os números da league-v4 que justificaram a escolha), `puuid_riot`
+(da API da Riot; **nunca usado no LCU**), `nome`, `tag`, `puuid_lcu` (achado no LCU pelo Riot ID), `campeao_id`, `campeao`,
+`fracao_campeao`, `partidas_solo`, `mono`, `funcao` (`TOP JUNGLE MIDDLE BOTTOM UTILITY` ou vazio: a posição mais jogada nas
+ranqueadas solo do histórico, pelo participantId do item), `fracao_funcao`, `vitorias_rastreaveis`, `derrotas_rastreaveis`
+(ranqueada solo do patch instalado, ≥ 15 min, sem rendição antecipada, na função principal), `estado`
+(`com_partidas`/`sem_partida`; `sem_partida` só em coletas antigas), `criado_em`. `UNIQUE (coleta_id, puuid_riot)`.
+
+### `aprendizado_partidas`
+`id`, `coleta_id`, `jogador_id`, `regiao`, `elo`, `game_id`, `participante_id`, `campeao_id`, `campeao`, `abates`, `mortes`,
+`assistencias`, `duracao_s`, `pontuacao` (0–100), `ordem`, `estado` (`pendente baixando rastreando pausada concluida erro
+cancelada`), `rastreio_id` (o rastreio do pacote `rastreio`), `erro`, `atualizado_em`. `UNIQUE (coleta_id, game_id,
+participante_id)`; com `quem = todos` a mesma partida não entra duas vezes na coleta. Na coleta de um estudo, `jogador_id` é 0 e
+`elo` vazio (o jogador é o do estudo).
+
+O espaço da coleta (`GET .../espaco`) soma `passes_compactos.bytes` e a cadeia dos rastreios dela e os retratos e indicadores
+das partidas dela (texto das colunas + estimativa dos números; sem a sobra do SQLite).
 
 ## estudo
 

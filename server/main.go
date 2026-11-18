@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"loltracking/server/analise"
+	"loltracking/server/aprendizado"
 	"loltracking/server/banco"
 	"loltracking/server/campeao"
 	"loltracking/server/estado"
@@ -113,6 +114,7 @@ func main() {
 		{"rastreio", rastreio.Migra},
 		{"analise", analise.Migra},
 		{"estudo", estudo.Migra},
+		{"aprendizado", aprendizado.Migra},
 	}
 	for _, m := range migracoes {
 		if err := m.migra(db); err != nil {
@@ -137,10 +139,19 @@ func main() {
 	partida.Registra(mux, partida.Deps{DB: db, LCU: cliLCU, Campeoes: nomes}, hub)
 	// A análise refaz a partida quando um passe fecha (em segundo plano).
 	depsAnalise := analise.Deps{DB: db, Riot: chaveRiot}
-	rastreio.Registra(mux, rastreio.NovaFila(rastreio.Deps{DB: db, LCU: cliLCU, Replay: depsReplay, Hub: hub, Config: cfgRastreio,
-		AoFecharPasse: analise.RecalculaEmSegundoPlano(depsAnalise)}))
+	fila := rastreio.NovaFila(rastreio.Deps{DB: db, LCU: cliLCU, Replay: depsReplay, Hub: hub, Config: cfgRastreio,
+		AoFecharPasse: analise.RecalculaEmSegundoPlano(depsAnalise)})
+	rastreio.Registra(mux, fila)
 	analise.Registra(mux, depsAnalise)
 	estudo.Registra(mux, depsAnalise)
+	// Aprendizado por elo: o ranking vem da API da Riot (no modo teste, a
+	// falsa casada com os jogadores de referência do LCU falso).
+	var fonteRiot aprendizado.FonteRiot = chaveRiot
+	if cfg.ModoTeste {
+		fonteRiot = aprendizado.NovoRiotFalso()
+	}
+	aprendizado.Registra(mux, aprendizado.Novo(aprendizado.Deps{DB: db, LCU: cliLCU, Riot: fonteRiot, Fila: fila,
+		Partida: partida.Deps{DB: db, LCU: cliLCU, Campeoes: nomes}, Hub: hub, Analise: depsAnalise}))
 	campeao.RegistraImagens(mux, campeao.NovasImagens(dd, cfg.Dados))
 
 	if cfg.Renderer != "" {
@@ -163,7 +174,7 @@ func main() {
 		// Só o cabeçalho tem prazo: WriteTimeout cortaria os SSE.
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	log.Printf("LoL Tracking ouvindo em http://%s (dados em %s)", endereco, cfg.Dados)
+	log.Printf("Lane ouvindo em http://%s (dados em %s)", endereco, cfg.Dados)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("subir o servidor em %s: %v", endereco, err)
 	}

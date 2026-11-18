@@ -73,6 +73,28 @@ var (
 	TorreExternaMeioVermelha = Ponto{8955, 8510}
 )
 
+// TorresDasRotas: as três torres de cada time em cada rota (externa, interna e
+// a do inibidor), nas posições dos eventos BUILDING_KILL da linha do tempo (as
+// mesmas de ESTRUTURAS em app/src/renderer/mapa.js, conferidas com as 14
+// estruturas derrubadas na partida 3304217746). As ondas usam para saber onde a
+// onda bate na torre e qual torre de cada time ainda está de pé na rota.
+var TorresDasRotas = []TorreDaRota{
+	{ZRotaTopo, 100, 1, TorreExternaTopoAzul}, {ZRotaTopo, 100, 2, Ponto{1512, 6699}}, {ZRotaTopo, 100, 3, Ponto{1169, 4287}},
+	{ZRotaMeio, 100, 1, TorreExternaMeioAzul}, {ZRotaMeio, 100, 2, Ponto{5048, 4812}}, {ZRotaMeio, 100, 3, Ponto{3651, 3696}},
+	{ZRotaBaixo, 100, 1, Ponto{10504, 1029}}, {ZRotaBaixo, 100, 2, Ponto{6919, 1483}}, {ZRotaBaixo, 100, 3, Ponto{4281, 1253}},
+	{ZRotaTopo, 200, 1, TorreExternaTopoVermelha}, {ZRotaTopo, 200, 2, Ponto{7943, 13411}}, {ZRotaTopo, 200, 3, Ponto{10481, 13650}},
+	{ZRotaMeio, 200, 1, TorreExternaMeioVermelha}, {ZRotaMeio, 200, 2, Ponto{9767, 10113}}, {ZRotaMeio, 200, 3, Ponto{11134, 11207}},
+	{ZRotaBaixo, 200, 1, Ponto{13866, 4505}}, {ZRotaBaixo, 200, 2, Ponto{13327, 8226}}, {ZRotaBaixo, 200, 3, Ponto{13624, 10572}},
+}
+
+// TorreDaRota é uma torre de rota: Ordem 1 = externa, 2 = interna, 3 = a do inibidor.
+type TorreDaRota struct {
+	Rota  string
+	Time  int
+	Ordem int
+	P     Ponto
+}
+
 // Rio de cima, do canto da rota do topo até o centro do mapa (o de baixo é
 // este espelhado). Meia-largura: a faixa de água mais a margem.
 var (

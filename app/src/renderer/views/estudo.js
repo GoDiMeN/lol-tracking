@@ -2,10 +2,12 @@
 // comparação dos indicadores nas vitórias × derrotas. Clicar num indicador mostra as partidas e
 // os momentos que o compõem, com atalho para o mapa com play.
 
-import { api } from '../api.js';
-import { duracao, dataCurta, kda, posicao, POSICOES } from '../formato.js';
-import { relogio, valorIndicador, diferenca } from '../texto.js';
-import { el, botao, link, pilula, cartao, retrato, carregando, vazio, erroNaTela, confirmaNoBotao, toast } from '../ui.js';
+import { api, acompanha } from '../api.js';
+import { duracao, dataCurta, kda, posicao, plural, POSICOES } from '../formato.js';
+import { relogio, valorIndicador, diferenca, tempoHumano } from '../texto.js';
+import { el, botao, link, pilula, cartao, retrato, barra, carregando, vazio, erroNaTela, confirmaNoBotao, toast } from '../ui.js';
+import { ESTADOS_COLETA, estimativaEstudo } from '../aprendizado.js';
+import { montaCartao } from './aprendizado.js';
 
 export async function desenha(raiz, rota, ctx) {
   if (rota.id) return detalhe(raiz, rota, ctx);
@@ -45,7 +47,9 @@ async function lista(raiz, ctx) {
       caixa.append(a);
     }
   }
-  raiz.replaceChildren(h1, explica, caixa, formNovo(jogadores, ctx));
+  const aprendizado = montaCartao(ctx);
+  raiz.replaceChildren(h1, explica, aprendizado.el, caixa, formNovo(jogadores, ctx));
+  return aprendizado.limpa;
 }
 
 function formNovo(jogadores, ctx) {
@@ -163,8 +167,159 @@ async function detalhe(raiz, rota, ctx) {
   const sug = el('div');
   const botaoSug = botao('Adicionar partidas', 'pri', () => sugestoes(sug, estudo, ctx));
 
-  raiz.replaceChildren(cab, explica, cartao('Partidas do estudo', botaoSug, lista), sug, compCartao, composicao);
+  const rastreio = cartaoRastreio(estudo, partidas, ctx);
+  raiz.replaceChildren(cab, explica, rastreio.el, cartao('Partidas do estudo', botaoSug, lista), sug, compCartao, composicao);
   if (!partidas.length) sugestoes(sug, estudo, ctx);
+  return rastreio.limpa;
+}
+
+// --- Rastrear as partidas do estudo ---------------------------------------------------------------
+
+// cartaoRastreio: um botão que rastreia, uma por vez, as partidas em que o jogador do estudo ainda não
+// foi rastreado (só ele), com progresso e estimativa. Por dentro é uma coleta do aprendizado sem
+// descoberta: pausar e cancelar usam as rotas da coleta. Devolve {el, limpa}.
+function cartaoRastreio(estudo, partidas, ctx) {
+  const corpo = el('div', 'rastreio-estudo');
+  const raiz = cartao('Rastrear as partidas deste estudo', null, corpo);
+  let vivo = true;
+  let r = null;
+  let parar = null;
+  let ligada = null;
+  let pendente = null;
+
+  async function recarrega() {
+    try {
+      r = await api.rastreioEstudo(estudo.id);
+      if (!vivo) return;
+      desenha();
+      liga();
+    } catch (err) {
+      if (vivo) corpo.replaceChildren(erroNaTela(err));
+    }
+  }
+  const logo = () => {
+    if (pendente) return;
+    pendente = setTimeout(() => {
+      pendente = null;
+      recarrega();
+    }, 1000);
+  };
+
+  function liga() {
+    const ex = r?.coleta?.execucao?.id;
+    if (!ex || ex === ligada || r.coleta.estado !== 'rodando') return;
+    ligada = ex;
+    parar?.();
+    parar = acompanha(
+      ex,
+      {
+        partida_inicio: logo,
+        download: logo,
+        rastreio: logo,
+        partida_fim: logo,
+        pausa_pedida: logo,
+        pausado: (x) => {
+          toast(x.motivo ? `Rastreio do estudo pausado: ${x.motivo}` : 'Rastreio do estudo pausado. Dá para retomar.', x.motivo ? 'erro' : '');
+          logo();
+        },
+        concluido: () => {
+          toast('Partidas do estudo rastreadas.', 'ok');
+          // A comparação e as marcas "rastreado" mudaram: redesenha a tela inteira.
+          ctx.navega({ vista: 'estudo', id: estudo.id }, { substitui: true });
+        },
+        aviso: (x) => toast(x.texto, 'erro'),
+        erro: (x) => toast(x.texto, 'erro'),
+        fim: () => {
+          ligada = null;
+          ctx.atualizaSeloRastreio();
+          logo();
+        },
+      },
+      { textoQueda: 'A conexão ao vivo caiu; o cartão segue atualizando a cada poucos segundos.' },
+    );
+  }
+
+  async function acao(qual) {
+    try {
+      if (qual === 'comeca') await api.rastreiaEstudo(estudo.id, { velocidade: 4 });
+      else if (qual === 'pausa') await api.pausaColeta(r.coleta.id);
+      else await api.cancelaColeta(r.coleta.id);
+    } catch (err) {
+      toast(err.message, 'erro');
+    }
+    ctx.atualizaSeloRastreio();
+    recarrega();
+  }
+
+  function desenha() {
+    const c = r.coleta;
+    const naoRastreadas = r.pendentes;
+    const partes = [];
+    const rodando = c?.estado === 'rodando';
+    const parado = c && (c.estado === 'pausado' || c.estado === 'falhou');
+    if (!rodando && !parado) {
+      if (!partidas.length) {
+        partes.push(el('p', 'sub pad', 'Adicione partidas ao estudo para rastrear.'));
+      } else if (!naoRastreadas) {
+        partes.push(el('p', 'sub pad', 'Todas as partidas do estudo já têm o jogador rastreado.'));
+      } else {
+        partes.push(
+          el('p', 'sub pad', `${plural(naoRastreadas, 'partida ainda não rastreada', 'partidas ainda não rastreadas')}. O app baixa o replay se precisar, abre o jogo e segue só o jogador do estudo, uma partida por vez; o replay fecha ao fim de cada uma.`),
+          el('div', 'linha pad', [
+            botao('Rastrear as partidas deste estudo', 'pri', () => acao('comeca')),
+            el('span', 'num', `${tempoHumano(estimativaEstudo(naoRastreadas, 4))} a 4× (~7,5 min por partida)`),
+          ]),
+          el('p', 'nota pad', 'O jogo precisa ficar aberto e visível na tela. Pausar termina a partida em andamento e para; dá para retomar.'),
+        );
+      }
+    }
+    if (c) {
+      const est = rodando ? { classe: 'ac', texto: 'rastreando' } : ESTADOS_COLETA[c.estado] || { classe: 'n', texto: c.estado };
+      const acoes = el('div', 'linha acoes-dir');
+      if (rodando) {
+        const b = botao(c.pausa_pedida ? 'Pausando…' : 'Pausar', '', () => acao('pausa'), 'Termina a partida em andamento e para');
+        b.disabled = c.pausa_pedida;
+        acoes.append(b);
+      }
+      if (parado) acoes.append(botao('Retomar', 'pri', () => acao('comeca')));
+      if (rodando || parado) {
+        const x = botao('Cancelar', 'perigo');
+        x.addEventListener('click', () => confirmaNoBotao(x, 'Cancelar mesmo?', () => acao('cancela')));
+        acoes.append(x);
+      }
+      if (c.rastreio_atual) acoes.append(link('Ver o rastreio', `#rastreio/${c.rastreio_atual}`, 'btn'));
+      partes.push(
+        el('div', 'linha geral pad', [
+          pilula(est.texto, est.classe),
+          el('span', 'num', `${c.partidas_concluidas} de ${plural(c.partidas_total, 'partida', 'partidas')}${c.partidas_com_erro ? ` · ${c.partidas_com_erro} não deram` : ''}`),
+          barra(c.progresso, 'progresso do rastreio do estudo', 'larga'),
+          el('span', 'sub', `${Math.round((c.progresso || 0) * 100)}%`),
+          c.estimativa_s > 0 ? el('span', 'num', `faltam ${tempoHumano(c.estimativa_s)}`) : null,
+          acoes,
+        ]),
+      );
+      if (c.erro) partes.push(el('p', `aviso-linha${c.estado === 'falhou' ? ' erro' : ''}`, c.erro));
+      for (const p of r.partidas) {
+        if (p.estado === 'erro') partes.push(el('p', 'aviso-linha', `Partida ${p.game_id} (${p.campeao}): ${p.erro}`));
+      }
+    }
+    corpo.replaceChildren(...partes);
+  }
+
+  corpo.replaceChildren(carregando('Carregando…'));
+  recarrega();
+  const intervalo = setInterval(() => {
+    if (r?.coleta?.estado === 'rodando') recarrega();
+  }, 5000);
+  return {
+    el: raiz,
+    limpa() {
+      vivo = false;
+      clearInterval(intervalo);
+      clearTimeout(pendente);
+      parar?.();
+    },
+  };
 }
 
 function tabelaComparacao(comp, id, escolhido, ctx) {

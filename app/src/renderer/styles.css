@@ -44,10 +44,10 @@ p{margin:0}
 /* Barra de título igual à do workflow: 44 px, arrasta a janela, marca à esquerda e os botões de
    janela à direita (a janela não tem a moldura do Windows). */
 .titulo{display:flex;align-items:center;gap:12px;height:var(--titlebar-h);padding-left:14px;background:var(--fundo-2);border-bottom:1px solid var(--borda);font-size:13px;flex:none;-webkit-app-region:drag;user-select:none}
-.marca{display:flex;align-items:center;gap:8px;flex:none}
-.marca-ponto{width:10px;height:10px;border-radius:3px;background:linear-gradient(135deg,var(--acento),#7c5cff);box-shadow:0 0 10px rgba(75,159,255,.5)}
-.marca-texto{color:var(--texto-2);letter-spacing:.3px;font-size:13px}
-.marca-texto b{color:var(--texto);font-weight:600}
+/* "app-marca" e não "marca": .marca já é o marcador do mapa (posição absoluta) e jogava a marca do app para o canto. */
+.app-marca{display:flex;align-items:center;gap:9px;flex:none}
+.app-marca-icone{width:24px;height:24px;border-radius:6px;flex:none;display:block}
+.app-marca-texto{color:var(--texto);letter-spacing:.3px;font-size:13.5px;font-weight:600}
 .titulo .dir{margin-left:auto;display:flex;gap:8px;align-items:center;color:var(--texto-2);font-size:12px;padding-right:12px;-webkit-app-region:no-drag}
 .janela-botoes{display:flex;align-self:stretch;-webkit-app-region:no-drag}
 .win-btn{width:44px;border:none;border-radius:0;background:transparent;color:var(--texto-2);font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
@@ -301,12 +301,12 @@ dialog.dialogo::backdrop{background:rgba(5,8,12,.6)}
 /* --- Mapa com play (tela cheia) ---------------------------------------------------------------- */
 .cheia{position:fixed;inset:0;background:var(--fundo)}
 .cheia[hidden]{display:none}
-.replay{display:grid;grid-template-rows:auto minmax(0,1fr) auto auto;height:100%;outline:none}
+.replay{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:100%;outline:none}
 .rp-topo{display:flex;gap:12px;align-items:center;padding:8px 14px;background:var(--fundo-2);border-bottom:1px solid var(--borda)}
 .rp-titulo{display:flex;gap:10px;align-items:baseline}
 .rp-teclas{margin-left:auto}
-.rp-corpo{display:grid;grid-template-columns:minmax(0,1fr) auto;min-height:0}
-.rp-palco{display:grid;place-items:center;min-height:0;min-width:0;padding:10px;overflow:hidden}
+.rp-corpo{display:grid;grid-template-columns:auto minmax(0,1fr) auto;min-height:0}
+.rp-palco{display:grid;place-items:center;min-height:0;min-width:0;padding:6px;overflow:hidden}
 .rp-mapa{position:relative;background:var(--mapa);border-radius:8px;overflow:hidden;box-shadow:0 0 0 1px var(--borda);--ret:40px}
 .rp-fundo{position:absolute;inset:0;width:100%;height:100%;display:block;user-select:none;-webkit-user-drag:none}
 .rp-zonas{position:absolute;inset:0;width:100%;height:100%;opacity:.38;image-rendering:pixelated;pointer-events:none}
@@ -318,10 +318,7 @@ dialog.dialogo::backdrop{background:rgba(5,8,12,.6)}
 .figura .f-nome{font-size:11px;font-weight:600;color:#fff;background:rgba(8,11,16,.78);padding:0 5px;border-radius:4px;white-space:nowrap;line-height:1.45;max-width:130px;overflow:hidden;text-overflow:ellipsis}
 .figura .f-atv{font-size:10.5px;color:#e8ecf3;background:rgba(30,58,95,.92);padding:0 5px;border-radius:4px;white-space:nowrap;line-height:1.45;font-family:var(--font-mono)}
 .figura .f-atv[hidden]{display:none}
-.figura .f-atv.lutando,.figura .f-atv.trocando{background:rgba(160,40,40,.92)}
-.figura .f-atv.farmando{background:rgba(30,110,50,.92)}
-.figura .f-atv.objetivo,.figura .f-atv.torre{background:rgba(120,60,170,.92)}
-.figura .f-atv.na_base,.figura .f-atv.morto{background:rgba(60,68,82,.92)}
+.figura .f-atv.morto{background:rgba(60,68,82,.92)}
 .figura .f-hab{position:absolute;top:-6px;right:-10px;min-width:20px;height:20px;border-radius:10px;background:var(--acento);color:#fff;font-size:11px;font-weight:800;display:grid;place-items:center;box-shadow:0 0 0 2px rgba(0,0,0,.6);animation:pula .25s ease-out}
 .figura .f-hab[hidden]{display:none}
 .figura.aprox .retrato{border-style:dashed;opacity:.6}
@@ -343,7 +340,9 @@ dialog.dialogo::backdrop{background:rgba(5,8,12,.6)}
 @media (prefers-reduced-motion: reduce){.ev-mapa,.figura .f-hab{animation:none}}
 .rp-aviso{position:absolute;left:50%;top:12px;transform:translateX(-50%);background:rgba(8,11,16,.85);color:#fff;padding:6px 12px;border-radius:6px;font-size:13px;z-index:10}
 .rp-aviso[hidden]{display:none}
-.rp-legenda{display:flex;gap:16px;flex-wrap:wrap;padding:4px 14px;font-size:12px;color:var(--texto-2);justify-content:center}
+.rp-legenda{display:flex;gap:4px 12px;flex-wrap:wrap;font-size:11.5px;color:var(--texto-2);justify-content:flex-end;max-width:300px}
+.rp-cheia{white-space:nowrap}
+@media (max-width:1100px){.rp-controles .rp-legenda{display:none}}
 .rp-controles{display:flex;gap:12px;align-items:center;padding:10px 14px;background:var(--fundo-2);border-top:1px solid var(--borda)}
 .rp-play{width:42px;height:34px;justify-content:center;font-size:14px}
 .rp-relogio{font-size:16px;font-weight:600;min-width:52px;text-align:right}
@@ -357,7 +356,7 @@ dialog.dialogo::backdrop{background:rgba(5,8,12,.6)}
 .rp-vels{display:flex;gap:2px}
 .rp-vels .btn.on{background:var(--acento-fraco);border-color:var(--acento)}
 .rp-status{min-width:80px}
-.rp-painel{width:330px;border-left:1px solid var(--borda);background:var(--fundo-2);padding:12px 14px;overflow:auto;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.rp-painel{width:clamp(330px,21vw,560px);border-left:1px solid var(--borda);background:var(--fundo-2);padding:12px 14px;overflow:auto;display:flex;flex-direction:column;gap:8px;font-size:13px}
 .rp-painel[hidden]{display:none}
 .rp-painel h3{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--texto-3);margin-top:6px}
 .rp-p-cab{display:flex;gap:10px;align-items:center}
@@ -392,7 +391,171 @@ dialog.dialogo::backdrop{background:rgba(5,8,12,.6)}
   .passe{grid-template-columns:22px minmax(0,1fr) 80px} .passe .barra{display:none}
   .dlg-times{grid-template-columns:1fr}
   .rp-painel{position:absolute;right:0;top:0;bottom:0;z-index:20}
+  /* Em janela estreita a lista dos 10 taparia o mapa: só o painel do escolhido aparece. */
+  .rp-painel.lista{display:none}
 }
 .figura .f-ret{position:relative;display:block;line-height:0}
 .grade-abate > .cartao:first-child > .btn{align-self:flex-start}
 .cab .dir .btn{font-family:var(--font-ui)}
+/* Aprendizado por elo (cartão da tela Estudo) */
+.cartao-aprendizado{margin-bottom:14px}
+.aprendizado{display:flex;flex-direction:column;gap:10px;padding-bottom:10px}
+.aprendizado > .cartao{margin:0 12px}
+.aprendizado .pilha-avisos{display:flex;flex-direction:column;gap:6px;padding:0 12px}
+/* Dica do cartão: o caminho para estudar um jogador de referência. */
+.aprendizado .dica{margin:0 12px;padding:8px 12px;border-left:3px solid var(--acento);background:var(--acento-fraco);border-radius:0 6px 6px 0;font-size:13px;color:var(--texto)}
+.aprendizado .sinais{gap:4px;margin:2px 0;flex-wrap:wrap}
+.aprendizado td small.sub{display:block}
+.campo.mini{padding:3px 6px;font-size:12.5px;width:auto}
+.rastreio-estudo .linha.geral{gap:10px;align-items:center}
+.aprendizado > .aviso-linha{margin:0 12px}
+.aprendizado .rolar{max-height:340px}
+.aprendizado .tabela td .retrato{vertical-align:middle}
+
+/* --- Mapa com play: lista dos 10 ao lado e etiquetas opcionais ---------------------------------- */
+.replay.sem-etiquetas .figura .f-atv{display:none}
+.rp-painel.lista{gap:4px}
+.rp-painel.lista h3{margin-top:8px}
+.rp-linha{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:4px 6px;cursor:pointer;color:inherit}
+.rp-linha:hover{background:var(--fundo-3);border-color:var(--borda)}
+.rp-linha.morto{opacity:.55}
+.rp-l-meio{display:flex;flex-direction:column;gap:3px;min-width:0}
+.rp-l-nome{display:flex;gap:6px;align-items:baseline;min-width:0;white-space:nowrap;overflow:hidden}
+.rp-l-nome .sub{overflow:hidden;text-overflow:ellipsis}
+.rp-linha .f-atv{align-self:flex-start;font-size:11px;color:#e8ecf3;background:rgba(30,58,95,.92);padding:0 6px;border-radius:4px;white-space:nowrap;line-height:1.5;font-family:var(--font-mono);max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.rp-linha .rp-barra-v{height:5px}
+.rp-l-num{display:flex;flex-direction:column;align-items:flex-end;font-size:11.5px;line-height:1.3}
+/* Cores das atividades, as mesmas no mapa (.figura), na etiqueta de grupo e na lista:
+   luta vermelho, farm verde, objetivo roxo (o roxo dos monstros na barra), torre âmbar (o das
+   estruturas), deslocamento para luta azul-petróleo, parado/base/morto cinza. */
+.figura .f-atv.lutando,.figura .f-atv.trocando,.rp-grupo.lutando,.rp-grupo.trocando,.rp-linha .f-atv.lutando,.rp-linha .f-atv.trocando{background:rgba(160,40,40,.92)}
+.figura .f-atv.farmando,.figura .f-atv.coletando_ouro,.rp-grupo.farmando,.rp-grupo.coletando_ouro,.rp-linha .f-atv.farmando,.rp-linha .f-atv.coletando_ouro{background:rgba(31,110,50,.92)}
+.figura .f-atv.objetivo,.rp-grupo.objetivo,.rp-linha .f-atv.objetivo{background:rgba(120,60,170,.92)}
+.figura .f-atv.torre,.rp-grupo.torre,.rp-linha .f-atv.torre{background:rgba(140,96,18,.95)}
+.figura .f-atv.gankando,.figura .f-atv.counter_gank,.figura .f-atv.roaming,.figura .f-atv.rotacionando,.rp-grupo.gankando,.rp-grupo.counter_gank,.rp-grupo.roaming,.rp-grupo.rotacionando,.rp-linha .f-atv.gankando,.rp-linha .f-atv.counter_gank,.rp-linha .f-atv.roaming,.rp-linha .f-atv.rotacionando{background:rgba(14,116,144,.95)}
+.figura .f-atv.parado,.figura .f-atv.na_base,.rp-grupo.parado,.rp-grupo.na_base{background:rgba(60,70,85,.92)}
+.rp-linha .f-atv.morto,.rp-linha .f-atv.na_base,.rp-linha .f-atv.parado{background:var(--fundo-4);color:var(--texto-2)}
+/* Morto: fica onde morreu, menor, apagado e POR BAIXO dos vivos; só a etiqueta "morto" pequena. */
+.figura.morto{z-index:1;transform:translate(-50%,calc(var(--ret) * -0.36))}
+.figura.morto .retrato{width:calc(var(--ret) * .72)!important;height:calc(var(--ret) * .72)!important;border-width:2px}
+.figura.morto .f-nome{display:none}
+.figura.morto .f-atv{font-size:9px;line-height:1.3;opacity:.8}
+/* Chamadas (chamadas.js): retratos que colidiriam saem de cima do jogador e ficam ligados por um
+   traço a um ANEL no lugar exato. O anel é a verdade: sempre por cima do mapa e por baixo dos
+   retratos; a opacidade dos dois cresce junto com o deslocamento (entra e sai sem pulo). */
+.rp-chamadas{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:1}
+.ch-traco{stroke-width:1.6;stroke-linecap:round}
+.ch-traco.azul{stroke:var(--azul)} .ch-traco.vermelho{stroke:var(--vermelho)}
+.ch-anel{fill:rgba(8,11,16,.55);stroke-width:2.4}
+.ch-anel.azul{stroke:var(--azul)} .ch-anel.vermelho{stroke:var(--vermelho)}
+.ch-anel.destacado{stroke:#fff;stroke-width:3}
+/* No grupo o nome sai (fica no título e na lista): só a etiqueta da atividade embaixo do retrato. */
+.figura.em-grupo .f-nome{display:none}
+.figura.destacado{z-index:6}
+.figura.destacado .retrato{box-shadow:0 0 0 3px rgba(255,255,255,.85),0 2px 6px rgba(0,0,0,.6)}
+/* Ponto da atividade: o texto inteiro não está escrito no mapa (encurtado ou etiquetas desligadas).
+   Canto de baixo à esquerda; o balão da habilidade fica em cima à direita. */
+.figura .f-ponto{position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2px rgba(8,11,16,.85);background:rgba(60,70,85,1);pointer-events:auto}
+.figura .f-ponto[hidden]{display:none}
+.figura .f-ponto.lutando,.figura .f-ponto.trocando{background:#e05252}
+.figura .f-ponto.farmando,.figura .f-ponto.coletando_ouro{background:#3fb760}
+.figura .f-ponto.objetivo{background:#a46be0}
+.figura .f-ponto.torre{background:#e0a83a}
+.figura .f-ponto.gankando,.figura .f-ponto.counter_gank,.figura .f-ponto.roaming,.figura .f-ponto.rotacionando{background:#22a6c7}
+.figura .f-ponto.parado,.figura .f-ponto.na_base{background:#8a95a6}
+.rp-linha.destacado{background:var(--fundo-4);box-shadow:inset 3px 0 0 var(--acento)}
+
+/* --- Mapa com play: placar dos times à esquerda ------------------------------------------------ */
+/* As colunas dos lados crescem com a janela (o mapa é quadrado e fica limitado pela altura:
+   numa tela larga a sobra vai para o placar e para a lista, não para faixas vazias). */
+.rp-placar{width:clamp(256px,19vw,520px);border-right:1px solid var(--borda);background:var(--fundo-2);padding:12px 14px;overflow:auto;display:flex;flex-direction:column;gap:7px;font-size:14px}
+.pl-sec{margin:8px 0 0;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--texto-3);font-weight:600;border-bottom:1px solid var(--borda);padding-bottom:3px}
+.pl-fase{display:flex;flex-direction:column;gap:1px;padding:7px 10px;border-radius:6px;background:var(--fundo-3);border:1px solid var(--borda);border-left:3px solid var(--acento);margin-bottom:4px}
+.pl-fase b{font-size:14px}
+.pl-fase.meio{border-left-color:var(--atencao)}
+.pl-fase.final{border-left-color:var(--critico)}
+.pl-cab,.pl-linha{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;align-items:center}
+.pl-cab b:last-child,.pl-linha > :last-child{text-align:right;justify-self:end}
+.pl-cab{font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding-bottom:2px;border-bottom:1px solid var(--borda)}
+.pl-linha{padding:2px 0}
+.pl-rot{color:var(--texto-2);font-size:12.5px;text-align:center}
+.pl-linha .num{font-size:15px}
+.pl-linha.grande .num{font-size:24px;font-weight:700}
+.pl-linha.texto span:not(.pl-rot){font-size:12px}
+.pl-linha.ativo .num{font-weight:700}
+.pl-difbloco{display:flex;flex-direction:column;align-items:center;gap:2px;margin:-2px 0 4px}
+.pl-dif{position:relative;width:100%;height:6px;border-radius:3px;background:var(--fundo-4)}
+.pl-dif::after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--borda-forte)}
+.pl-dif i{position:absolute;top:0;bottom:0;border-radius:3px}
+.pl-dif i.azul{right:50%;background:var(--azul)}
+.pl-dif i.vermelho{left:50%;background:var(--vermelho)}
+.pl-drags{display:flex;flex-wrap:wrap;gap:3px;min-width:0}
+.pl-linha.drags > :last-child{justify-content:flex-end}
+.drag{font-style:normal;font-family:var(--font-mono);font-size:11px;font-weight:700;line-height:1;padding:3px 4px;border-radius:4px;color:#0b0f16;background:#9aa4b2}
+.drag.FIRE_DRAGON{background:#f08a4b} .drag.WATER_DRAGON{background:#5cc0e8} .drag.EARTH_DRAGON{background:#c7a06a}
+.drag.AIR_DRAGON{background:#cfe3f5} .drag.HEXTECH_DRAGON{background:#4fe0d0} .drag.CHEMTECH_DRAGON{background:#a6d84a}
+.pl-nota{margin-top:auto;padding-top:8px;font-size:11.5px}
+/* Objetivos como ícones (assets/objetivos): o ícone no meio, a quantidade de cada time ao lado;
+   números em fonte de largura fixa, alinhados às bordas como num placar de transmissão. */
+.pl-icone{width:22px;height:22px;display:block;justify-self:center;filter:drop-shadow(0 1px 1px rgba(0,0,0,.5))}
+.pl-icone.pequeno{width:19px;height:19px}
+.pl-linha.pl-ico{padding:3px 0;border-bottom:1px solid color-mix(in srgb,var(--borda) 55%,transparent)}
+.pl-linha.pl-ico .num{font-variant-numeric:tabular-nums}
+.pl-linha.drags{padding:4px 0;border-bottom:1px solid color-mix(in srgb,var(--borda) 55%,transparent)}
+.pl-drags.tm-v{justify-content:flex-end}
+/* Gráficos do placar. */
+.pl-graficos{display:flex;flex-direction:column;gap:3px;padding:8px 10px;border-radius:6px;background:var(--fundo-3);border:1px solid var(--borda)}
+.pl-graf-cab{display:flex;justify-content:space-between;align-items:baseline;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+.pl-graf-cab b{font-weight:600;color:var(--texto-2)}
+.pl-graf{width:100%;height:58px;display:block;cursor:crosshair}
+.pl-graf.abates{height:36px}
+.pl-graf-valor{min-height:1.3em;font-size:11.5px}
+.pg-zero{stroke:var(--borda-forte);stroke-width:1;vector-effect:non-scaling-stroke}
+.pg-grade{stroke:var(--borda);stroke-width:1;stroke-dasharray:2 3;vector-effect:non-scaling-stroke}
+.pg-azul{fill:color-mix(in srgb,var(--azul) 55%,transparent)}
+.pg-vermelho{fill:color-mix(in srgb,var(--vermelho) 55%,transparent)}
+.pg-linha{fill:none;stroke:var(--texto);stroke-width:1.2;opacity:.75;vector-effect:non-scaling-stroke}
+.pg-marca{fill:var(--texto-3)} .pg-marca.azul{fill:var(--azul)} .pg-marca.vermelho{fill:var(--vermelho)}
+.pg-deg{fill:none;stroke-width:1.8;vector-effect:non-scaling-stroke}
+.pg-deg.azul{stroke:var(--azul)} .pg-deg.vermelho{stroke:var(--vermelho)}
+.pg-play{stroke:#fff;stroke-width:1.4;vector-effect:non-scaling-stroke;opacity:.9}
+/* "azul fazendo o barão · 4 jogadores": destaque enquanto o time faz o objetivo junto. */
+.pl-andamento{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;font-size:12.5px;font-weight:600;background:var(--fundo-3);border:1px solid var(--borda)}
+.pl-andamento.azul{border-left:3px solid var(--azul)} .pl-andamento.vermelho{border-left:3px solid var(--vermelho)}
+.pl-andamento .pl-icone{width:20px;height:20px}
+@media (max-width:1180px){.rp-placar{display:none}}
+/* Marca da virada de fase na barra de tempo: alta, atravessa a trilha; o título diz o motivo. */
+.marca-fase{position:absolute;top:-3px;bottom:-3px;width:3px;border-radius:2px;transform:translateX(-1.5px);background:var(--atencao);pointer-events:auto;cursor:help;z-index:1}
+.marca-fase.final{background:var(--critico)}
+/* Bloco "Objetivos do time" no painel do jogador. */
+.rp-bonus{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border:1px solid var(--borda);border-radius:6px;background:var(--fundo-3)}
+.rp-bonus b{font-size:12.5px}
+.rp-bonus-imp{font-family:var(--font-mono);font-size:11.5px;color:var(--atencao)}
+.rp-bonus-imp.exato{color:var(--ok)}
+.rp-bonus-fonte{font-size:11px}
+/* Torres e inibidores no mapa com play: imagens de assets/estruturas (uma por time e estado).
+   A plataforma da torre fica no ponto do jogo. Antes era máscara CSS de um SVG de uma cor só,
+   que na janela do dono não aparecia; imagem comum não depende de máscara. */
+.rp-torres{position:absolute;inset:0;pointer-events:none;z-index:1}
+.rp-torres[hidden]{display:none}
+.rp-torres .torre{position:absolute;display:block;width:calc(var(--ret) * .72);height:calc(var(--ret) * .9);transform:translate(-50%,-86%);pointer-events:auto}
+.rp-torres .torre img{display:block;width:100%;height:100%;user-select:none;-webkit-user-drag:none}
+.rp-torres .torre.inibidor{width:calc(var(--ret) * .66);height:calc(var(--ret) * .66);transform:translate(-50%,-72%)}
+/* Ondas de tropas (posição estimada). z-index 0 e antes da camada dos jogadores no DOM: o
+   marcador fica POR BAIXO dos retratos (os jogadores da rota estão em volta da onda). A cor é o
+   estado; a borda, o time; confiança média = borda tracejada e mais transparente. */
+.rp-ondas{position:absolute;inset:0;pointer-events:none;z-index:0}
+.rp-ondas[hidden]{display:none}
+.onda-marca{position:absolute;transform:translate(-50%,-50%);display:grid;justify-items:center;gap:1px;pointer-events:auto;cursor:help}
+.onda-marca[hidden]{display:none}
+.onda-marca i{display:block;width:12px;height:12px;transform:rotate(45deg);border-radius:2px;background:#9aa4b2;border:2px solid #e6edf3;box-shadow:0 0 0 1px rgba(0,0,0,.55)}
+.onda-marca.azul i{border-color:var(--azul)} .onda-marca.vermelho i{border-color:var(--vermelho)}
+.onda-marca.conf-media i{border-style:dashed;opacity:.72}
+.onda-marca.freeze i{background:#4fd1e8} .onda-marca.onda_na_torre i{background:#f08a4b}
+.onda-marca.onda_voltando i{background:#b48cf2} .onda-marca.empurrando i{background:#e8c547}
+.onda-marca.onda_parada i{background:#9aa4b2} .onda-marca.sem-estado i{background:#5b6573}
+.onda-rot{order:-1;font-size:10px;line-height:1;padding:1px 3px;border-radius:3px;background:rgba(11,15,22,.78);color:#e6edf3;white-space:nowrap;margin-bottom:6px}
+.onda-rot:empty{display:none}
+.pl-onda{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:6px;align-items:baseline;padding:2px 0;font-size:12.5px}
+.pl-onda-rota{color:var(--texto-3);font-size:11.5px}
+.pl-onda-est.freeze{font-weight:700}

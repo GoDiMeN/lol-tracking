@@ -14,7 +14,7 @@ export async function desenha(raiz, _rota, ctx) {
 
   function desenhaCliente(e) {
     if (!e) {
-      cliente.replaceChildren(el('span', 'span2 sub', 'O servidor do LoL Tracking não respondeu.'));
+      cliente.replaceChildren(el('span', 'span2 sub', 'O servidor do Lane não respondeu.'));
       return;
     }
     const linhas = [

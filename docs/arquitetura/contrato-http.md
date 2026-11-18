@@ -69,7 +69,7 @@ ao terminar, pausar, cancelar, falhar ou estourar (regra 5).
 | POST | `/api/partidas/{id}/rastreio` `{"jogadores": [participante_id]?, "velocidade": 2?, "de_ms": 0?, "ate_ms": 0?}` | `202 {"rastreio": Rastreio, "execucao": {"id"}}`. Padrão: os 10, velocidade 2 (0,5–8), a partida inteira (`de_ms`/`ate_ms` = trecho em ms de jogo; `ate_ms` 0 = até o fim). 400 participante inexistente/repetido, partida incompleta, velocidade fora ou trecho inválido; 404 partida não está no banco; 409 já há rastreio rodando, fase do cliente não permitida (só `None`/`WatchInProgress`) ou replay não baixado. Importa os eventos da linha do tempo na hora. |
 | GET | `/api/rastreios?limite=50` | `{"rastreios": [Rastreio]}`, do mais novo ao mais antigo (limite 1–500). |
 | GET | `/api/rastreios/{id}` | `{"rastreio": Rastreio, "passes": [Passe]}`. 404. |
-| POST | `/api/rastreios/{id}/pausar` | 204 (também se já está pausado). O passe guarda o último `t`; o replay fecha. 409 se terminou. |
+| POST | `/api/rastreios/{id}/pausar?quando=agora\|fim_do_passe` | 204 (também se já está pausado). `agora` (padrão): para no meio do passe, que guarda o último `t`; o replay fecha. `fim_do_passe`: o passe em andamento termina normalmente (compacta, gera a cadeia) e o rastreio fica `pausado` antes do próximo; se era o último passe, conclui. 400 `quando` desconhecido; 409 se terminou. |
 | POST | `/api/rastreios/{id}/retomar` | `202 {"execucao": {"id"}}`. Continua os passes não concluídos do último `t` gravado (seek ~4 s antes + retrava). Vale para `pausado` e `falhou`; 409 nos outros estados ou com outro rodando. |
 | POST | `/api/rastreios/{id}/cancelar` | 204. Passe começado é fechado (compactado) como `cancelado`; os pendentes viram `cancelado`. 409 se já concluiu. O `/api/execucoes/{id}/cancelar` da execução faz o mesmo. |
 | GET | `/api/rastreios/{id}/eventos` | SSE da execução mais recente do rastreio (o mesmo de `/api/execucoes/{id}/eventos`). 404 se não houve execução neste processo. |
@@ -82,7 +82,7 @@ Eventos SSE: `abrindo_replay {rastreio_id, game_id}`, `replay_aberto {duracao_ms
 segundo real; o que a tela não leu vem `null`: é a "última leitura" da tela de rastreio), `passe_fim {passe_id, participante_id, amostras, taxa, bytes, bytes_time, cadeia, calibracao {modo, pontos,
 erro_mediano, erro_maximo}, estatisticas}` (`estatisticas.ms_tela_mediana` = custo da leitura da tela), `aviso_tela {passe_id, erro}` (uma vez por
 passe: a tela não é a que a leitura conhece — resolução diferente de 2560×1440 ou escala do HUD diferente da padrão; as colunas
-da tela ficam nulas), `conferencia_riot {passe_id, n, iguais, maior_dif, campos}` (só com chave da Riot válida), `pausado {rastreio_id, motivo?}`, `concluido {rastreio_id}`, `fechando_replay`,
+da tela ficam nulas), `conferencia_riot {passe_id, n, iguais, maior_dif, campos}` (só com chave da Riot válida), `pausa_pedida {rastreio_id, quando: "fim_do_passe"}`, `pausado {rastreio_id, motivo?}`, `concluido {rastreio_id}`, `fechando_replay`,
 `aviso`, `erro`, `fim`.
 
 `Rastreio = {"id", "game_id", "estado": "rodando"|"pausado"|"concluido"|"cancelado"|"falhou", "velocidade", "t_inicio_ms", "t_fim_ms" (0 = fim da partida), "criado_em", "atualizado_em", "terminado_em", "erro", "passes_total", "passes_concluidos", "passe_atual": participante_id|null, "progresso": 0–1, "estimativa_s", "execucao": {"id"}|null}`
@@ -129,6 +129,8 @@ na resposta em ms.
 | GET | `/api/partidas/{id}/indicadores?participante=` | `{"indicadores": [Indicador]}` (sem participante = os 10), na ordem do vocabulário. |
 | GET | `/api/partidas/{id}/saidas-de-rota?participante=` | `{"saidas": [{"participante_id", "tipo": "saiu_da_rota"\|"entrou_em_rota", "t_ms", "dados"}]}` (dados = o item da cadeia). Só rastreados. |
 | GET | `/api/partidas/{id}/atividades?de=0&ate=600&participante=` | `{"atividades": [Trecho], "de_ms", "ate_ms"}`: os trechos que tocam a janela, de todos os rastreados (ou de um). |
+| GET | `/api/partidas/{id}/fases` | `{"fases": [{"fase": "rotas"\|"meio"\|"final", "de_ms", "ate_ms" (null = até o fim), "motivo"}], "duracao_ms"}`: as fases da partida pela MESMA regra da análise (atividade gankando/roaming × rotacionando): a fase de rotas termina quando cai a primeira torre (BUILDING_KILL de torre da linha do tempo do LCU), no máximo aos `FaseRotasMs` (14 min); o fim de jogo começa no marco fixo `FaseMeioMs` (25 min). `motivo` é a frase para a tela ("caiu a primeira torre aos 11:14", "marco fixo de 14 min: nenhuma torre caiu antes"). Fase que começaria depois do fim da partida não aparece. 404 partida; 409 sem a linha do tempo do LCU guardada. |
+| GET | `/api/partidas/{id}/ondas` | `Ondas`: o estado da onda de tropas em cada rota, ESTIMADO pela posição dos jogadores rastreados da rota (nenhuma tropa é rastreada; regras em `dados.md`, "Ondas de tropas"). Calculado na hora pelo que está guardado (não grava nada, não depende de a análise ter rodado; os mesmos trechos que a análise põe na cadeia). Só até os 14 min (ou o fim do rastreio). 404 partida; 409 sem a linha do tempo do LCU guardada. |
 | GET | `/api/partidas/{id}/cs?participante=` | `{"jogadores": [{"participante_id", "divergencias", "minutos": [{"minuto", "t_ms", "cs_lcu", "cs_jogo", "diferenca", "divergente"}]}]}`: CS do jogo (estado dos 10, anda de 10 em 10) × linha do tempo, minuto a minuto, para quem tem estado gravado. |
 | GET | `/api/imagens/campeao/{campeao_id}` | PNG do retrato quadrado (Data Dragon, `img/champion/<chave>.png`), baixado uma vez e servido de `dados/imagens/`. 404 sem rede na primeira vez, id desconhecido ou modo teste; 400 id inválido. |
 | GET | `/api/imagens/item/{item_id}` | PNG do ícone do item (Data Dragon `img/item/<id>.png`), mesmo cache. |
@@ -148,6 +150,8 @@ na resposta em ms.
 `Indicador = {"participante_id", "indicador", "valor"|null, "aproximado", "detalhe": {"momentos"?: [{t_ms, texto}], "cobertura_ms"?, ...}, "rotulo", "unidade", "fonte", "melhor": "maior"|"menor"|""}`
 
 `DefIndicador = {"nome", "rotulo", "unidade", "fonte": "linha_do_tempo"|"riot"|"rastreio"|"retrato"|"estado", "quem": "todos"|"rastreados"|"rotador"|"cacador", "melhor", "descricao"}`
+
+`Ondas = {"saida_tropas_ms", "saida_medida" (falso = evento não gravado, 0:30 da regra), "fim_fase_rotas_ms", "ate_ms", "ondas": [{"n", "saida_ms", "canhao", "chegada_ms": {rota: ms}}], "rotas": [OndasDaRota], "regras" (fonte), "limites": [texto]}`, `OndasDaRota = {"rota", "rastreados": [ids], "eixo": {"rota", "comprimento", "encontro_s", "torres": [{"time", "ordem" (1 externa, 2 interna, 3 do inibidor), "s", "x", "y"}]}, "pontos": [{"t_ms", "s", "x", "y", "confianca": "alta"|"media"}]` (1 por segundo; buraco = ninguém da rota, posição desconhecida) `, "janelas": [{"onda", "canhao", "de_ms", "ate_ms", "s"|null, "confianca", "estado", "time", "avanco"|null, "sinais"}], "estados": [{"estado": "freeze"|"onda_na_torre"|"onda_voltando"|"empurrando"|"onda_parada", "de_ms", "ate_ms", "ondas", "time", "velocidade"?, "avanco_por_onda"?, "confianca", "s", "x", "y", "sinais"}], "perdidas": [{"participante_id", "onda", "canhao", "t_ms", "motivo": "morto"|"na_base"|"longe", "zona", "distancia", "onda_s", "posicao_onda", "x", "y"}]}`
 
 `Trecho = {"participante_id", "t_ms", "fim_ms", "atividade": "morto"|"na_base"|"lutando"|"trocando"|"objetivo"|"torre"|"farmando"|"andando", "com": [ids], "zona", "confianca": "alta"|"media"|"baixa", "sinais": [texto]}`
 
@@ -173,6 +177,57 @@ na resposta em ms.
 
 `Comparacao = {"estudo", "vitorias", "derrotas", "sem_analise": [game_id], "ressalva": texto, "linhas": [{"indicador", "rotulo", "unidade", "fonte", "melhor", "vitorias": Lado, "derrotas": Lado, "diferenca" (média V − média D), "efeito" (d de Cohen; null sem variação ou sem um lado), "insuficiente" (< 3 partidas num lado), "aproximado", "observacao"}]}`, `Lado = {"n", "media", "mediana", "min", "max", "desvio"}`. **Não é causa**: a `ressalva` vai sempre.
 
+## Aprendizado por elo
+
+Uma **coleta** monta sozinha um conjunto de partidas de referência por elo (fila ranqueada solo, 420) e rastreia cada uma.
+É uma execução com eventos por SSE, **uma por vez** (com uma rodando, criar ou retomar outra é 409), e sobrevive a reinício
+do servidor: `rodando` vira `pausado`. Passos: (1) **descoberta** — os melhores do elo pela API da Riot (a chave de
+`token.txt`; nunca pelo LCU), o nome pela conta da Riot, o jogador e o histórico pelo LCU **pelo Riot ID** (o puuid da Riot não
+é usado no LCU), escolha das partidas; (2) **rastreio** — uma partida por vez: baixa o replay se preciso, rastreia pelo motor
+do `rastreio` (todas as regras dele valem: fase do gameflow, replay fechado ao terminar/falhar/cancelar) e segue. Partida que
+falha (replay indisponível, outro patch...) fica com `erro` e a coleta segue.
+
+**Região**: por enquanto só `BR1` (Brasil). A região da coleta precisa ser a do cliente do LoL (o replay só abre para
+partidas da plataforma da conta logada): conferida antes de começar e a cada retomada.
+
+| Método | Rota | Resposta |
+|---|---|---|
+| GET | `/api/aprendizado/regioes` | `{"regioes": [{"codigo": "BR1", "nome": "Brasil (BR)", "regiao_cliente": "BR", "habilitada": true}]}` |
+| GET | `/api/aprendizado/coletas` | `{"coletas": [Coleta]}`, da mais nova à mais velha. |
+| POST | `/api/aprendizado/coletas` `{"regiao": "BR1"?, "elos": [ELO]?, "partidas_por_jogador": 1?, "quem": "jogador"\|"todos"?, "velocidade": 4?, "so_descobrir": false?, "funcao": ""?}` | `202 {"coleta": Coleta, "execucao": {"id"}}`. `funcao` (`TOP JUNGLE MIDDLE BOTTOM UTILITY`, vazio = qualquer): só entra quem tem essa função principal; os outros contam em `outra_funcao`. Padrão: BR1, os 8 elos, 1 partida (1–3), só o jogador, 4× (0,5–8). `so_descobrir`: só a descoberta (jogadores com os números, a função principal e as partidas rastreáveis de cada um); nenhuma partida é escolhida nem lida inteira, nenhum replay é baixado ou aberto; a coleta termina `concluido` ao fim da descoberta. 400 região que não é a BR (`por enquanto só a região BR`), elo desconhecido/repetido, números fora; 409 sem chave da Riot ou chave recusada (renove `token.txt`), região do cliente diferente da coleta, outra coleta rodando; 503 cliente do LoL fechado. |
+| GET | `/api/aprendizado/coletas/{id}` | `{"coleta": Coleta, "elos": [EloDaColeta], "jogadores": [JogadorDaColeta], "partidas": [PartidaDaColeta]}`. 404. |
+| POST | `/api/aprendizado/coletas/{id}/pausar` | 204. **Pausa graciosa**: o passe em andamento termina normalmente (compactação e cadeia), o replay fecha e a coleta fica `pausado`; na descoberta, para depois do jogador em análise; no download, depois de baixar. `pausa_pedida` fica `true` até parar. Já pausada: 204. 409 se terminou. |
+| POST | `/api/aprendizado/coletas/{id}/retomar` | `202 {"execucao": {"id"}}`. Continua do próximo jogador/partida/passe pendente. Vale para `pausado` e `falhou`. 409 nos outros estados, com outra coleta ou rastreio rodando, sem chave (se ainda falta descobrir) ou região diferente; 503 cliente fechado. |
+| POST | `/api/aprendizado/coletas/{id}/cancelar` | 204. Para já (o passe em andamento é fechado como cancelado, como no rastreio); o que falta vira `cancelada`. 409 se já concluiu. |
+| GET | `/api/aprendizado/coletas/{id}/eventos` | SSE da execução mais recente da coleta. 404 se não houve execução neste processo. |
+| POST | `/api/aprendizado/jogadores/{id}/estudo` `{"por_lado": 3?, "nome"?}` | `201 {"estudo": Estudo, "funcao", "vitorias", "derrotas", "faltam_vitorias", "faltam_derrotas", "aviso"}`. Cria um **estudo** do jogador da coleta: do histórico do LCU (rota permitida), as ranqueadas solo **rastreáveis** (patch instalado, ≥ 15 min, sem rendição antecipada) na **função principal** dele; as `por_lado` (3–5) melhores vitórias pela pontuação da coleta e as `por_lado` derrotas mais recentes. Guarda a linha do tempo de cada uma (LCU) e põe no estudo por `estudo.AdicionaPartida` (que analisa). Com menos de 3 de um lado, cria assim mesmo e `aviso` diz quantas faltam para a comparação valer. 400 `por_lado` fora; 404 jogador; 503 cliente fechado. |
+| GET | `/api/estudos/{id}/rastreio` | `{"coleta": Coleta\|null, "partidas": [PartidaDaColeta], "pendentes"}`: o último rastreio das partidas do estudo (é uma coleta com `estudo_id`, sem descoberta) e quantas partidas do estudo ainda não têm o jogador rastreado. 404 estudo. Servida pelo pacote `aprendizado`. |
+| POST | `/api/estudos/{id}/rastreio` `{"velocidade": 4?}` | `202 {"rastreio": {...como o GET}, "execucao": {"id"}}`. Rastreia, **uma por vez**, as partidas do estudo em que o jogador ainda não foi rastreado (só ele: um passe por partida), baixando o replay quando precisa, pela mesma máquina da coleta (pausa graciosa ao fim do passe, retomada, cancelamento, SSE: use as rotas `/api/aprendizado/coletas/{coleta.id}/pausar|cancelar|eventos`). Se o último rastreio do estudo está `pausado`/`falhou`, retoma esse. Estimativa: duração de cada partida ÷ velocidade + 15 s (~7,5 min por partida de 30 min a 4×). 400 velocidade fora (0,5–8); 404 estudo; 409 sem partidas, todas já rastreadas, já rodando, outra coleta ou rastreio rodando; 503 cliente fechado. Não confere a região (as partidas vieram do próprio cliente). |
+| GET | `/api/aprendizado/coletas/{id}/espaco` | `{"compactado", "cadeia", "retratos", "indicadores", "total"}` (bytes, aproximados: o tamanho dos dados nas linhas, sem a sobra do SQLite) `"passes", "partidas", "estimativa_total"` (bytes ao terminar, pela média dos passes já feitos ou, sem nenhum, pela medida de referência). |
+
+`Coleta = {"id", "regiao", "regiao_nome", "elos": [ELO], "partidas_por_jogador", "quem", "velocidade", "so_descobrir", "funcao", "estudo_id" (0 = coleta do aprendizado; > 0 = rastreio das partidas desse estudo, fora de `GET .../coletas`), "estado": "rodando"|"pausado"|"concluido"|"cancelado"|"falhou", "fase": "descoberta"|"rastreio"|"fim", "pausa_pedida", "erro", "criado_em", "atualizado_em", "terminado_em", "jogadores", "jogadores_sem_partida", "partidas_total", "partidas_concluidas", "partidas_com_erro", "passes_total" (estimado enquanto há elo por descobrir), "passes_concluidos", "progresso": 0–1, "estimativa_s", "partida_atual": game_id|null, "rastreio_atual": id|null, "execucao": {"id"}|null}`
+
+`ELO` = `SILVER GOLD PLATINUM EMERALD DIAMOND MASTER GRANDMASTER CHALLENGER` (nada abaixo de Prata).
+
+`EloDaColeta = {"elo", "nome" (Prata...), "exige_mono" (Mestre para cima), "estado": "pendente"|"descobrindo"|"pronto", "candidatos_vistos", "jogadores", "descartes": {"inativo", "veterano", "poucas_partidas", "travado"` (da filtragem da liga) `, "nao_achado", "nao_mono", "sem_historico", "sem_partida"` (dos candidatos olhados; `sem_partida` = sem partida rastreável, não ocupa vaga; `outra_funcao` = função principal diferente da pedida) `}, "aviso", "partidas_total", "partidas_concluidas"}`
+
+`JogadorDaColeta = {"id", "regiao", "elo", "posicao" (1 = primeiro na ordem de subida), "lp", "divisao" (I–IV; vazio de Mestre para cima), "vitorias", "derrotas", "taxa_vitoria" (0–1), "fresh_blood", "veteran", "hot_streak", "pontuacao_subida", "motivo" ("subindo: 63% de vitórias em 84 partidas, recém-chegado ao elo"), "nome", "tag", "riot_id", "campeao_id", "campeao", "fracao_campeao" (0–1, nas ranqueadas solo do histórico do LCU), "partidas_solo", "mono", "funcao": "TOP"|"JUNGLE"|"MIDDLE"|"BOTTOM"|"UTILITY"|"" (a posição mais jogada nas ranqueadas solo do histórico, pela ordem do participante), "fracao_funcao" (0–1), "vitorias_rastreaveis", "derrotas_rastreaveis" (no histórico, na função principal), "estado": "com_partidas"|"sem_partida"}` (`sem_partida` só em coletas antigas: hoje quem não tem partida rastreável não entra)
+
+`PartidaDaColeta = {"id", "regiao", "jogador_id", "elo", "game_id", "participante_id", "campeao_id", "campeao", "abates", "mortes", "assistencias", "duracao_s", "pontuacao", "estado": "pendente"|"baixando"|"rastreando"|"pausada"|"concluida"|"erro"|"cancelada", "rastreio_id"|null, "passes_total", "passes_concluidos", "erro"}`
+
+Eventos SSE: `fase {fase}`, `elo_inicio {elo}`, `candidato {elo, posicao, lp, divisao, vitorias, derrotas, pontuacao_subida, riot_id?, resultado: "aceito"|"nao_achado"|"nao_mono"|"sem_historico", campeao?, fracao?}`, `elo_fim {elo, jogadores, aviso?}`, `partida_inicio {partida_id, game_id, elo, riot_id}`, `download {game_id, estado, progresso}`, `rastreio {partida_id, rastreio_id, execucao}` (a tela pode seguir o SSE do rastreio), `partida_fim {partida_id, estado, erro?}`, `pausa_pedida`, `pausado {motivo?}`, `concluido`, `aviso`, `erro`, `fim`.
+
+**Quem entra** não é quem tem mais LP, e sim quem tem o comportamento de quem **sobe** (o jogador travado no Ouro 1 a temporada
+toda ensina a ficar no Ouro). A Riot não informa o elo anterior: o critério usa só o que cada entrada da league-v4 traz
+(`server/aprendizado/subida.go`, limiares em constantes). Prata a Diamante: divisões I a IV, 2 páginas de cada (**aproximação**:
+não é a divisão inteira); descarta `inactive`, `veteran`, menos de 30 partidas e o travado (mais de 250 partidas com menos de 53%
+de vitórias); ordena pelo limite inferior de Wilson (95%) da taxa de vitória + 0,03 se `freshBlood` + 0,02 se `hotStreak`; LP só
+desempata; os 10 primeiros achados no cliente **com partida rastreável** (quem não tem nenhuma vitória rastreável no histórico conta em `sem_partida` e a descoberta segue descendo, no máximo 60 olhados). Mestre, Grão-Mestre e Desafiante: a liga inteira, sem `inactive`, `veteran` no fim
+da fila, a mesma pontuação, e só *mono champion* (nas ranqueadas solo do histórico do LCU, ≥ 10 partidas e ≥ 60% no mesmo
+campeão), descendo até achar 10 (no máximo 60 candidatos olhados por elo). **Partidas**: fila 420, patch do jogo instalado (só essas têm replay), vitória, ≥ 15 min, sem
+rendição antecipada; do mono, no campeão principal. Pontuação 0–100: 35% KDA (teto 10), 25% participação em abates, 20%
+CS/min (teto 10), 20% dano a campeões/min (teto 1500). Ficam as `partidas_por_jogador` maiores.
+
 ## O que a tarefa 5 usa em cada tela
 
 - **Partida rastreada**: `GET /api/partidas/{id}` (os 10), `GET .../analise` (e `POST` para refazer), `GET .../abates` (lista e
@@ -185,7 +240,7 @@ na resposta em ms.
   `GET /api/indicadores` (rótulos/unidades).
 - **Mapa com play** (tela cheia): `GET /api/mapa/zonas` (grade e cores), `GET .../estados?de=&ate=&passo=0.25` (os 10 por
   janela: posição, vida %, morto, itens; painel do seguido), `GET .../atividades?de=&ate=` (o rótulo de cada um no instante),
-  `GET .../momento?t=` (clique: vida, mana, recargas, atributos, itens), `GET .../eventos`, `/api/imagens/campeao/{campeao_id}`
+  `GET .../momento?t=` (clique: vida, mana, recargas, atributos, itens), `GET .../eventos`, `GET .../ondas` (caixa "ondas" e o placar), `/api/imagens/campeao/{campeao_id}`
   e `/api/imagens/item/{id}`. A zona de cada um no instante: pela `grade` (ou pelos `mudou_zona` da cadeia).
 
 ## Previstas (não implementadas)

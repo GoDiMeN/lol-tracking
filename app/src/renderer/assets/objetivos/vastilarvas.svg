@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="vastilarvas">
+<title>vastilarvas</title>
+<circle cx="7" cy="15" r="3.4" fill="#a879f0" stroke="#0b0f16" stroke-width="1.1"/>
+<circle cx="12" cy="13.2" r="3.9" fill="#b98cff" stroke="#0b0f16" stroke-width="1.1"/>
+<circle cx="17.2" cy="11" r="4.3" fill="#c9a3ff" stroke="#0b0f16" stroke-width="1.1"/>
+<circle cx="18.4" cy="10.2" r="1" fill="#0b0f16"/>
+<path d="M16.4 6.9 15.6 4.6M19.4 7.1l.9-2.2" stroke="#0b0f16" stroke-width="1.1" stroke-linecap="round"/>
+</svg>

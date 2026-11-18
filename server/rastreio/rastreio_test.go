@@ -304,6 +304,62 @@ func TestPausaERetoma(t *testing.T) {
 	}
 }
 
+func TestPausaAoFimDoPasse(t *testing.T) {
+	var fila *Fila
+	var rid int64
+	var uma sync.Once
+	a := prepara(t, func(j *replay.Falso, c *Config) {
+		c.DepoisDaAmostra = func(passeID int64, am Amostra) {
+			if am.TMs > 100000 {
+				uma.Do(func() { fila.PausaAoFimDoPasse(rid) })
+			}
+		}
+	})
+	fila = a.fila
+	r, exID, err := a.fila.Cria(context.Background(), partidaTeste, Pedido{Jogadores: []int{2, 7}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rid = r.ID
+	a.fila.Espera()
+	r, _ = LeRastreio(a.db, r.ID)
+	ps := a.passes(t, r.ID)
+	// O passe em andamento terminou inteiro e foi compactado; o seguinte nem começou.
+	if r.Estado != Pausado || ps[0].Estado != Concluido || !ps[0].Compactado || ps[0].TAtualMs < 298000 ||
+		ps[1].Estado != Pendente || a.jogo.Aberto() {
+		t.Fatalf("pausa ao fim: %s %+v %+v aberto=%v", r.Estado, ps[0], ps[1], a.jogo.Aberto())
+	}
+	cadeia, temCadeia, err := leCadeia(a.db, ps[0].ID, ps[0].GameID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.conta(t, `SELECT COUNT(*) FROM amostras_brutas`) != 0 || !temCadeia || len(cadeia) == 0 {
+		t.Fatal("o passe terminado não virou bloco e cadeia")
+	}
+	ex, _ := a.hub.Busca(exID)
+	tipos := map[string]bool{}
+	for _, ev := range ex.Eventos() {
+		tipos[ev.Tipo] = true
+	}
+	if !tipos["pausa_pedida"] || !tipos["pausado"] || !tipos["passe_fim"] || tipos["concluido"] {
+		t.Fatalf("eventos %v", tipos)
+	}
+	if code, _ := a.pede(t, "POST", "/api/rastreios/"+itoa(r.ID)+"/pausar?quando=depois", ""); code != 400 {
+		t.Fatal(code)
+	}
+	if code, _ := a.pede(t, "POST", "/api/rastreios/"+itoa(r.ID)+"/pausar?quando=fim_do_passe", ""); code != 204 {
+		t.Fatal(code)
+	}
+	if _, err := a.fila.Retoma(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	a.fila.Espera()
+	r, _ = LeRastreio(a.db, r.ID)
+	if ps = a.passes(t, r.ID); r.Estado != Concluido || ps[1].Estado != Concluido || a.jogo.Aberto() {
+		t.Fatalf("retomada: %s %+v", r.Estado, ps)
+	}
+}
+
 func TestCancelaFechaOPasseEOReplay(t *testing.T) {
 	var fila *Fila
 	var rid int64

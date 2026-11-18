@@ -51,7 +51,7 @@ export function cartao(titulo, direita, corpo, classe = '') {
 export const carregando = (texto = 'Carregando…') => el('div', 'estado-tela carregando', texto);
 export const vazio = (texto, acao) => el('div', 'estado-tela vazio', [el('p', '', texto), acao || null]);
 export function erroNaTela(err, oQueFazer) {
-  const msg = err?.status === 0 ? 'O servidor do LoL Tracking não respondeu.' : `Não deu certo: ${err?.message || err}.`;
+  const msg = err?.status === 0 ? 'O servidor do Lane não respondeu.' : `Não deu certo: ${err?.message || err}.`;
   return el('div', 'estado-tela erro', [
     el('p', '', msg),
     el('p', 'sub', oQueFazer || (err?.status === 0 ? 'Feche e abra o app de novo.' : 'Tente de novo; se repetir, recarregue a tela (Ctrl+R).')),

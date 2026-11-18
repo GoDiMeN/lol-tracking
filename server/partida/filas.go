@@ -35,3 +35,14 @@ func NomeDaFila(id int) string {
 // viu no replay. Os nomes são os do `position` do Live Client Data, para o
 // rastreio (tarefa 2) cruzar sem tradução.
 var posicoesPorOrdem = []string{"TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"}
+
+// PosicaoDoParticipante é a posição pelo participantId sozinho (1–5 o time
+// azul, 6–10 o vermelho, na mesma ordem de posicoesPorOrdem), para quando só o
+// item do histórico está à mão (ele traz só o participante dono). Mesma regra
+// de participantesDe; "" fora de Summoner's Rift ou com id fora de 1–10.
+func PosicaoDoParticipante(mapa, participanteID int) string {
+	if mapa != 11 || participanteID < 1 || participanteID > 10 {
+		return ""
+	}
+	return posicoesPorOrdem[(participanteID-1)%5]
+}

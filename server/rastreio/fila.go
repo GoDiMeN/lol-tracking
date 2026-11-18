@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"loltracking/server/banco"
 	"loltracking/server/lcu"
@@ -44,6 +45,10 @@ type corrida struct {
 	ex         *web.Execucao
 	cancela    context.CancelCauseFunc
 	feito      chan struct{}
+	// pausarNoFim: pausa pedida "ao fim do passe" (a coleta do aprendizado
+	// usa): o passe em andamento termina e fecha normalmente, e o rastreio
+	// para antes do próximo.
+	pausarNoFim atomic.Bool
 }
 
 // NovaFila cria a fila. Rastreio que estava "rodando" no banco (o processo
@@ -262,6 +267,24 @@ func (f *Fila) Pausa(id int64) error {
 	return &ErroEstado{fmt.Sprintf("o rastreio está %s", r.Estado)}
 }
 
+// PausaAoFimDoPasse é a pausa graciosa: o passe em andamento termina
+// normalmente (compactação, cadeia, análise), o replay fecha e o rastreio fica
+// pausado antes do próximo passe. Se o passe era o último, o rastreio conclui.
+// Com o rastreio parado, vale o mesmo que Pausa.
+func (f *Fila) PausaAoFimDoPasse(id int64) error {
+	f.mu.Lock()
+	if f.atual != nil && f.atual.rastreioID == id {
+		c := f.atual
+		f.mu.Unlock()
+		if !c.pausarNoFim.Swap(true) {
+			c.ex.Emite("pausa_pedida", map[string]any{"rastreio_id": id, "quando": "fim_do_passe"})
+		}
+		return nil
+	}
+	f.mu.Unlock()
+	return f.Pausa(id)
+}
+
 // Cancela para o rastreio de vez. Passe começado é fechado com o que tem.
 func (f *Fila) Cancela(id int64) error {
 	f.mu.Lock()
@@ -413,7 +436,13 @@ func (f *Fila) corre(ctx context.Context, c *corrida) {
 		falha("ler os passes: " + err.Error())
 		return
 	}
-	for _, p := range ps {
+	for i, p := range ps {
+		// Pausa graciosa: pedida durante o passe anterior, vale antes deste.
+		if i > 0 && c.pausarNoFim.Load() {
+			mudaEstadoRastreio(f.d.DB, id, Pausado, "")
+			ex.Emite("pausado", map[string]any{"rastreio_id": id, "motivo": "pausa pedida: o passe em andamento terminou"})
+			return
+		}
 		nome, ok := nomeNoJogo[p.ParticipanteID]
 		if !ok {
 			mudaEstadoPasse(f.d.DB, p.ID, Falhou, "jogador não encontrado no replay")

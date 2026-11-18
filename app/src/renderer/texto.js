@@ -3,6 +3,7 @@
 // docs/arquitetura/dados.md; a tela fala a língua de quem joga ("saiu da rota", não o código).
 
 import { duracao } from './formato.js';
+import { textoEstado } from './ondas.js';
 
 // relogio: ms de jogo → "8:48" (o relógio do jogo).
 export function relogio(ms) {
@@ -106,6 +107,12 @@ export const ATIVIDADES = {
   objetivo: 'objetivo',
   torre: 'na torre',
   farmando: 'farmando',
+  coletando_ouro: 'coletando ouro',
+  gankando: 'gankando',
+  counter_gank: 'counter gank',
+  roaming: 'roaming',
+  rotacionando: 'rotacionando',
+  parado: 'parado',
   andando: 'andando',
 };
 
@@ -122,10 +129,32 @@ export function atividadeTexto(trecho, nomes = {}) {
   if ((trecho.atividade === 'trocando' || trecho.atividade === 'lutando') && com.length) {
     return `${base} com ${juntaNomes(com)}`;
   }
+  // "gankando Diana", "roaming em Yunara e Leona": em quem a aproximação termina.
+  if (trecho.atividade === 'gankando' && com.length) return `gankando ${juntaNomes(com)}`;
+  if (trecho.atividade === 'roaming' && com.length) return `roaming em ${juntaNomes(com)}`;
+  // "counter gank em Vi": `com` = o caçador inimigo que estava gankando.
+  if (trecho.atividade === 'counter_gank' && com.length) return `counter gank em ${juntaNomes(com)}`;
+  // "objetivo: dragão infernal", "torre do meio".
+  if (trecho.atividade === 'objetivo' && trecho.alvo) return `objetivo: ${trecho.alvo}`;
+  if (trecho.atividade === 'torre' && trecho.alvo) return trecho.alvo;
+  // O suporte ao lado de quem farma e matando tropa ele mesmo (campo `farmando`).
+  if (trecho.atividade === 'coletando_ouro' && trecho.farmando) return 'coletando ouro e farmando';
   return base;
 }
 
-const DESFECHOS = { morte: 'morreu', abate: 'abate', objetivo: 'objetivo', nada: 'nada aconteceu' };
+// atividadeCurta: a etiqueta em cima do retrato no mapa. Em luta os retratos ficam colados e
+// "lutando com Leona, Garen e Draven" cobria a etiqueta do vizinho: acima de `max` caracteres
+// fica só o rótulo ("lutando"); o texto inteiro está na lista ao lado e no título do retrato.
+export function atividadeCurta(trecho, nomes = {}, max = 26) {
+  const inteiro = atividadeTexto(trecho, nomes);
+  if (inteiro.length <= max) return inteiro;
+  // Encurtado, o objetivo fica com o NOME dele ("barão"), não com a palavra "objetivo": é o que
+  // a pessoa quer saber de quem está na cova.
+  if ((trecho.atividade === 'objetivo' || trecho.atividade === 'torre') && trecho.alvo) return trecho.alvo;
+  return ATIVIDADES[trecho.atividade] || trecho.atividade;
+}
+
+const DESFECHOS ={ morte: 'morreu', abate: 'abate', objetivo: 'objetivo', nada: 'nada aconteceu' };
 const FIM_SAIDA = { voltou: 'voltou para a rota', morreu: 'morreu', base: 'foi para a base', fim_do_passe: 'fim do trecho rastreado' };
 
 export const desfecho = (d) => DESFECHOS[d] || d || '';
@@ -143,6 +172,7 @@ export const GRUPOS_CADEIA = [
   { id: 'itens', rotulo: 'itens e nível', tipos: ['compra', 'venda', 'nivel'] },
   { id: 'zonas', rotulo: 'mudou de zona', tipos: ['mudou_zona'] },
   { id: 'atividade', rotulo: 'atividade', tipos: ['atividade'] },
+  { id: 'ondas', rotulo: 'ondas de tropas', tipos: ['freeze', 'onda_na_torre', 'onda_voltando', 'empurrando', 'onda_parada', 'onda_perdida'] },
   { id: 'cs', rotulo: 'CS por minuto', tipos: ['minuto', 'cs_divergente'] },
   { id: 'camera', rotulo: 'câmera', tipos: ['trava_perdida', 'trava_retomada'] },
 ];
@@ -205,6 +235,19 @@ export function itemCadeia(item, nomes = {}) {
       return `na base por ${segs(d.duracao_ms)}`;
     case 'atividade':
       return `${atividadeTexto(d, nomes)} por ${segs(d.duracao_ms)}${d.zona ? ` · ${nomeZona(d.zona)}` : ''}`;
+    // Ondas de tropas (estimadas pela posição dos jogadores da rota; servidor, ondas.go).
+    case 'freeze':
+    case 'onda_na_torre':
+    case 'onda_voltando':
+    case 'empurrando':
+    case 'onda_parada': {
+      const lado = d.a_favor === true ? ' · a favor' : d.a_favor === false ? ' · contra' : '';
+      return `onda ${textoEstado({ estado: item.tipo, time: d.time, velocidade: d.velocidade })} por ${segs(d.duracao_ms)}${lado} (estimada)`;
+    }
+    case 'onda_perdida': {
+      const onde = d.motivo === 'morto' ? 'morto' : d.motivo === 'na_base' ? 'na base' : `longe (${nomeZona(d.zona)}, a ${numero(d.distancia)} da onda)`;
+      return `perdeu a onda ${d.onda}${d.canhao ? ' com canhão' : ''}: ${onde}`;
+    }
   }
   return String(item.tipo).replaceAll('_', ' ');
 }

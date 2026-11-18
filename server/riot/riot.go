@@ -39,6 +39,10 @@ type Cliente struct {
 	baseRegional string
 	ritmo        sync.Mutex
 	ultimoPedido time.Time
+	// lim: o limite por host dos pedidos do aprendizado (liga.go).
+	lim *limitador
+	// redireciona: no teste, todo host da tabela de regiões vira este.
+	redireciona string
 
 	mu     sync.Mutex
 	quando time.Time

@@ -20,6 +20,11 @@ type preparo struct {
 	rota     string                           // rota do jogador ("" = caçador)
 	inimigos []int
 	aliados  []int
+	// usos: instantes de uso de habilidade do jogador (calculado na primeira vez).
+	usos   []int64
+	usosOK bool
+	// ondas: as ondas da partida (calculadas na primeira vez; ondas_cadeia.go).
+	ondas *OndasDaPartida
 }
 
 // zonaAmostra é a zona de uma amostra viva com posição.

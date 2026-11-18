@@ -109,7 +109,11 @@ func Migra(db *banco.DB) error {
 	}
 	// estado_replay_lcu entrou depois da primeira versão da tabela: banco antigo
 	// não a tem e o CREATE IF NOT EXISTS não acrescenta coluna.
-	return banco.AdicionaColuna(db, "partidas", "estado_replay_lcu", "TEXT NOT NULL DEFAULT ''")
+	if err := banco.AdicionaColuna(db, "partidas", "estado_replay_lcu", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// detalhe_replay também: banco de antes dela quebrava em Le ("no such column").
+	return banco.AdicionaColuna(db, "partidas", "detalhe_replay", "TEXT NOT NULL DEFAULT ''")
 }
 
 // Deps é o que o pacote precisa do mundo de fora.

@@ -66,7 +66,7 @@ async function atualizaStatus() {
   } catch (err) {
     ultimoEstado = null;
     ponto.className = 'ponto cr';
-    texto.textContent = err.status === 0 ? 'o servidor do LoL Tracking não respondeu' : err.message;
+    texto.textContent = err.status === 0 ? 'o servidor do Lane não respondeu' : err.message;
   }
   for (const fn of ouvintesEstado) fn(ultimoEstado);
 }

@@ -172,10 +172,18 @@ func (c *controller) le(w http.ResponseWriter, r *http.Request) {
 	web.WriteJSON(w, http.StatusOK, map[string]any{"rastreio": ras, "passes": web.NuncaNil(ps)})
 }
 
+// POST /api/rastreios/{id}/pausar?quando=agora|fim_do_passe
 func (c *controller) pausa(w http.ResponseWriter, r *http.Request) {
 	id, err := idDe(r)
 	if err == nil {
-		err = c.f.Pausa(id)
+		switch r.URL.Query().Get("quando") {
+		case "", "agora":
+			err = c.f.Pausa(id)
+		case "fim_do_passe":
+			err = c.f.PausaAoFimDoPasse(id)
+		default:
+			err = &ErroInvalido{"quando precisa ser agora ou fim_do_passe"}
+		}
 	}
 	if err != nil {
 		c.erro(w, err, "pausar o rastreio")

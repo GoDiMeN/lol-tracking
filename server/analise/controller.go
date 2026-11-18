@@ -19,12 +19,30 @@ func Registra(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("GET /api/indicadores", c.vocabulario)
 	mux.HandleFunc("GET /api/partidas/{id}/analise", c.leAnalise)
 	mux.HandleFunc("POST /api/partidas/{id}/analise", c.recalcula)
+	mux.HandleFunc("GET /api/partidas/{id}/qualidade", c.qualidade)
 	mux.HandleFunc("GET /api/partidas/{id}/abates", c.abates)
 	mux.HandleFunc("GET /api/partidas/{id}/abates/{n}", c.abate)
 	mux.HandleFunc("GET /api/partidas/{id}/indicadores", c.indicadores)
 	mux.HandleFunc("GET /api/partidas/{id}/saidas-de-rota", c.saidas)
 	mux.HandleFunc("GET /api/partidas/{id}/atividades", c.atividades)
 	mux.HandleFunc("GET /api/partidas/{id}/cs", c.cs)
+	mux.HandleFunc("GET /api/partidas/{id}/fases", c.fases)
+	mux.HandleFunc("GET /api/partidas/{id}/ondas", c.ondas)
+}
+
+// GET /api/partidas/{id}/fases
+func (c *controller) fases(w http.ResponseWriter, r *http.Request) {
+	id, err := idPartida(r)
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	l, dur, err := LeFases(c.d.DB, id)
+	if err != nil {
+		c.erro(w, err, "ler as fases da partida")
+		return
+	}
+	web.WriteLista(w, "fases", l, map[string]any{"duracao_ms": dur})
 }
 
 type controller struct{ d Deps }
@@ -106,6 +124,21 @@ func (c *controller) zonas(w http.ResponseWriter, r *http.Request) {
 func (c *controller) vocabulario(w http.ResponseWriter, r *http.Request) {
 	web.WriteLista(w, "indicadores", Vocabulario, map[string]any{"atividades": Atividades, "fases": Fases,
 		"parametros": Param})
+}
+
+// GET /api/partidas/{id}/qualidade: o que a checagem do dado achou em cada passe.
+func (c *controller) qualidade(w http.ResponseWriter, r *http.Request) {
+	id, err := idPartida(r)
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	q, err := LeQualidade(c.d.DB, id)
+	if err != nil {
+		c.erro(w, err, "ler a checagem de qualidade")
+		return
+	}
+	web.WriteJSON(w, http.StatusOK, q)
 }
 
 func (c *controller) leAnalise(w http.ResponseWriter, r *http.Request) {
@@ -252,4 +285,20 @@ func (c *controller) cs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.WriteLista(w, "jogadores", l, nil)
+}
+
+// GET /api/partidas/{id}/ondas — o estado da onda de tropas em cada rota,
+// calculado na hora pelo que está guardado (não grava nada).
+func (c *controller) ondas(w http.ResponseWriter, r *http.Request) {
+	id, err := idPartida(r)
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	o, err := LeOndas(c.d.DB, id)
+	if err != nil {
+		c.erro(w, err, "deduzir as ondas")
+		return
+	}
+	web.WriteJSON(w, http.StatusOK, o)
 }

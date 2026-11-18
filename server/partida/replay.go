@@ -138,6 +138,12 @@ func ConsultaReplay(ctx context.Context, d Deps, gameID int64, versaoCliente str
 	return Replay{Estado: Indisponivel, Detalhe: "o cliente do LoL não reconheceu o replay desta partida"}, nil
 }
 
+// GuardaLinhaDoTempo busca e grava a linha do tempo, se ainda não há (o
+// estudo criado pelo aprendizado usa para analisar antes de qualquer rastreio).
+func GuardaLinhaDoTempo(ctx context.Context, d Deps, gameID int64) error {
+	return guardaLinhaDoTempo(ctx, d, gameID)
+}
+
 // guardaLinhaDoTempo busca e grava a linha do tempo, se ainda não há.
 func guardaLinhaDoTempo(ctx context.Context, d Deps, gameID int64) error {
 	if temLinhaDoTempo(d.DB, gameID) {

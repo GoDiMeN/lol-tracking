@@ -89,6 +89,83 @@ export function atividadeNoInstante(trechos, pid, t) {
   return melhor;
 }
 
+// TRECHO_CURTO_MS: trecho de atividade mais curto que isto, entre dois trechos da MESMA atividade,
+// é piscada (partida 3304217746, 12:30: a Ambessa "farmando" 1 s no meio de outra atividade): a
+// etiqueta do mapa não troca por ele. A lista ao lado continua com o dado como ele é.
+export const TRECHO_CURTO_MS = 1500;
+
+const mesmaAtividade = (a, b) => a && b && a.atividade === b.atividade && (a.alvo || '') === (b.alvo || '');
+
+// estabilizaTrechos: os trechos de um jogador sem as piscadas. Repete: o trecho mais curto que
+// TRECHO_CURTO_MS, colado a um vizinho, vira o vizinho mais longo; vizinhos iguais se juntam.
+// Pega as cadeias "barão · trocando · barão · trocando · barão" de 0,25 s cada (25:42 da
+// 3304217746), que a regra de um trecho só entre dois iguais não pegava.
+export function estabilizaTrechos(trechos, min = TRECHO_CURTO_MS) {
+  const l = (trechos || []).map((t) => ({ ...t })).sort((a, b) => a.t_ms - b.t_ms);
+  const colado = (a, b) => a && b && Math.abs(a.fim_ms - b.t_ms) <= 50;
+  const junta = () => {
+    for (let i = l.length - 1; i > 0; i--) {
+      if (colado(l[i - 1], l[i]) && mesmaAtividade(l[i - 1], l[i])) {
+        l[i - 1].fim_ms = l[i].fim_ms;
+        l.splice(i, 1);
+      }
+    }
+  };
+  junta();
+  for (;;) {
+    let k = -1;
+    for (let i = 0; i < l.length; i++) {
+      const d = l[i].fim_ms - l[i].t_ms;
+      if (d >= min || !(colado(l[i - 1], l[i]) || colado(l[i], l[i + 1]))) continue;
+      if (k < 0 || d < l[k].fim_ms - l[k].t_ms) k = i;
+    }
+    if (k < 0) break;
+    const ant = colado(l[k - 1], l[k]) ? l[k - 1] : null;
+    const prox = colado(l[k], l[k + 1]) ? l[k + 1] : null;
+    const dur = (x) => (x ? x.fim_ms - x.t_ms : -1);
+    const viz = dur(ant) >= dur(prox) ? ant : prox;
+    l[k] = { ...viz, t_ms: l[k].t_ms, fim_ms: l[k].fim_ms };
+    junta();
+  }
+  return l;
+}
+
+// Os trechos estabilizados de cada lista (uma por janela) e jogador, calculados uma vez.
+const cacheEstavel = new WeakMap();
+
+// atividadeEstavel: como atividadeNoInstante, mas sem as piscadas (ver estabilizaTrechos).
+export function atividadeEstavel(trechos, pid, t) {
+  if (!trechos) return null;
+  let porJogador = cacheEstavel.get(trechos);
+  if (!porJogador) {
+    porJogador = new Map();
+    cacheEstavel.set(trechos, porJogador);
+  }
+  let l = porJogador.get(pid);
+  if (!l) {
+    l = estabilizaTrechos(trechos.filter((x) => x.participante_id === pid));
+    porJogador.set(pid, l);
+  }
+  return atividadeNoInstante(l, pid, t);
+}
+
+// SEGURA_ROTULO_MS: a etiqueta do mapa não troca o DETALHE (com quem luta, qual alvo) mais de uma
+// vez a cada 1,5 s de jogo: na luta da partida 3304217746 (19:20) o "lutando com ..." mudava de
+// nomes a cada 0,3 s e piscava. Mudança de ATIVIDADE troca na hora.
+export const SEGURA_ROTULO_MS = 1500;
+
+// criaRotulador devolve (pid, texto, chave, t) → o texto a mostrar; `chave` é a atividade (ou
+// 'morto'). Guarda o último texto mostrado de cada um.
+export function criaRotulador() {
+  const ultimos = new Map();
+  return (pid, texto, chave, t) => {
+    const e = ultimos.get(pid);
+    if (e && e.chave === chave && e.texto !== texto && Math.abs(t - e.desde) < SEGURA_ROTULO_MS) return e.texto;
+    if (!e || e.texto !== texto) ultimos.set(pid, { texto, chave, desde: t });
+    return texto;
+  };
+}
+
 // eventosRecentes: os eventos de [t − janela, t] (para fazer surgir no mapa e sumir depois).
 export function eventosRecentes(eventos, t, janelaMs) {
   const r = [];
