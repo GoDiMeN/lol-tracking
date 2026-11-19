@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -25,6 +26,9 @@ type Deps struct {
 	Relogio Relogio
 	// GameCfg é o caminho do game.cfg; vazio = não confere (testes).
 	GameCfg string
+	// Presenca: os sinais do sistema de que a pessoa está usando o computador
+	// (presenca.go). Nil = sem sinal (nunca recusa tecla por uso).
+	Presenca Presenca
 }
 
 // Tempos da sessão. Variáveis para o teste (com relógio virtual nem precisa).
@@ -95,7 +99,11 @@ type Sessao struct {
 	fechada    bool
 	umaVez     sync.Once
 	errFecha   error
+	diag       diagSessao
 }
+
+// Diagnostico é a foto do registro das teclas desta sessão (presenca.go).
+func (s *Sessao) Diagnostico() DiagTeclas { return s.diag.foto() }
 
 // Deps devolve as dependências (o motor usa a mesma API e tela).
 func (s *Sessao) Deps() Deps { return s.d }
@@ -248,8 +256,9 @@ func FechaJogo(d Deps) error {
 
 // Tecla manda uma tecla ao jogo, só se: a tecla está na lista (as 10 de
 // seleção e F1/F2/F3 da visão de time), a sessão provou que é replay e não
-// fechou, a fase do cliente continua permitida, a Replay API responde agora, e
-// a janela do jogo está em primeiro plano (conferido). Qualquer falha =
+// fechou, a fase do cliente continua permitida, a Replay API responde agora, a
+// pessoa não está usando o computador (Presenca, ErrUsuarioUsando), e a janela
+// do jogo está em primeiro plano (conferido). Qualquer falha =
 // nenhuma tecla.
 func (s *Sessao) Tecla(ctx context.Context, t rune) error {
 	if !TeclaPermitida(t) {
@@ -267,10 +276,39 @@ func (s *Sessao) Tecla(ctx context.Context, t rune) error {
 	if _, err := s.d.API.Playback(ctx); err != nil {
 		return fmt.Errorf("%w (%v)", ErrSemReplay, err)
 	}
+	// A pessoa usando o computador: nada de trazer o jogo para a frente (as
+	// teclas dela cairiam no replay) nem de mandar a tecla junto com o Ctrl ou
+	// o Shift dela. Quem chama espera o computador ficar parado (o motor).
+	if uso, motivo := EmUso(s.d.Presenca, s.d.Relogio.Agora()); uso {
+		modif := s.d.Presenca.ModificadorPressionado()
+		s.diag.anota(func(d *DiagTeclas) {
+			d.RecusadasUso++
+			if modif {
+				d.ModificadorOn++
+			}
+		})
+		return fmt.Errorf("%w (%s)", ErrUsuarioUsando, motivo)
+	}
+	frente := ""
+	if s.d.Presenca != nil {
+		frente = s.d.Presenca.PrimeiroPlano()
+	}
 	if err := s.d.Jogo.Foco(); err != nil {
 		return err
 	}
-	return s.d.Teclado.Aperta(t)
+	if err := s.d.Teclado.Aperta(t); err != nil {
+		return err
+	}
+	s.diag.anota(func(d *DiagTeclas) {
+		d.Enviadas++
+		if frente != "" {
+			d.FrenteAntes[frente]++
+			if !strings.EqualFold(frente, ExeDoJogo) {
+				d.FocoTrocado++
+			}
+		}
+	})
+	return nil
 }
 
 // MudaVisao aperta UMA vez a tecla da visão de time (F1 azul, F2 vermelho, F3
@@ -367,7 +405,7 @@ func (s *Sessao) TravaCamera(ctx context.Context, nome string) (int, error) {
 	motivo := ""
 	for tentativa := 1; tentativa <= MaxTentativasTrava; tentativa++ {
 		if err := s.ApertaDuplo(ctx, nome); err != nil {
-			if errors.Is(err, ErrMorto) || errors.Is(err, ErrSemReplay) {
+			if errors.Is(err, ErrMorto) || errors.Is(err, ErrSemReplay) || errors.Is(err, ErrUsuarioUsando) {
 				return tentativa - 1, err
 			}
 			return tentativa, err

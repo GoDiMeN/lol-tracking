@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"runtime/debug"
 	"sort"
 	"sync"
@@ -28,6 +29,9 @@ type Deps struct {
 	// ou cancelado com amostras): a análise refaz o que depende dele. Roda na
 	// goroutine do rastreio; quem pendura decide se faz em segundo plano.
 	AoFecharPasse func(gameID int64)
+	// SemEstudo: o interruptor LOL_ESTUDO desligado. A lista de partidas
+	// rastreadas não mostra nem admite partida só de estudo (origem.go).
+	SemEstudo bool
 }
 
 // Fila roda um rastreio por vez. Um rastreio = até 10 passes em sequência,
@@ -43,6 +47,10 @@ type Fila struct {
 	repescagens map[int64]string
 	// visoes: partida → última execução dos passes de visão avulsos.
 	visoes map[int64]string
+	// esperando: o motor está esperando a pessoa parar de usar o computador
+	// (uso.go); nil = não. ultima: a última corrida que parou pausada (captura.go).
+	esperando atomic.Pointer[EsperaUsuario]
+	ultima    *Parada
 }
 
 type corrida struct {
@@ -61,6 +69,12 @@ type corrida struct {
 	// visaoDe: a partida, quando a corrida são os passes de visão avulsos
 	// (RastreiaVisao, visao_fila.go).
 	visaoDe int64
+	// pedidoRepescagem e pedidoVisao: o pedido da corrida, para "retomar" a
+	// repescagem ou a visão pausadas pela captura (captura.go).
+	pedidoRepescagem PedidoRepescagem
+	pedidoVisao      PedidoVisao
+	// pausando: PausaAgora pediu a pausa (captura.go).
+	pausando atomic.Bool
 }
 
 // deRastreio diz se a corrida é o rastreio id (e não repescagem nem visão avulsa).
@@ -355,7 +369,7 @@ func (f *Fila) Cancela(id int64) error {
 // encerraPasses fecha como cancelado todo passe que não terminou: o que tem
 // amostras de trabalho é compactado (nada fica nas tabelas de trabalho).
 func (f *Fila) encerraPasses(ctx context.Context, rastreioID, gameID int64, base Calibracao) {
-	ps, err := lePasses(f.d.DB, `WHERE p.rastreio_id = ? AND p.estado NOT IN ('concluido','cancelado') ORDER BY p.ordem`, rastreioID)
+	ps, err := lePasses(f.d.DB, `WHERE p.rastreio_id = ? AND p.estado NOT IN ('concluido','cancelado','ruim') ORDER BY p.ordem`, rastreioID)
 	if err != nil {
 		log.Printf("rastreio: encerrar passes de %d: %v", rastreioID, err)
 		return
@@ -462,58 +476,113 @@ func (f *Fila) corre(ctx context.Context, c *corrida) {
 	m, nomeNoJogo := f.novoMotor(sess, pt, lt, cfg, ex)
 	ex.Emite("replay_aberto", map[string]any{"duracao_ms": int64(sess.Duracao * 1000), "largura": sess.Largura, "altura": sess.Altura})
 
-	ps, err := lePasses(f.d.DB, `WHERE p.rastreio_id = ? AND p.estado NOT IN ('concluido','cancelado') ORDER BY p.ordem`, id)
+	ps, err := lePasses(f.d.DB, `WHERE p.rastreio_id = ? AND p.estado NOT IN ('concluido','cancelado','ruim') ORDER BY p.ordem`, id)
 	if err != nil {
 		falha("ler os passes: " + err.Error())
 		return
 	}
-	for i, p := range ps {
-		// Pausa graciosa: pedida durante o passe anterior, vale antes deste.
-		if i > 0 && c.pausarNoFim.Load() {
-			mudaEstadoRastreio(f.d.DB, id, Pausado, "")
-			ex.Emite("pausado", map[string]any{"rastreio_id": id, "motivo": "pausa pedida: o passe em andamento terminou"})
-			return
+	// rodaLista roda os passes em ordem; false = a corrida parou (pausa,
+	// cancelamento, falha: já tratado).
+	rodaLista := func(ps []Passe, primeiro bool) bool {
+		for i, p := range ps {
+			// Pausa graciosa: pedida durante o passe anterior, vale antes deste.
+			if (i > 0 || !primeiro) && c.pausarNoFim.Load() {
+				mudaEstadoRastreio(f.d.DB, id, Pausado, "")
+				ex.Emite("pausado", map[string]any{"rastreio_id": id, "motivo": "pausa pedida: o passe em andamento terminou"})
+				f.anotaParada(Parada{Tipo: TipoRastreio, ID: id, GameID: r.GameID, Motivo: "pausa pedida ao fim do passe"})
+				return false
+			}
+			nome, ok := nomeNoJogo[p.ParticipanteID]
+			if !ok {
+				mudaEstadoPasse(f.d.DB, p.ID, Falhou, "jogador não encontrado no replay")
+				continue
+			}
+			p = f.recomecaSeRuim(ex, p, r)
+			time := timeDe(f.d.DB, r.GameID, p.ParticipanteID)
+			a := alvo{pid: p.ParticipanteID, nome: nome, time: time}
+			st, err := m.rodaPasse(ctx, p, a, r.TFimMs)
+			// O eventdata só tem o que passou desde o último seek: coleta antes da
+			// repescagem (que volta o replay).
+			m.coletaEventos(r.GameID)
+			if err != nil {
+				f.trataParada(ctx, ex, r, err, m.cal)
+				return false
+			}
+			// Passe ruim (qualidade_passe.go): não repesca (regravaria buracos de
+			// um passe que não vale), fecha como "ruim" e a fila refaz no fim.
+			brutas, _ := leBrutas(f.d.DB, p.ID, math.MinInt64, math.MaxInt64)
+			av := AvaliaAmostras(brutas, f.d.Config.AmostrasPorSegundo)
+			estado, motivo := Concluido, ""
+			var resc ResumoRepescagem
+			if av.Ruim {
+				estado, motivo = Ruim, av.Motivo
+			} else {
+				// Repescagem dos buracos, com o replay ainda aberto e antes de fechar o passe.
+				if resc, err = m.repescaNoFim(ctx, p, a); err != nil {
+					f.trataParada(ctx, ex, r, err, m.cal)
+					return false
+				}
+			}
+			p, _ = LePasse(f.d.DB, p.ID)
+			res, err := finalizaPasse(f.d.DB, p, lt, time, m.cal, estado, motivo)
+			if err != nil {
+				falha("fechar o passe: " + err.Error())
+				return false
+			}
+			if estado == Concluido {
+				if conf, err := conferePasse(f.d.DB, f.d.Config.Riot, p); err != nil {
+					logConferencia(p, err)
+				} else if conf != nil {
+					ex.Emite("conferencia_riot", map[string]any{"passe_id": p.ID, "n": conf.N, "iguais": conf.Iguais,
+						"maior_dif": conf.MaiorDif, "campos": conf.Campos})
+					n, ig := int64(conf.N), int64(conf.Iguais)
+					if c := AvaliaContagem(av.Vivas, av.SemTrava, av.Taxa, 0, &n, &ig); c.Ruim {
+						estado, motivo = Ruim, c.Motivo
+						if err := marcaRuim(f.d.DB, p.ID, motivo); err != nil {
+							log.Printf("rastreio: marcar o passe %d como ruim: %v", p.ID, err)
+						}
+					}
+				}
+			}
+			fim := map[string]any{"passe_id": p.ID, "participante_id": p.ParticipanteID, "estatisticas": st,
+				"amostras": res.Amostras, "taxa": res.Taxa, "bytes": res.Bytes, "bytes_time": res.BytesTime, "cadeia": res.Cadeia,
+				"calibracao": map[string]any{"modo": res.Calibracao.Modo, "pontos": res.Calibracao.Pontos,
+					"erro_mediano": res.Calibracao.ErroMediano, "erro_maximo": res.Calibracao.ErroMaximo},
+				"repescagem": resc, "estado": estado, "avaliacao": av}
+			if estado == Ruim {
+				fim["motivo"] = motivo
+				log.Printf("rastreio %d: passe %d (participante %d) %s", id, p.ID, p.ParticipanteID, motivo)
+				ex.Emite("passe_ruim", map[string]any{"passe_id": p.ID, "participante_id": p.ParticipanteID, "motivo": motivo,
+					"avaliacao": av, "refaz_de": p.RefazDe})
+			}
+			ex.Emite("passe_fim", fim)
+			if estado == Concluido && f.d.AoFecharPasse != nil {
+				f.d.AoFecharPasse(r.GameID)
+			}
 		}
-		nome, ok := nomeNoJogo[p.ParticipanteID]
-		if !ok {
-			mudaEstadoPasse(f.d.DB, p.ID, Falhou, "jogador não encontrado no replay")
-			continue
-		}
-		time := timeDe(f.d.DB, r.GameID, p.ParticipanteID)
-		a := alvo{pid: p.ParticipanteID, nome: nome, time: time}
-		st, err := m.rodaPasse(ctx, p, a, r.TFimMs)
-		// O eventdata só tem o que passou desde o último seek: coleta antes da
-		// repescagem (que volta o replay).
-		m.coletaEventos(r.GameID)
+		return true
+	}
+	if !rodaLista(ps, true) {
+		return
+	}
+	// Passe ruim é refeito UMA vez, no fim (MaxRefacoesAutomaticas), na mesma
+	// abertura do replay: a causa pode ter passado (a pessoa parou de usar o
+	// computador).
+	refeitos, err := refacoesAutomaticas(f.d.DB, r)
+	if err != nil {
+		falha("criar os passes que refazem os ruins: " + err.Error())
+		return
+	}
+	if len(refeitos) > 0 {
+		ex.Emite("refazendo", map[string]any{"rastreio_id": id, "participantes": refeitos,
+			"texto": fmt.Sprintf("%d passe(s) ruim(ns) refeito(s) uma vez no fim: participantes %v", len(refeitos), refeitos)})
+		novos, err := lePasses(f.d.DB, `WHERE p.rastreio_id = ? AND p.estado = 'pendente' AND p.refaz_de <> 0 ORDER BY p.ordem`, id)
 		if err != nil {
-			f.trataParada(ctx, ex, r, err, m.cal)
+			falha("ler os passes novos: " + err.Error())
 			return
 		}
-		// Repescagem dos buracos, com o replay ainda aberto e antes de fechar o passe.
-		resc, err := m.repescaNoFim(ctx, p, a)
-		if err != nil {
-			f.trataParada(ctx, ex, r, err, m.cal)
+		if !rodaLista(novos, len(ps) == 0) {
 			return
-		}
-		p, _ = LePasse(f.d.DB, p.ID)
-		res, err := finalizaPasse(f.d.DB, p, lt, time, m.cal, Concluido, "")
-		if err != nil {
-			falha("fechar o passe: " + err.Error())
-			return
-		}
-		if conf, err := conferePasse(f.d.DB, f.d.Config.Riot, p); err != nil {
-			logConferencia(p, err)
-		} else if conf != nil {
-			ex.Emite("conferencia_riot", map[string]any{"passe_id": p.ID, "n": conf.N, "iguais": conf.Iguais,
-				"maior_dif": conf.MaiorDif, "campos": conf.Campos})
-		}
-		ex.Emite("passe_fim", map[string]any{"passe_id": p.ID, "participante_id": p.ParticipanteID, "estatisticas": st,
-			"amostras": res.Amostras, "taxa": res.Taxa, "bytes": res.Bytes, "bytes_time": res.BytesTime, "cadeia": res.Cadeia,
-			"calibracao": map[string]any{"modo": res.Calibracao.Modo, "pontos": res.Calibracao.Pontos,
-				"erro_mediano": res.Calibracao.ErroMediano, "erro_maximo": res.Calibracao.ErroMaximo},
-			"repescagem": resc})
-		if f.d.AoFecharPasse != nil {
-			f.d.AoFecharPasse(r.GameID)
 		}
 	}
 	// Os passes de visão de time pedidos com o rastreio, no fim e na mesma
@@ -527,6 +596,7 @@ func (f *Fila) corre(ctx context.Context, c *corrida) {
 		if (i > 0 || len(ps) > 0) && c.pausarNoFim.Load() {
 			mudaEstadoRastreio(f.d.DB, id, Pausado, "")
 			ex.Emite("pausado", map[string]any{"rastreio_id": id, "motivo": "pausa pedida: o passe em andamento terminou"})
+			f.anotaParada(Parada{Tipo: TipoRastreio, ID: id, GameID: r.GameID, Motivo: "pausa pedida ao fim do passe"})
 			return
 		}
 		if err := f.passeVisao(ctx, m, pv); err != nil {
@@ -535,7 +605,31 @@ func (f *Fila) corre(ctx context.Context, c *corrida) {
 		}
 	}
 	mudaEstadoRastreio(f.d.DB, id, Concluido, "")
-	ex.Emite("concluido", map[string]any{"rastreio_id": id})
+	fim := map[string]any{"rastreio_id": id, "refeitos": refeitos, "ruins": ainda(f.d.DB, id)}
+	ex.Emite("concluido", fim)
+}
+
+// ainda: os participantes do rastreio que terminaram só com passe ruim (nem
+// a refação saiu boa). É o "resumo" do fim: a tela diz quais refazer.
+func ainda(db *banco.DB, rastreioID int64) []int {
+	ps, err := lePasses(db, `WHERE p.rastreio_id = ? ORDER BY p.ordem`, rastreioID)
+	if err != nil {
+		return []int{}
+	}
+	bom := map[int]bool{}
+	for _, p := range ps {
+		if p.Estado == Concluido {
+			bom[p.ParticipanteID] = true
+		}
+	}
+	r, visto := []int{}, map[int]bool{}
+	for _, p := range ps {
+		if p.Estado == Ruim && !bom[p.ParticipanteID] && !visto[p.ParticipanteID] {
+			visto[p.ParticipanteID] = true
+			r = append(r, p.ParticipanteID)
+		}
+	}
+	return r
 }
 
 // passeVisao roda e fecha um passe de visão. Erro devolvido = parada da
@@ -594,6 +688,7 @@ func (f *Fila) novoMotor(sess *replay.Sessao, pt partida.Partida, lt LinhaDoTemp
 	m := &motor{db: f.d.DB, s: sess, d: sess.Deps(), cfg: cfg, ex: ex, lt: lt,
 		cal: CalibracaoPadrao(sess.Largura, sess.Altura), pidDe: map[string]int{}}
 	m.d.Relogio = f.d.Replay.Relogio
+	m.aoEsperar = func(e *EsperaUsuario) { f.esperando.Store(e) }
 	nomeNoJogo := map[int]string{}
 	for _, part := range pt.Participantes {
 		for _, j := range sess.Jogadores {
@@ -640,9 +735,18 @@ func (f *Fila) trataParada(ctx context.Context, ex *web.Execucao, r Rastreio, er
 	}
 	switch {
 	case errors.Is(err, ErrPausado):
-		marcaRodando(Pausado, "")
-		mudaEstadoRastreio(f.d.DB, r.ID, Pausado, "")
-		ex.Emite("pausado", map[string]any{"rastreio_id": r.ID})
+		// Pausa pedida (o botão, o atalho) ou decidida pelo motor (a pessoa
+		// usando o computador além do teto, o disjuntor de novo): o motivo fica
+		// no rastreio e a tela/o aviso do sistema mostram.
+		motivo := MotivoPausa(err)
+		marcaRodando(Pausado, motivo)
+		mudaEstadoRastreio(f.d.DB, r.ID, Pausado, motivo)
+		ev := map[string]any{"rastreio_id": r.ID}
+		if motivo != "" {
+			ev["motivo"] = motivo
+		}
+		ex.Emite("pausado", ev)
+		f.anotaParada(Parada{Tipo: TipoRastreio, ID: r.ID, GameID: r.GameID, Motivo: motivo})
 	case errors.Is(err, ErrCancelado):
 		f.encerraPasses(context.Background(), r.ID, r.GameID, base)
 		mudaEstadoRastreio(f.d.DB, r.ID, Cancelado, "")
@@ -652,6 +756,7 @@ func (f *Fila) trataParada(ctx context.Context, ex *web.Execucao, r Rastreio, er
 		mudaEstadoRastreio(f.d.DB, r.ID, Pausado, err.Error())
 		ex.Emite("aviso", map[string]string{"texto": err.Error()})
 		ex.Emite("pausado", map[string]any{"rastreio_id": r.ID, "motivo": err.Error()})
+		f.anotaParada(Parada{Tipo: TipoRastreio, ID: r.ID, GameID: r.GameID, Motivo: err.Error()})
 	default:
 		msg := err.Error()
 		if _, frase, ok := lcu.StatusHTTP(err); ok {

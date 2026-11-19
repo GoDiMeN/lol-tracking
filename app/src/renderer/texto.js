@@ -319,6 +319,9 @@ export function pilulaPasse(passe) {
       return { classe: 'n', texto: 'cancelado' };
     case 'falhou':
       return { classe: 'cr', texto: 'erro' };
+    case 'ruim':
+      // Fechou com a câmera fora do jogador (ou taxa baixa): não vale como dado (rastreio/qualidade_passe.go).
+      return { classe: 'cr', texto: 'ruim (não vale)' };
   }
   return { classe: 'n', texto: passe.estado || '' };
 }
@@ -333,7 +336,7 @@ export const ESTADOS_RASTREIO = {
 
 // progressoPasse: 0–1 do passe dentro do trecho do rastreio.
 export function progressoPasse(passe, rastreio) {
-  if (passe.estado === 'concluido') return 1;
+  if (passe.estado === 'concluido' || passe.estado === 'ruim') return 1;
   const ini = rastreio?.t_inicio_ms || 0;
   const fim = rastreio?.t_fim_ms > 0 ? rastreio.t_fim_ms : passe.duracao_ms || 0;
   if (fim <= ini) return 0;

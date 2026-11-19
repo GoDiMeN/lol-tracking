@@ -50,7 +50,7 @@ func (m *motor) repesca(ctx context.Context, p Passe, a alvo, bs []Buraco, quand
 			as, es, err := m.regrava(ctx, p, a, b)
 			var fase *replay.ErroFase
 			switch {
-			case err != nil && (ctx.Err() != nil || errors.As(err, &fase)):
+			case err != nil && (ctx.Err() != nil || errors.As(err, &fase) || errors.Is(err, ErrPausado)):
 				if ctx.Err() != nil {
 					err = context.Cause(ctx)
 				}
@@ -112,10 +112,17 @@ func (m *motor) regrava(ctx context.Context, p Passe, a alvo, b Buraco) ([]Amost
 	var as []Amostra
 	var es []EstadoJogador
 	pr := progresso{TAtualMs: ini}
-	_, err := m.segue(ctx, trecho{p: p, a: a, inicio: ini, fim: fim, pr: &pr, repescagem: true,
+	_, err := m.segueComEspera(ctx, trecho{p: p, a: a, inicio: ini, fim: fim, pr: &pr, repescagem: true,
 		destino: func(x []Amostra, y []EstadoJogador, _ progresso) error {
 			as = append(as, x...)
 			es = append(es, y...)
+			return nil
+		},
+		// A espera pela pessoa no meio do trecho: o que veio sem a câmera depois
+		// da última amostra boa sai, e o trecho volta dali.
+		recua: func(ateMs int64) error {
+			as = filtraAte(as, ateMs, func(a Amostra) int64 { return a.TMs })
+			es = filtraAte(es, ateMs, func(e EstadoJogador) int64 { return e.TMs })
 			return nil
 		}})
 	return as, es, err
@@ -140,4 +147,15 @@ func (m *motor) repescaNoFim(ctx context.Context, p Passe, a alvo) (ResumoRepesc
 		log.Printf("rastreio: gravar o resumo da repescagem do passe %d: %v", p.ID, err)
 	}
 	return res, nil
+}
+
+// filtraAte fica só com o que é de até ateMs.
+func filtraAte[T any](l []T, ateMs int64, t func(T) int64) []T {
+	r := l[:0]
+	for _, x := range l {
+		if t(x) <= ateMs {
+			r = append(r, x)
+		}
+	}
+	return r
 }

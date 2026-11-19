@@ -468,3 +468,87 @@ refeito com as posições rastreadas, sem abrir o replay.
      perto a 2 400 e a sentinela azul a 2 600 — provavelmente as tropas azuis da rota (não conferido).
 - **NÃO verificado no jogo**: a taxa a 4× (a próxima passada loga o ciclo); se o atraso do minimapa é tempo real (a 4× seriam
   ~88 ms de jogo) ou de jogo; os ~20 ms do ciclo a 8× que não aparecem nas partes medidas; os casos 2 e 3 na tela.
+
+### 9.2 Onde o indeterminado cai e o que dá para decidir (2026-11-18; partida 3305449546, só no DADO, sem o jogo)
+
+Medido com o bruto dos dois passes (5 533 + 5 557 capturas) e as posições dos 10 passes; nada de jogo aberto.
+
+- **Onde cai (antes)**: azul 10,7% do tempo dos inimigos (coberto 9,0, aliados 1,0, borda 0,2, anel sem dono 0,2, sem
+  posição 0,2); vermelho 16,6% (coberto 13,3, aliados 1,4, sem posição 1,2 — 97 s do Master Yi —, anel sem dono 0,3, borda
+  0,2, painel 0,2). Por distância ao aliado do observador mais perto: a menos de 600 unidades, 24% (azul) e **92%**
+  (vermelho); 600–1 200, 16% / 35%; 2 000–3 000, 10% / 7%; acima de 3 000, 4–5%. Por distância (px) ao campeão mais perto:
+  < 8 px 32% / 41%; 16–20 px 16% / 27%; ≥ 20 px 1–4%. **Em volta dos eventos**: −20 s a +5 s de cada abate (atacantes vistos
+  pelo time da vítima) 31% (coberto 27,6%); separado, −20 a −5 s 24% e −5 a +5 s **42%**; trechos `lutando` 29,5%,
+  `gankando` 14,6%, `dive` 13,5%.
+- **Ordem de desenho**: os retratos do VERMELHO são desenhados por cima dos do azul, nas duas visões
+  (`rastreio.TimeDesenhadoPorCima`). Visão azul: aliado azul a < 14 px de um vermelho à vista é achado em 10% (756
+  capturas), o vermelho ao lado de um azul em 81%; visão vermelha: o vermelho ao lado de um azul à vista em 100% (72), o azul
+  ao lado de um vermelho em 8% (917). Nas capturas de 2026-11-17 a Diana (azul) é a que sai "meio coberta" pela Orianna
+  (vermelha). Dentro do mesmo time a ordem não é firme (o de número maior fica por cima em 63–97% dos pares). Consequência: um
+  inimigo vermelho (visão azul) só pode ser escondido por outro vermelho; o azul (visão vermelha), por qualquer retrato. A
+  decisão só usa a regra quando, perto do inimigo, só há aliados do observador (sem colega dele a < 20 px); o "fora" que sai
+  só por ela e cai, curto, entre dois visíveis volta a indeterminado (25% dessas capturas estavam entre dois visíveis, a
+  mesma taxa dos "fora" antigos perto de um aliado, 23%).
+- **Fora do mapa** (`VisForaDoMapa`): trecho de 2+ amostras sem câmera com a trava perdida e a seleção no jogador (101 trechos do
+  Master Yi de 1,0–1,6 s, a Investida Alfa; 13 teleportes de outros). Na visão azul, com o Yi nesses trechos, o número de anéis
+  azuis = aliados vivos em 3% das capturas (29% com ele à vista): o anel dele some do minimapa. Vira estado próprio, fora da
+  conta do indeterminado.
+- **Continuidade** (`rastreio.inferirTrechos`, marcado `inferido`): indeterminado entre dois visíveis encostados, até 3 s, com
+  aliado do observador a até 1 200 em todas as capturas (ou até 1 s sem conferir); entre dois "fora", até 3 s, a mais de 2 000
+  de todo aliado do observador (nenhum sem posição) e a mais de 1 500 das sentinelas lidas. Nunca através de uma troca, nunca
+  sem posição. Torres e tropas não entram (não são lidas): por isso é "inferido".
+- **Arcos** (anéis parciais): o bruto até aqui só guardava os anéis com cobertura ≥ 0,62 (centro e cobertura), então nesta
+  partida não há como atribuir os retratos encostados pelos arcos. A partir de agora o passe grava também os arcos (cobertura
+  0,30–0,62) e, nos dois, a máscara das 64 direções em que o anel apareceu (5ª coluna do TSV, `:hex` na marca); a decisão dá
+  "visível" a um inimigo sem anel inteiro quando há um arco a ≤ 6 px do lugar dele e ≥ 85% das direções que faltam caem
+  embaixo de um retrato que pode estar por cima (`rastreio.faltaExplicada`). Testado só com imagem sintética (o desenho do jogo
+  falso); nas 4 capturas de 2026-11-17 a leitura acha 0 arcos.
+- **Depois** (refeito na cópia): azul 10,7% → **7,4%** indeterminado (2,8% herdado), vermelho 16,6% → **13,1%** (2,6% herdado; 1,0%
+  fora do mapa). Em volta dos abates, −20 a −5 s 24% → 19%, −5 a +5 s 42% → 33%. O que sobra no vermelho é quase todo o azul
+  embaixo de um vermelho perto da luta (coberto 11,5%): é o caso que os arcos vão resolver nos próximos passes.
+- **Pergunta dos abates** (`analise.VisaoAntes`, 81 abates): nos 15 s antes, o matador sai "sim" em 77 e "não dá para saber" em
+  4, antes e depois (atacantes: 168 sim, 3 não, 12 não dá); a janela de 15 s quase sempre pega o atacante já lutando. "Antes de
+  chegar a 1 400 da vítima" (67 matadores com a chegada calculada): firme em 63 → 64 (48 sim, 15 → 16 não); todos os
+  atacantes 133 → 136 de 141; caçador inimigo 39 → 41 de 43.
+- **Não verificado no jogo**: a ordem de desenho fora desta partida (outra resolução, outro patch, campeão selecionado); se o
+  Yi some mesmo do minimapa na Investida Alfa (só pela contagem de anéis); a leitura dos arcos em retratos de verdade (o anel
+  do jogo tem contorno e brilho que o sintético não tem); o "fora" pela ordem de desenho em mato (o inimigo ao lado de um aliado
+  e escondido).
+
+## 10. Os passes ruins da 3305486988 e a pessoa usando o computador (2026-11-18; medido no DADO, não no jogo)
+
+Rastreio 9, 4×, 9 passes. Os passes 1–3 (participantes 1, 2, 3) saíram bons: taxa 3,98–3,99, 0,3% sem trava, 1–5 teclas
+duplas, Riot 252/252 a 270/270. Os passes 38, 39, 40 (participantes 4, 5, 6) fecharam **concluídos** com 66–78% das amostras
+sem a câmera, taxa 2,18–2,35, 844–933 teclas duplas, 0 pontos de calibração; o 41 (participante 8) foi pausado no meio igual.
+O dono estava usando o computador e viu o replay "aleatório, sem escolher personagem".
+
+- **Desde a primeira amostra** do passe 38 (0:20 de jogo), e nos 39, 40 e no 41 até 20:36: nenhuma amostra com a câmera, e
+  `selecao_ok` falso em **todas** as amostras sem trava (a seleção do replay nunca foi o jogador). A câmera (nas linhas de
+  trabalho do 41, que guardam `cam_x/cam_z`) ficou parada em (8268, 4673) os primeiros 13 s e depois pulou pelo mapa —
+  (7 400, 6 100) → (12 224, 982) → (2 705, 11 507) em poucos segundos: é a "Directed Camera" (seção 3), o que o dono viu.
+- A cada minuto de jogo, ~28 buracos de ~1,3 s entre amostras (~37 s de 60): o motor parado em `ApertaDuplo` (~0,33 s real
+  = 1,3 s de jogo a 4×). Isso é a taxa de 2,2: metade do tempo de jogo passou com o motor apertando tecla.
+- O passe 41 **destravou sozinho** aos 20:36,6 de jogo (≈ 22:29:16 no relógio), na primeira tecla depois, e ficou travado até a
+  pausa (22:29:52), sem nenhuma retravada. A última tecla que funcionou antes foi a da repescagem do passe 37 (~21:28,
+  `selecao_ok` em todas as 15 amostras do trecho regravado); a primeira que falhou, a do começo do passe 38 (21:28:17).
+- **Por que 900 tentativas sem desistir:** `passoRetrava` desistia depois de `MaxTentativasTrava` (5), mas o laço começava
+  outra retravada 1 s depois (`LimiteSemTravaMs`), para sempre: 187 retravadas × 5 = 935 ≈ 933. E o passe fechava como
+  concluído qualquer que fosse o dado; a repescagem ainda gastava 7–12 trechos nele.
+- **O que o dado diz e o que não diz.** As teclas saíram (o `Foco` não falhou: falha de foco derruba o passe com erro, e
+  nenhum passe falhou) e não fizeram efeito no jogo; não é a pessoa apertando 1–5/QWERT no replay (isso seguraria a câmera
+  em outro jogador, não a deixaria dirigida e pulando). A hipótese que sobra é a de o jogo não receber a tecla enquanto a
+  pessoa usava outra janela (o `SetForegroundWindow` com `AttachThreadInput` põe o jogo "na frente" mas o jogo não trata a
+  entrada injetada; ou a entrada da pessoa e a do app se misturam), e de ter voltado a funcionar quando ela parou ou clicou no
+  replay. **Não dá para ter certeza com o que foi gravado** (nada sobre a janela da frente, a ociosidade da pessoa nem o
+  nome da seleção). A partir de agora cada passe grava `passes.diagnostico` (dados.md): quantas teclas saíram, quantas
+  vezes o jogo não estava na frente, de que programa era a janela da frente antes de cada tecla, quantas foram recusadas
+  porque a pessoa usava o computador, e o motivo de cada amostra viva sem a câmera (seleção vazia / em outro / fora da tela).
+- **O que mudou** (código em `replay/presenca.go`, `rastreio/uso.go`, `rastreio/qualidade_passe.go`, `server/captura`):
+  tecla nenhuma (nem o foco) com a pessoa usando o computador (entrada há < 3 s pelo `GetLastInputInfo`, descontadas as do
+  app, ou modificador apertado): o trecho espera com o replay pausado; disjuntor que para o trecho e pausa a captura; passe
+  ruim que não vale e é refeito uma vez; pausa/retomada da captura por atalho global, botão e bandeja. Pelo critério novo,
+  no banco real só os passes 38, 39 e 40 (de 40 concluídos) são ruins; nenhum outro concluído passa de 5% sem trava ou fica
+  abaixo de 3,6 de taxa.
+- **NÃO verificado no jogo:** se o `GetLastInputInfo` conta o `SetCursorPos` do `Foco` (descontado de todo jeito); se a tecla
+  volta a funcionar sozinha quando a pessoa para (o caso do 41 sugere que sim); se pausar e despausar o replay pela API mexe
+  na seleção (a volta faz seek e retrava de todo jeito); o atalho global com o jogo em tela cheia exclusiva.

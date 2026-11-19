@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { lerRota, montaRota, itemDoMenu } from './rota.js';
-import { $, el, preferencia, aplicaTema, TEMA_PADRAO } from './ui.js';
+import { $, el, preferencia, aplicaTema, TEMA_PADRAO, toast } from './ui.js';
 import { desenha as jogadores } from './views/jogadores.js';
 import { desenha as rastreio } from './views/rastreio.js';
 import { desenha as partidas } from './views/partidas.js';
@@ -12,9 +12,13 @@ import { desenha as partida } from './views/partida.js';
 import { desenha as estudo } from './views/estudo.js';
 import { desenha as replay } from './views/replay.js';
 import { desenha as configuracoes } from './views/configuracoes.js';
+import { desenha as ia } from './views/ia.js';
+import { desenha as especialista } from './views/especialista.js';
+import { desenha as ranking } from './views/ranking.js';
 import * as telaCheia from './telacheia.js';
+import { botaoDaCaptura } from './captura.js';
 
-const VISTAS = { jogadores, rastreio, partidas, partida, estudo, replay, configuracoes };
+const VISTAS = { jogadores, rastreio, partidas, partida, estudo, especialista, ranking, replay, ia, configuracoes };
 
 // O estado do cliente é de todas as telas: a barra de título, o botão Rastrear, as Configurações.
 let ultimoEstado = null;
@@ -52,6 +56,9 @@ async function atualizaStatus() {
   try {
     const e = await api.estado();
     ultimoEstado = e;
+    // O Estudo só existe neste servidor com LOL_ESTUDO=1: desligado, o item some do menu.
+    const itemEstudo = document.querySelector('.menu a[data-menu="estudo"]');
+    if (itemEstudo) itemEstudo.hidden = e.estudo === false;
     if (e.lcu.conectado) {
       ponto.className = 'ponto ok';
       const quem = e.invocador ? `${e.invocador.nome}#${e.invocador.tag}` : '';
@@ -84,6 +91,57 @@ async function atualizaSelo() {
   } catch {
     selo.hidden = true;
   }
+}
+
+// O botão "Pausar captura"/"Retomar captura" da barra de título (captura.js). O estado vem de
+// GET /api/captura a cada 3 s e, dentro do app, também do processo principal (que acompanha o
+// atalho global Ctrl+Alt+P e a bandeja) na hora em que muda.
+let atalhoPausa = 'Ctrl+Alt+P';
+function mostraCaptura(estado) {
+  const bt = $('capturaBtn');
+  const b = botaoDaCaptura(estado, atalhoPausa);
+  bt.hidden = !b.visivel;
+  bt.textContent = b.texto;
+  bt.title = b.dica;
+  bt.className = `captura-btn ${b.classe}`;
+  bt.disabled = !b.acao;
+  bt.dataset.acao = b.acao || '';
+}
+async function atualizaCaptura() {
+  try {
+    mostraCaptura(await api.captura());
+  } catch {
+    mostraCaptura(null);
+  }
+}
+$('capturaBtn').addEventListener('click', async () => {
+  const bt = $('capturaBtn');
+  const acao = bt.dataset.acao;
+  if (!acao) return;
+  bt.disabled = true;
+  try {
+    if (acao === 'pausar') {
+      await api.pausaCaptura();
+      toast('Captura pausada: o replay está fechando. Para continuar, "Retomar captura".', 'ok');
+    } else {
+      await api.retomaCaptura();
+      toast('Captura retomada.', 'ok');
+    }
+  } catch (err) {
+    toast(err.message, 'erro');
+  }
+  await atualizaCaptura();
+  window.janelaApp?.captura?.atualiza?.();
+  atualizaSelo();
+});
+if (window.janelaApp?.captura) {
+  window.janelaApp.captura.aoMudar((estado) => mostraCaptura(estado));
+  window.janelaApp.captura
+    .atalho()
+    .then((a) => {
+      if (a) atalhoPausa = a.replace(/Control|CommandOrControl|CmdOrCtrl/g, 'Ctrl');
+    })
+    .catch(() => {});
 }
 
 let limpa = null;
@@ -119,6 +177,11 @@ async function roteia() {
     else a.removeAttribute('aria-current');
   }
 
+  // Estudo desligado no servidor: as telas dele não abrem (as rotas respondem 404).
+  if (ultimoEstado?.estudo === false && itemDoMenu(rota.vista) === 'estudo') {
+    raiz.replaceChildren(el('div', 'estado-tela vazio', 'O Estudo não está disponível neste servidor.'));
+    return;
+  }
   try {
     const r = await VISTAS[rota.vista](raiz, rota, ctx);
     if (minha !== geracao) {
@@ -173,6 +236,8 @@ window.addEventListener('keydown', (ev) => {
 window.addEventListener('hashchange', roteia);
 atualizaStatus().then(roteia);
 atualizaSelo();
+atualizaCaptura();
+setInterval(atualizaCaptura, 3000);
 // O cliente do LoL abre e fecha enquanto o app está aberto: a barra de título acompanha.
 setInterval(atualizaStatus, 15000);
 setInterval(atualizaSelo, 10000);

@@ -120,13 +120,37 @@ func Migra(db *banco.DB) error {
 		{"aprendizado_coletas", "jogadores_por_elo", fmt.Sprintf("INTEGER NOT NULL DEFAULT %d", JogadoresPorElo)},
 		{"aprendizado_elos", "paginas_vistas", "INTEGER NOT NULL DEFAULT 0"},
 		{"aprendizado_elos", "pedidos_liga", "INTEGER NOT NULL DEFAULT 0"},
+		// funcoes (JSON) e jogadores_por_funcao: a cota por rota (cotas.go). Coleta
+		// antiga: funcoes vazia (sem cota, ou a cota única da coluna funcao).
+		{"aprendizado_coletas", "funcoes", "TEXT NOT NULL DEFAULT ''"},
+		{"aprendizado_coletas", "jogadores_por_funcao", "INTEGER NOT NULL DEFAULT 0"},
+		// aproveitar: confere os outros 9 da partida escolhida (aproveita.go).
+		// Coleta antiga fica sem (o padrão do pedido novo é ligado).
+		{"aprendizado_coletas", "aproveitar", "INTEGER NOT NULL DEFAULT 0"},
+		// origem: "" = achado pela descoberta; "aproveitado" = estava na partida de
+		// outro jogador da coleta (origem_game_id, origem_jogador_id).
+		{"aprendizado_jogadores", "origem", "TEXT NOT NULL DEFAULT ''"},
+		{"aprendizado_jogadores", "origem_game_id", "INTEGER NOT NULL DEFAULT 0"},
+		{"aprendizado_jogadores", "origem_jogador_id", "INTEGER NOT NULL DEFAULT 0"},
+		// aproveitado: o passe a mais na abertura do replay de outra partida da coleta.
+		{"aprendizado_partidas", "aproveitado", "INTEGER NOT NULL DEFAULT 0"},
+		// Os dois componentes da pontuação da partida: a do jogador e o termo dos
+		// jogadores aproveitáveis (pontuacao = pontuacao_jogador + pontuacao_aproveitaveis).
+		{"aprendizado_partidas", "pontuacao_jogador", "REAL NOT NULL DEFAULT 0"},
+		{"aprendizado_partidas", "aproveitaveis", "INTEGER NOT NULL DEFAULT 0"},
+		{"aprendizado_partidas", "pontuacao_aproveitaveis", "REAL NOT NULL DEFAULT 0"},
+		// rankings (JSON [{elo, rota, ranking_id}]), ranking_patch e modo_ranking: a coleta
+		// que parte do ranking do Lane (ranking_coleta.go). Vazio = descoberta.
+		{"aprendizado_coletas", "rankings", "TEXT NOT NULL DEFAULT ''"},
+		{"aprendizado_coletas", "ranking_patch", "TEXT NOT NULL DEFAULT ''"},
+		{"aprendizado_coletas", "modo_ranking", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, n := range novas {
 		if err := banco.AdicionaColuna(db, n.tabela, n.coluna, n.def); err != nil {
 			return err
 		}
 	}
-	return nil
+	return migraElosVistos(db)
 }
 
 // Estados da coleta.
@@ -152,6 +176,8 @@ const (
 	PartidaRastreando = "rastreando"
 	PartidaPausada    = "pausada"
 	PartidaConcluida  = "concluida"
+	// PartidaIncompleta: o rastreio terminou, mas sobrou passe ruim (incompleta.go).
+	PartidaIncompleta = "incompleta"
 	PartidaErro       = "erro"
 	PartidaCancelada  = "cancelada"
 )
@@ -198,37 +224,51 @@ const (
 
 // Coleta é uma coleta com o resumo do progresso.
 type Coleta struct {
-	ID                  int64    `json:"id"`
-	Regiao              string   `json:"regiao"`
-	RegiaoNome          string   `json:"regiao_nome"`
-	Elos                []string `json:"elos"`
-	PartidasPorJogador  int      `json:"partidas_por_jogador"`
-	Quem                string   `json:"quem"`
-	Velocidade          float64  `json:"velocidade"`
-	SoDescobrir         bool     `json:"so_descobrir"`
-	EstudoID            int64    `json:"estudo_id"`
-	Funcao              string   `json:"funcao"`
-	Amostragem          bool     `json:"amostragem"`
-	JogadoresPorElo     int      `json:"jogadores_por_elo"`
-	Estado              string   `json:"estado"`
-	Fase                string   `json:"fase"`
-	PausaPedida         bool     `json:"pausa_pedida"`
-	Erro                string   `json:"erro"`
-	CriadoEm            string   `json:"criado_em"`
-	AtualizadoEm        string   `json:"atualizado_em"`
-	TerminadoEm         string   `json:"terminado_em"`
-	Jogadores           int      `json:"jogadores"`
-	JogadoresSemPartida int      `json:"jogadores_sem_partida"`
-	PartidasTotal       int      `json:"partidas_total"`
-	PartidasConcluidas  int      `json:"partidas_concluidas"`
-	PartidasComErro     int      `json:"partidas_com_erro"`
-	PassesTotal         int      `json:"passes_total"`
-	PassesConcluidos    int      `json:"passes_concluidos"`
-	Progresso           float64  `json:"progresso"`
-	EstimativaS         float64  `json:"estimativa_s"`
-	PartidaAtual        *int64   `json:"partida_atual"`
-	RastreioAtual       *int64   `json:"rastreio_atual"`
-	Execucao            *IDExec  `json:"execucao"`
+	ID                 int64    `json:"id"`
+	Regiao             string   `json:"regiao"`
+	RegiaoNome         string   `json:"regiao_nome"`
+	Elos               []string `json:"elos"`
+	PartidasPorJogador int      `json:"partidas_por_jogador"`
+	Quem               string   `json:"quem"`
+	Velocidade         float64  `json:"velocidade"`
+	SoDescobrir        bool     `json:"so_descobrir"`
+	EstudoID           int64    `json:"estudo_id"`
+	Funcao             string   `json:"funcao"`
+	// Funcoes e JogadoresPorFuncao: a cota por rota (vazia = sem cota: qualquer
+	// função até jogadores_por_elo). Com cota, JogadoresPorElo é a soma.
+	Funcoes            []string `json:"funcoes"`
+	JogadoresPorFuncao int      `json:"jogadores_por_funcao"`
+	// Aproveitar: confere os outros 9 da partida escolhida (aproveita.go);
+	// Aproveitados: quantos jogadores entraram assim.
+	Aproveitar   bool `json:"aproveitar"`
+	Aproveitados int  `json:"aproveitados"`
+	// Rankings: a coleta parte do ranking do Lane (vazio = descoberta);
+	// RankingPatch e ModoRanking: o patch e o modo das listas.
+	Rankings            []RankingDaColeta `json:"rankings"`
+	RankingPatch        string            `json:"ranking_patch"`
+	ModoRanking         string            `json:"modo_ranking"`
+	Amostragem          bool              `json:"amostragem"`
+	JogadoresPorElo     int               `json:"jogadores_por_elo"`
+	Estado              string            `json:"estado"`
+	Fase                string            `json:"fase"`
+	PausaPedida         bool              `json:"pausa_pedida"`
+	Erro                string            `json:"erro"`
+	CriadoEm            string            `json:"criado_em"`
+	AtualizadoEm        string            `json:"atualizado_em"`
+	TerminadoEm         string            `json:"terminado_em"`
+	Jogadores           int               `json:"jogadores"`
+	JogadoresSemPartida int               `json:"jogadores_sem_partida"`
+	PartidasTotal       int               `json:"partidas_total"`
+	PartidasConcluidas  int               `json:"partidas_concluidas"`
+	PartidasIncompletas int               `json:"partidas_incompletas"`
+	PartidasComErro     int               `json:"partidas_com_erro"`
+	PassesTotal         int               `json:"passes_total"`
+	PassesConcluidos    int               `json:"passes_concluidos"`
+	Progresso           float64           `json:"progresso"`
+	EstimativaS         float64           `json:"estimativa_s"`
+	PartidaAtual        *int64            `json:"partida_atual"`
+	RastreioAtual       *int64            `json:"rastreio_atual"`
+	Execucao            *IDExec           `json:"execucao"`
 }
 
 // IDExec é a referência à execução (SSE).
@@ -250,7 +290,20 @@ type EloDaColeta struct {
 	Aviso              string         `json:"aviso"`
 	PartidasTotal      int            `json:"partidas_total"`
 	PartidasConcluidas int            `json:"partidas_concluidas"`
-	ordem              int
+	// Aproveitados: jogadores do elo que entraram pela partida de outro.
+	Aproveitados int `json:"aproveitados"`
+	// Funcoes: achados/alvo por rota (a matriz elo × rota da tela); com cota,
+	// só as rotas pedidas; sem cota, as cinco com alvo 0 (só os achados).
+	Funcoes []ContagemFuncao `json:"funcoes"`
+	ordem   int
+}
+
+// ContagemFuncao: uma célula da matriz elo × rota.
+type ContagemFuncao struct {
+	Funcao       string `json:"funcao"`
+	Achados      int    `json:"achados"`
+	Alvo         int    `json:"alvo"`
+	Aproveitados int    `json:"aproveitados"`
 }
 
 // JogadorDaColeta é um jogador escolhido para a coleta.
@@ -287,32 +340,49 @@ type JogadorDaColeta struct {
 	// instalado, 15 min ou mais, sem rendição antecipada), na função principal.
 	VitoriasRastreaveis int `json:"vitorias_rastreaveis"`
 	DerrotasRastreaveis int `json:"derrotas_rastreaveis"`
-	puuidRiot           string
-	puuidLCU            string
+	// Origem: "" (achado pela descoberta) ou "aproveitado" (estava na partida
+	// OrigemGameID de OrigemJogadorID); OrigemTexto: "aproveitado da partida de X".
+	Origem          string `json:"origem"`
+	OrigemGameID    int64  `json:"origem_game_id"`
+	OrigemJogadorID int64  `json:"origem_jogador_id"`
+	OrigemTexto     string `json:"origem_texto"`
+	puuidRiot       string
+	puuidLCU        string
 }
 
 // PartidaDaColeta é uma partida escolhida para rastrear.
 type PartidaDaColeta struct {
-	ID               int64   `json:"id"`
-	Regiao           string  `json:"regiao"`
-	JogadorID        int64   `json:"jogador_id"`
-	Elo              string  `json:"elo"`
-	GameID           int64   `json:"game_id"`
-	ParticipanteID   int     `json:"participante_id"`
-	CampeaoID        int     `json:"campeao_id"`
-	Campeao          string  `json:"campeao"`
-	Abates           int     `json:"abates"`
-	Mortes           int     `json:"mortes"`
-	Assistencias     int     `json:"assistencias"`
-	DuracaoS         int     `json:"duracao_s"`
-	Pontuacao        float64 `json:"pontuacao"`
-	Estado           string  `json:"estado"`
-	RastreioID       *int64  `json:"rastreio_id"`
-	PassesTotal      int     `json:"passes_total"`
-	PassesConcluidos int     `json:"passes_concluidos"`
-	Erro             string  `json:"erro"`
-	ordem            int
-	progresso        float64
+	ID             int64  `json:"id"`
+	Regiao         string `json:"regiao"`
+	JogadorID      int64  `json:"jogador_id"`
+	Elo            string `json:"elo"`
+	GameID         int64  `json:"game_id"`
+	ParticipanteID int    `json:"participante_id"`
+	CampeaoID      int    `json:"campeao_id"`
+	Campeao        string `json:"campeao"`
+	Abates         int    `json:"abates"`
+	Mortes         int    `json:"mortes"`
+	Assistencias   int    `json:"assistencias"`
+	DuracaoS       int    `json:"duracao_s"`
+	// Pontuacao = PontuacaoJogador (a do jogador, Pontuacao()) +
+	// PontuacaoAproveitaveis (PesoAproveitavel × Aproveitaveis).
+	Pontuacao              float64 `json:"pontuacao"`
+	PontuacaoJogador       float64 `json:"pontuacao_jogador"`
+	Aproveitaveis          int     `json:"aproveitaveis"`
+	PontuacaoAproveitaveis float64 `json:"pontuacao_aproveitaveis"`
+	// Aproveitado: o passe deste jogador vai na abertura do replay de outro.
+	Aproveitado      bool   `json:"aproveitado"`
+	Estado           string `json:"estado"`
+	RastreioID       *int64 `json:"rastreio_id"`
+	PassesTotal      int    `json:"passes_total"`
+	PassesConcluidos int    `json:"passes_concluidos"`
+	// PassesRuins / ParticipantesRuins: na partida rastreada, os jogadores
+	// pedidos que só têm passe ruim (incompleta.go); > 0 = "incompleta".
+	PassesRuins        int    `json:"passes_ruins"`
+	ParticipantesRuins []int  `json:"participantes_ruins"`
+	Erro               string `json:"erro"`
+	ordem              int
+	progresso          float64
 	// posicao e venceu: da partida inteira; só a escolha do estudo usa.
 	posicao string
 	venceu  bool
@@ -352,6 +422,12 @@ type novaColeta struct {
 	amostragem  bool
 	// jogadoresPorElo: 0 = JogadoresPorElo.
 	jogadoresPorElo int
+	funcoes         []string
+	jpf             int
+	aproveitar      bool
+	rankings        []RankingDaColeta
+	rankingPatch    string
+	modoRanking     string
 	// estudoID > 0: a coleta do estudo começa direto no rastreio, com estas partidas.
 	estudoID int64
 	partidas []PartidaDaColeta
@@ -375,11 +451,17 @@ func criaColeta(db *banco.DB, n novaColeta) (int64, error) {
 	if n.jogadoresPorElo <= 0 {
 		n.jogadoresPorElo = JogadoresPorElo
 	}
+	funcoes := ""
+	if len(n.funcoes) > 0 {
+		b, _ := json.Marshal(n.funcoes)
+		funcoes = string(b)
+	}
 	res, err := tx.Exec(`INSERT INTO aprendizado_coletas (regiao, elos, partidas_por_jogador, quem, velocidade, estado, fase,
-		so_descobrir, estudo_id, funcao, amostragem, jogadores_por_elo, criado_em, atualizado_em)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		so_descobrir, estudo_id, funcao, amostragem, jogadores_por_elo, criado_em, atualizado_em, funcoes, jogadores_por_funcao, aproveitar,
+		rankings, ranking_patch, modo_ranking)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.regiao, string(lista), n.ppj, n.quem, n.vel, Pausado, fase, b2i(n.soDescobrir), n.estudoID, n.funcao,
-		b2i(n.amostragem), n.jogadoresPorElo, agora, agora)
+		b2i(n.amostragem), n.jogadoresPorElo, agora, agora, funcoes, n.jpf, b2i(n.aproveitar), rankingsJSON(n.rankings), n.rankingPatch, n.modoRanking)
 	if err != nil {
 		return 0, err
 	}
@@ -462,35 +544,26 @@ func gravaJogador(db *banco.DB, coletaID int64, j JogadorDaColeta, ps []PartidaD
 	agora := banco.Agora()
 	res, err := tx.Exec(`INSERT INTO aprendizado_jogadores (coleta_id, regiao, elo, posicao, lp, puuid_riot, nome, tag, puuid_lcu,
 		campeao_id, campeao, fracao_campeao, partidas_solo, mono, divisao, vitorias, derrotas, taxa_vitoria, fresh_blood, veteran,
-		hot_streak, pontuacao_subida, estado, criado_em, funcao, fracao_funcao, vitorias_rastreaveis, derrotas_rastreaveis)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		hot_streak, pontuacao_subida, estado, criado_em, funcao, fracao_funcao, vitorias_rastreaveis, derrotas_rastreaveis,
+		origem, origem_game_id, origem_jogador_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		coletaID, j.Regiao, j.Elo, j.Posicao, j.LP, j.puuidRiot, j.Nome, j.Tag, j.puuidLCU, j.CampeaoID, j.Campeao,
 		j.FracaoCampeao, j.PartidasSolo, b2i(j.Mono), j.Divisao, j.Vitorias, j.Derrotas, j.TaxaVitoria, b2i(j.FreshBlood),
 		b2i(j.Veteran), b2i(j.HotStreak), j.PontuacaoSubida, j.Estado, agora, j.Funcao, j.FracaoFuncao,
-		j.VitoriasRastreaveis, j.DerrotasRastreaveis)
+		j.VitoriasRastreaveis, j.DerrotasRastreaveis, j.Origem, j.OrigemGameID, j.OrigemJogadorID)
 	if err != nil {
 		return 0, 0, fmt.Errorf("gravar jogador %s#%s: %w", j.Nome, j.Tag, err)
 	}
 	jid, _ := res.LastInsertId()
 	n := 0
 	for i, p := range ps {
-		// Com "todos", a partida inteira já é rastreada por quem chegou antes.
-		filtro := `SELECT COUNT(*) FROM aprendizado_partidas WHERE coleta_id = ? AND game_id = ? AND (participante_id = ? OR ? = 'todos')`
-		var ja int
-		if err := tx.QueryRow(filtro, coletaID, p.GameID, p.ParticipanteID, quem).Scan(&ja); err != nil {
+		ok, err := gravaPartidaTx(tx, coletaID, jid, j, p, i, quem)
+		if err != nil {
 			return 0, 0, err
 		}
-		if ja > 0 {
-			continue
+		if ok {
+			n++
 		}
-		if _, err := tx.Exec(`INSERT INTO aprendizado_partidas (coleta_id, jogador_id, regiao, elo, game_id, participante_id,
-			campeao_id, campeao, abates, mortes, assistencias, duracao_s, pontuacao, ordem, estado, atualizado_em)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			coletaID, jid, j.Regiao, j.Elo, p.GameID, p.ParticipanteID, p.CampeaoID, p.Campeao, p.Abates, p.Mortes,
-			p.Assistencias, p.DuracaoS, p.Pontuacao, i, PartidaPendente, agora); err != nil {
-			return 0, 0, err
-		}
-		n++
 	}
 	// Só descobrir: nenhuma partida é escolhida, e o jogador vale assim mesmo.
 	if n == 0 && j.Estado == JogadorComPartidas && ps != nil {
@@ -499,6 +572,38 @@ func gravaJogador(db *banco.DB, coletaID int64, j JogadorDaColeta, ps []PartidaD
 		}
 	}
 	return jid, n, tx.Commit()
+}
+
+// gravaPartidaTx põe uma partida do jogador jid na coleta. Não entra de novo a
+// mesma partida do mesmo participante (nunca dois passes do mesmo jogador na
+// mesma partida); com "todos" e sem ser aproveitado, a partida inteira já é
+// rastreada por quem chegou antes.
+func gravaPartidaTx(tx interface {
+	QueryRow(string, ...any) *sql.Row
+	Exec(string, ...any) (sql.Result, error)
+}, coletaID, jid int64, j JogadorDaColeta, p PartidaDaColeta, ordem int, quem string) (bool, error) {
+	filtro := `SELECT COUNT(*) FROM aprendizado_partidas WHERE coleta_id = ? AND game_id = ? AND (participante_id = ? OR (? = 'todos' AND ? = 0))`
+	var ja int
+	if err := tx.QueryRow(filtro, coletaID, p.GameID, p.ParticipanteID, quem, b2i(p.Aproveitado)).Scan(&ja); err != nil {
+		return false, err
+	}
+	if ja > 0 {
+		return false, nil
+	}
+	pj := p.PontuacaoJogador
+	if pj == 0 && p.Aproveitaveis == 0 {
+		pj = p.Pontuacao
+	}
+	if _, err := tx.Exec(`INSERT INTO aprendizado_partidas (coleta_id, jogador_id, regiao, elo, game_id, participante_id,
+		campeao_id, campeao, abates, mortes, assistencias, duracao_s, pontuacao, ordem, estado, atualizado_em,
+		pontuacao_jogador, aproveitaveis, pontuacao_aproveitaveis, aproveitado)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		coletaID, jid, j.Regiao, j.Elo, p.GameID, p.ParticipanteID, p.CampeaoID, p.Campeao, p.Abates, p.Mortes,
+		p.Assistencias, p.DuracaoS, p.Pontuacao, ordem, PartidaPendente, banco.Agora(), pj, p.Aproveitaveis,
+		p.PontuacaoAproveitaveis, b2i(p.Aproveitado)); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Recupera é para a subida do servidor: coleta "rodando" é de um processo que
@@ -520,7 +625,8 @@ func Recupera(db *banco.DB) error {
 // --- Leitura --------------------------------------------------------------------
 
 const colunasColeta = `id, regiao, elos, partidas_por_jogador, quem, velocidade, estado, fase, pausa_pedida, erro,
-	criado_em, atualizado_em, terminado_em, so_descobrir, estudo_id, funcao, amostragem, jogadores_por_elo`
+	criado_em, atualizado_em, terminado_em, so_descobrir, estudo_id, funcao, amostragem, jogadores_por_elo,
+	funcoes, jogadores_por_funcao, aproveitar, rankings, ranking_patch, modo_ranking`
 
 func leColetas(db *banco.DB, filtro string, args ...any) ([]Coleta, error) {
 	linhas, err := db.Query(`SELECT `+colunasColeta+` FROM aprendizado_coletas `+filtro, args...)
@@ -531,18 +637,29 @@ func leColetas(db *banco.DB, filtro string, args ...any) ([]Coleta, error) {
 	var l []Coleta
 	for linhas.Next() {
 		var c Coleta
-		var elos string
-		var pausa, so, amostra int
+		var elos, funcoes, rks string
+		var pausa, so, amostra, aprov int
 		if err := linhas.Scan(&c.ID, &c.Regiao, &elos, &c.PartidasPorJogador, &c.Quem, &c.Velocidade, &c.Estado, &c.Fase,
 			&pausa, &c.Erro, &c.CriadoEm, &c.AtualizadoEm, &c.TerminadoEm, &so, &c.EstudoID, &c.Funcao, &amostra,
-			&c.JogadoresPorElo); err != nil {
+			&c.JogadoresPorElo, &funcoes, &c.JogadoresPorFuncao, &aprov, &rks, &c.RankingPatch, &c.ModoRanking); err != nil {
 			return nil, err
 		}
-		c.PausaPedida, c.SoDescobrir, c.Amostragem = pausa == 1, so == 1, amostra == 1
+		c.PausaPedida, c.SoDescobrir, c.Amostragem, c.Aproveitar = pausa == 1, so == 1, amostra == 1, aprov == 1
 		if c.JogadoresPorElo <= 0 {
 			c.JogadoresPorElo = JogadoresPorElo
 		}
 		json.Unmarshal([]byte(elos), &c.Elos)
+		c.Rankings = []RankingDaColeta{}
+		if rks != "" {
+			json.Unmarshal([]byte(rks), &c.Rankings)
+		}
+		c.Funcoes = []string{}
+		if funcoes != "" {
+			json.Unmarshal([]byte(funcoes), &c.Funcoes)
+		} else if c.Funcao != "" {
+			// Coleta de antes da cota por rota: a função única vale como cota.
+			c.Funcoes, c.JogadoresPorFuncao = []string{c.Funcao}, c.JogadoresPorElo
+		}
 		l = append(l, c)
 	}
 	return l, linhas.Err()
@@ -581,16 +698,63 @@ func leElos(db *banco.DB, coletaID int64) ([]EloDaColeta, error) {
 		e.Nome = NomeElo[e.Elo]
 		e.ExigeMono = exigeMono(e.Elo)
 		e.Descartes = map[string]int{"nao_achado": 0, "nao_mono": 0, "sem_historico": 0, DescInativo: 0, DescVeterano: 0,
-			DescPoucasPartidas: 0, DescTravado: 0, DescSemPartida: 0, DescOutraFuncao: 0}
+			DescPoucasPartidas: 0, DescTravado: 0, DescSemPartida: 0, DescOutraFuncao: 0, DescRotaCompleta: 0}
 		json.Unmarshal([]byte(desc), &e.Descartes)
 		l = append(l, e)
 	}
-	return l, linhas.Err()
+	if err := linhas.Err(); err != nil {
+		return nil, err
+	}
+	linhas.Close()
+	col, err := LeColeta(db, coletaID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range l {
+		cont, aprov, err := contaPorFuncao(db, coletaID, l[i].Elo)
+		if err != nil {
+			return nil, err
+		}
+		cotas := col.cotas()
+		ordemF := FuncoesTodas
+		if cotas != nil {
+			ordemF = col.Funcoes
+		}
+		l[i].Funcoes = []ContagemFuncao{}
+		for _, f := range ordemF {
+			l[i].Funcoes = append(l[i].Funcoes, ContagemFuncao{Funcao: f, Achados: cont[f], Alvo: cotas[f], Aproveitados: aprov[f]})
+		}
+		for _, n := range aprov {
+			l[i].Aproveitados += n
+		}
+	}
+	return l, nil
+}
+
+// contaPorFuncao: jogadores da coleta no elo por função, e quantos aproveitados.
+func contaPorFuncao(db *banco.DB, coletaID int64, elo string) (map[string]int, map[string]int, error) {
+	linhas, err := db.Query(`SELECT funcao, COUNT(*), SUM(origem = 'aproveitado') FROM aprendizado_jogadores
+		WHERE coleta_id = ? AND elo = ? GROUP BY funcao`, coletaID, elo)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer linhas.Close()
+	cont, aprov := map[string]int{}, map[string]int{}
+	for linhas.Next() {
+		var f string
+		var n, a int
+		if err := linhas.Scan(&f, &n, &a); err != nil {
+			return nil, nil, err
+		}
+		cont[f], aprov[f] = n, a
+	}
+	return cont, aprov, linhas.Err()
 }
 
 const colunasJogador = `id, regiao, elo, posicao, lp, nome, tag, campeao_id, campeao, fracao_campeao, partidas_solo, mono, estado,
 	puuid_riot, puuid_lcu, divisao, vitorias, derrotas, taxa_vitoria, fresh_blood, veteran, hot_streak, pontuacao_subida,
-	funcao, fracao_funcao, vitorias_rastreaveis, derrotas_rastreaveis`
+	funcao, fracao_funcao, vitorias_rastreaveis, derrotas_rastreaveis, origem, origem_game_id, origem_jogador_id,
+	(SELECT o.nome || '#' || o.tag FROM aprendizado_jogadores o WHERE o.id = aprendizado_jogadores.origem_jogador_id)`
 
 func leJogadores(db *banco.DB, filtro string, args ...any) ([]JogadorDaColeta, error) {
 	linhas, err := db.Query(`SELECT `+colunasJogador+` FROM aprendizado_jogadores `+filtro, args...)
@@ -602,22 +766,30 @@ func leJogadores(db *banco.DB, filtro string, args ...any) ([]JogadorDaColeta, e
 	for linhas.Next() {
 		var j JogadorDaColeta
 		var mono, fresh, vet, hot int
+		var origemDe sql.NullString
 		if err := linhas.Scan(&j.ID, &j.Regiao, &j.Elo, &j.Posicao, &j.LP, &j.Nome, &j.Tag, &j.CampeaoID, &j.Campeao,
 			&j.FracaoCampeao, &j.PartidasSolo, &mono, &j.Estado, &j.puuidRiot, &j.puuidLCU, &j.Divisao, &j.Vitorias,
 			&j.Derrotas, &j.TaxaVitoria, &fresh, &vet, &hot, &j.PontuacaoSubida, &j.Funcao, &j.FracaoFuncao,
-			&j.VitoriasRastreaveis, &j.DerrotasRastreaveis); err != nil {
+			&j.VitoriasRastreaveis, &j.DerrotasRastreaveis, &j.Origem, &j.OrigemGameID, &j.OrigemJogadorID, &origemDe); err != nil {
 			return nil, err
 		}
 		j.Mono, j.FreshBlood, j.Veteran, j.HotStreak = mono == 1, fresh == 1, vet == 1, hot == 1
 		j.RiotID = j.Nome + "#" + j.Tag
 		j.Motivo = Motivo(j)
+		if j.Origem == OrigemAproveitado {
+			j.OrigemTexto = fmt.Sprintf("aproveitado da partida %d", j.OrigemGameID)
+			if origemDe.Valid {
+				j.OrigemTexto = fmt.Sprintf("aproveitado da partida de %s (%d)", origemDe.String, j.OrigemGameID)
+			}
+		}
 		l = append(l, j)
 	}
 	return l, linhas.Err()
 }
 
 const colunasPartida = `p.id, p.regiao, p.jogador_id, p.elo, p.game_id, p.participante_id, p.campeao_id, p.campeao, p.abates,
-	p.mortes, p.assistencias, p.duracao_s, p.pontuacao, p.ordem, p.estado, p.rastreio_id, p.erro`
+	p.mortes, p.assistencias, p.duracao_s, p.pontuacao, p.ordem, p.estado, p.rastreio_id, p.erro, p.pontuacao_jogador,
+	p.aproveitaveis, p.pontuacao_aproveitaveis, p.aproveitado`
 
 func lePartidas(db *banco.DB, filtro string, args ...any) ([]PartidaDaColeta, error) {
 	// LEFT JOIN: as partidas da coleta de um estudo não têm elo nem jogador da coleta.
@@ -632,9 +804,17 @@ func lePartidas(db *banco.DB, filtro string, args ...any) ([]PartidaDaColeta, er
 	for linhas.Next() {
 		var p PartidaDaColeta
 		var rid sql.NullInt64
+		var aprov int
 		if err := linhas.Scan(&p.ID, &p.Regiao, &p.JogadorID, &p.Elo, &p.GameID, &p.ParticipanteID, &p.CampeaoID, &p.Campeao,
-			&p.Abates, &p.Mortes, &p.Assistencias, &p.DuracaoS, &p.Pontuacao, &p.ordem, &p.Estado, &rid, &p.Erro); err != nil {
+			&p.Abates, &p.Mortes, &p.Assistencias, &p.DuracaoS, &p.Pontuacao, &p.ordem, &p.Estado, &rid, &p.Erro,
+			&p.PontuacaoJogador, &p.Aproveitaveis, &p.PontuacaoAproveitaveis, &aprov); err != nil {
 			return nil, err
+		}
+		p.Aproveitado = aprov == 1
+		p.ParticipantesRuins = []int{}
+		if p.PontuacaoJogador == 0 && p.Aproveitaveis == 0 {
+			// Partida de antes dos dois componentes: a pontuação é toda do jogador.
+			p.PontuacaoJogador = p.Pontuacao
 		}
 		if rid.Valid {
 			v := rid.Int64

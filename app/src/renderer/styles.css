@@ -135,6 +135,9 @@ select.campo{flex:none;min-width:0}
 .partida .t{font-weight:600} .partida .m{color:var(--texto-2);font-size:12px;font-family:var(--font-mono)}
 .partida .acoes{justify-content:flex-end}
 .rastreados{display:flex;gap:3px;margin-top:3px}
+/* O jogador em foco (o pesquisado) na tira dos rastreados de Partidas rastreadas. */
+.rastreados .retrato.foco{outline:2px solid var(--texto);outline-offset:1px}
+.filtros-partidas{margin:4px 0 12px;gap:8px;align-items:center;flex-wrap:wrap}
 .pill-link:hover{filter:brightness(1.2)}
 .barra{height:6px;border-radius:3px;background:var(--fundo-4);overflow:hidden;width:90px}
 .barra b{display:block;height:100%;width:0;background:var(--acento);transition:width .3s}
@@ -682,3 +685,100 @@ dialog.dialogo::backdrop{background:rgba(5,8,12,.6)}
 .componentes .comp{font-size:11.5px;padding:1px 6px;border-radius:4px;background:var(--fundo-4);color:var(--texto-2);white-space:nowrap}
 .componentes .comp.pos{color:var(--ok)}
 .componentes .comp.neg{color:var(--critico)}
+
+/* --- IA: relatório da partida (views/ia.js), quadro do mapa (quadro-ia.js) e conversa (conversa-ia.js) --- */
+.relatorio-ia{display:flex;flex-direction:column;gap:14px}
+.secao-ia{font-size:15px;margin-top:6px}
+.sub-titulo{font-size:13px;margin:10px 0 4px;color:var(--texto-2)}
+.lista-ia{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.lista-ia p{margin-top:2px}
+.fonte-ia{font-size:11.5px;color:var(--texto-3);margin-top:2px}
+.situacao-ia{display:grid;grid-template-columns:minmax(260px,380px) 1fr;gap:16px;padding:14px}
+@media (max-width:980px){.situacao-ia{grid-template-columns:1fr}}
+.situacao-texto{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:13.5px}
+.situacao-texto h3{font-size:15px}
+.situacao-texto h4{font-size:11.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--texto-3);margin:8px 0 0}
+.situacao-texto > .btn{align-self:flex-start;margin-top:6px}
+.situacao-n{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--acento-fraco);color:var(--acento);font-size:12px;font-weight:700}
+.pergunta-ia{margin:4px 0 0;padding:6px 10px;border-left:3px solid var(--acento);background:var(--fundo-3);border-radius:0 6px 6px 0;font-style:italic}
+.proxima-vez{padding:6px 10px;border-radius:6px;background:var(--ok-fraco);color:var(--texto)}
+.proxima-vez b{color:var(--ok)}
+.grade-janelas{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.janela-ia .quadro-ia{margin:10px 10px 0}
+.dupla-ia{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:980px){.dupla-ia{grid-template-columns:1fr}}
+.previa-ia{max-height:220px;overflow:auto;white-space:pre-wrap;font-size:11.5px;color:var(--texto-2);background:var(--fundo-3);padding:8px;border-radius:6px}
+.quadro-ia{margin:0;display:flex;flex-direction:column;gap:4px}
+.quadro-ia-mapa{display:block;border-radius:6px;outline-offset:2px}
+.quadro-ia-mapa:hover .mapa-quadro{box-shadow:0 0 0 2px var(--acento)}
+.quadro-ia figcaption{font-size:12px;color:var(--texto-2)}
+.quadro-ia figcaption b{color:var(--texto)}
+.quadro-ia-carregando{position:absolute;inset:0;display:grid;place-items:center;color:var(--texto-2);font-size:12px;background:rgba(13,16,23,.55)}
+.quadro-ia-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.quadro-ia-regiao{fill:var(--atencao);fill-opacity:.22}
+.quadro-ia-sentinela{stroke:#000;stroke-width:.25}
+.quadro-ia-sentinela.azul{fill:var(--azul)} .quadro-ia-sentinela.vermelho{fill:var(--vermelho)}
+.quadro-ia-seta{stroke:var(--atencao);stroke-width:.9;stroke-linecap:round;vector-effect:non-scaling-stroke;stroke-width:3}
+.quadro-ia-ponta{fill:var(--atencao)}
+.marca.foco .retrato{box-shadow:0 0 0 2px var(--fundo),0 0 0 4px var(--acento)}
+.marca.realce .retrato{box-shadow:0 0 0 2px var(--fundo),0 0 0 4px var(--atencao)}
+.marca.foco.realce .retrato{box-shadow:0 0 0 2px var(--fundo),0 0 0 4px var(--acento),0 0 0 6px var(--atencao)}
+.marca.fora-da-visao .retrato{opacity:.4;border-style:dashed}
+.quadro-ia-rotulo{position:absolute;top:100%;margin-top:3px;white-space:nowrap;font-size:10.5px;padding:0 5px;border-radius:4px;background:rgba(13,16,23,.85);color:#e8ecf3}
+.painel-ia{position:fixed;top:var(--titlebar-h);right:0;bottom:0;width:min(520px,100vw);z-index:40;background:var(--fundo-2);border-left:1px solid var(--borda-forte);box-shadow:-12px 0 32px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:8px;padding:12px 14px}
+body.modo-cheia .painel-ia{top:0}
+.painel-ia-cab{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.painel-ia-cab h2{font-size:15px}
+.seletor-conversa{max-width:220px}
+.painel-ia-lista{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px}
+.bolha{padding:8px 11px;border-radius:10px;font-size:13.5px;max-width:100%}
+.bolha p + p,.bolha ul{margin-top:6px}
+.bolha ul{padding-left:18px;margin-bottom:0}
+.bolha h3{font-size:13.5px;margin-top:6px}
+.bolha.usuario{align-self:flex-end;background:var(--acento-fraco);white-space:pre-wrap;max-width:88%}
+.bolha.assistente{background:var(--fundo-3);border:1px solid var(--borda)}
+.bolha.dados{background:transparent;border:1px dashed var(--borda-forte);font-size:12px;color:var(--texto-2)}
+.bolha.dados pre{white-space:pre-wrap;max-height:220px;overflow:auto;font-size:11px}
+.bolha .quadro-ia{margin-top:8px}
+.bolha-rodape{margin-top:6px;font-size:11px}
+.texto-vivo{white-space:pre-wrap}
+.digitando{display:block;margin-top:4px}
+.btn-quadro{border:none;background:none;color:var(--texto-3);cursor:pointer;padding:0 3px;font-size:12px}
+.btn-quadro:hover{color:var(--acento)}
+.proxima-pergunta{margin-top:8px;white-space:normal;text-align:left}
+.painel-ia-envio{display:flex;flex-direction:column;gap:6px}
+.painel-ia-caixa{resize:vertical;min-height:60px;width:100%}
+.painel-ia-privacidade{font-size:11px;color:var(--texto-3)}
+.custo-ia{font-size:12px;color:var(--critico)}
+
+/* Especialista Lane (views/especialista.js) */
+.progresso-esp .linha{gap:8px}
+.progresso-esp p{margin:4px 0}
+.rolagem-x{overflow-x:auto}
+.cartao-especialista .linha-lista .pill{margin-left:auto}
+
+/* Ranking do Lane (views/ranking.js) */
+.cartao-ranking{margin-bottom:14px}
+.filtros-ranking{margin:8px 0 12px;gap:10px;align-items:flex-end}
+.acoes-ranking{display:flex;flex-direction:column;gap:8px}
+.acoes-ranking .linha{align-items:flex-end;gap:10px}
+.marca-rota{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;color:var(--texto-2)}
+.tabela-ranking td.comp{font-family:var(--font-mono);color:var(--texto-2)}
+.tabela-ranking td.comp.neg{color:var(--critico)}
+.tabela-ranking td.nota-ranking{font-family:var(--font-mono);font-weight:700;color:var(--texto)}
+.tabela-ranking th{white-space:normal;min-width:64px}
+.tabela-ranking .jogador-ranking{display:flex;gap:8px;align-items:flex-start;min-width:190px}
+.tabela-ranking .jogador-ranking .linha{gap:4px;margin-top:2px}
+.retrato-mini{border-radius:50%;flex:none}
+.frase-ranking{min-width:280px;color:var(--texto-2)}
+.formula-ranking summary{cursor:pointer;font-weight:600}
+.formula-texto{font-family:var(--font-mono);font-size:12.5px;background:var(--fundo-3);border-radius:6px;padding:8px 10px}
+.regras-ranking{margin:8px 0;padding-left:18px;font-size:12.5px;color:var(--texto-2)}
+/* Pausar/retomar a captura (captura.js): botão grande na barra de título, à vista em qualquer tela. */
+.captura-btn{-webkit-app-region:no-drag;align-self:center;height:calc(var(--titlebar-h) - 10px);padding:0 16px;border-radius:var(--raio);border:1px solid var(--borda-forte);background:var(--fundo-3);color:var(--texto);font:600 13px var(--font-ui);cursor:pointer;white-space:nowrap}
+.captura-btn.rodando{background:var(--atencao-fraco);border-color:var(--atencao);color:var(--texto)}
+.captura-btn.esperando{background:var(--atencao-fraco);border-color:var(--atencao);border-style:dashed}
+.captura-btn.pausada{background:var(--ok-fraco);border-color:var(--ok)}
+.captura-btn.pausando{opacity:.7;cursor:progress}
+.captura-btn:hover:not(:disabled){filter:brightness(1.15)}
+.captura-btn:focus-visible{outline:2px solid var(--acento);outline-offset:2px}

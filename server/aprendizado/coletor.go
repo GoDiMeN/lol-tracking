@@ -27,6 +27,10 @@ type FonteRiot interface {
 	Confere(ctx context.Context) error
 	Liga(ctx context.Context, reg riot.Regiao, elo, divisao string, pagina int) ([]riot.EntradaLiga, error)
 	ContaPorPuuid(ctx context.Context, reg riot.Regiao, puuid string) (riot.Conta, error)
+	// EloSoloPorRiotID: o elo da fila solo de um dos outros 9 da partida (o
+	// puuid da partida é o do LCU, não serve à Riot: account-v1 pelo Riot ID e
+	// league-v4 por puuid, 2 pedidos). Só o aproveitamento (aproveita.go) usa.
+	EloSoloPorRiotID(ctx context.Context, nome, tag string) (riot.EntradaLiga, bool, error)
 }
 
 // Deps é o mundo de fora da coleta.
@@ -88,8 +92,31 @@ type Pedido struct {
 	// patch instalado, sem os filtros de subida (amostragem.go). Para logo
 	// depois de uma troca de patch.
 	Amostragem bool `json:"amostragem"`
-	// JogadoresPorElo: quantos jogadores procurar em cada elo (0 = 10).
+	// JogadoresPorElo: quantos jogadores procurar em cada elo (0 = 10). Com cota
+	// por rota é a soma das cotas (o que vier no pedido é ignorado).
 	JogadoresPorElo int `json:"jogadores_por_elo"`
+	// Funcoes: a cota por rota (cotas.go). Lista presente (mesmo vazia = as
+	// cinco) ou JogadoresPorFuncao > 0 liga a cota; "funcao" sozinha é o atalho
+	// de uma rota com jogadores_por_elo de cota.
+	Funcoes            []string `json:"funcoes"`
+	JogadoresPorFuncao int      `json:"jogadores_por_funcao"`
+	// Aproveitar (padrão ligado): confere os outros 9 da partida escolhida e
+	// rastreia na mesma abertura quem também serve (aproveita.go).
+	Aproveitar *bool `json:"aproveitar"`
+	// Ranking: em vez de descobrir, parte do RANKING do Lane (ranking_coleta.go):
+	// os "primeiros" de cada rota de "funcoes" em cada elo de "elos".
+	Ranking *PedidoRanking `json:"ranking"`
+}
+
+// PedidoRanking: "rastrear os N primeiros de cada rota" de um ranking.
+type PedidoRanking struct {
+	// Patch: o do ranking; vazio = o do jogo instalado (tem de ser ele: o
+	// replay só abre no patch instalado).
+	Patch string `json:"patch"`
+	// Modo: "subindo" (padrão) ou "melhor".
+	Modo string `json:"modo"`
+	// Primeiros: quantos de cada rota (1–MaxJogadoresPorFuncao, padrão 3).
+	Primeiros int `json:"primeiros"`
 }
 
 // MaxJogadoresPorElo: o teto de jogadores_por_elo no pedido.
@@ -103,6 +130,11 @@ func (p *Pedido) valida() (riot.Regiao, error) {
 	reg, ok := riot.RegiaoPorCodigo(p.Regiao)
 	if !ok {
 		return reg, &ErroPedido{fmt.Sprintf("por enquanto só a região BR (BR1); %q ainda não está disponível", p.Regiao)}
+	}
+	if p.Ranking != nil {
+		if err := p.validaRanking(); err != nil {
+			return reg, err
+		}
 	}
 	if len(p.Elos) == 0 {
 		p.Elos = Elos
@@ -145,6 +177,45 @@ func (p *Pedido) valida() (riot.Regiao, error) {
 	}
 	if p.JogadoresPorElo < 1 || p.JogadoresPorElo > MaxJogadoresPorElo {
 		return reg, &ErroPedido{fmt.Sprintf("jogadores_por_elo precisa ser de 1 a %d", MaxJogadoresPorElo)}
+	}
+	switch {
+	case p.Funcoes != nil || p.JogadoresPorFuncao != 0:
+		if p.Funcao != "" {
+			return reg, &ErroPedido{`use "funcao" (uma rota) ou "funcoes" (a cota por rota), não os dois`}
+		}
+		vistas := map[string]bool{}
+		var fs []string
+		for _, f := range p.Funcoes {
+			f = strings.ToUpper(strings.TrimSpace(f))
+			if nomeFuncao[f] == "" {
+				return reg, &ErroPedido{fmt.Sprintf("função desconhecida em funcoes: %q (use TOP, JUNGLE, MIDDLE, BOTTOM, UTILITY)", f)}
+			}
+			if vistas[f] {
+				return reg, &ErroPedido{fmt.Sprintf("função repetida em funcoes: %s", f)}
+			}
+			vistas[f] = true
+		}
+		// Na ordem da tela, qualquer que seja a do pedido.
+		for _, f := range FuncoesTodas {
+			if vistas[f] || len(p.Funcoes) == 0 {
+				fs = append(fs, f)
+			}
+		}
+		p.Funcoes = fs
+		if p.JogadoresPorFuncao == 0 {
+			p.JogadoresPorFuncao = JogadoresPorFuncaoPadrao
+		}
+		if p.JogadoresPorFuncao < 1 || p.JogadoresPorFuncao > MaxJogadoresPorFuncao {
+			return reg, &ErroPedido{fmt.Sprintf("jogadores_por_funcao precisa ser de 1 a %d", MaxJogadoresPorFuncao)}
+		}
+		p.JogadoresPorElo = len(p.Funcoes) * p.JogadoresPorFuncao
+	case p.Funcao != "":
+		// O atalho: uma rota só, com jogadores_por_elo de cota.
+		p.Funcoes, p.JogadoresPorFuncao = []string{p.Funcao}, p.JogadoresPorElo
+	}
+	if p.Aproveitar == nil {
+		sim := true
+		p.Aproveitar = &sim
 	}
 	if p.Velocidade == 0 {
 		p.Velocidade = 4
@@ -214,13 +285,22 @@ func (k *Coletor) Cria(ctx context.Context, p Pedido) (Coleta, string, error) {
 	if err := k.confereAntes(ctx, reg, true); err != nil {
 		return Coleta{}, "", err
 	}
+	var rks []RankingDaColeta
+	rkPatch, rkModo := "", ""
+	if p.Ranking != nil {
+		if rks, rkPatch, err = k.resolveRankings(ctx, p); err != nil {
+			return Coleta{}, "", err
+		}
+		rkModo = p.Ranking.Modo
+	}
 	k.mu.Lock()
 	if err := k.ocupado(); err != nil {
 		k.mu.Unlock()
 		return Coleta{}, "", err
 	}
 	id, err := criaColeta(k.d.DB, novaColeta{regiao: reg.Codigo, elos: p.Elos, ppj: p.PartidasPorJogador, quem: p.Quem,
-		vel: p.Velocidade, soDescobrir: p.SoDescobrir, funcao: p.Funcao, amostragem: p.Amostragem, jogadoresPorElo: p.JogadoresPorElo})
+		vel: p.Velocidade, soDescobrir: p.SoDescobrir, funcao: p.Funcao, amostragem: p.Amostragem, jogadoresPorElo: p.JogadoresPorElo,
+		funcoes: p.Funcoes, jpf: p.JogadoresPorFuncao, aproveitar: *p.Aproveitar, rankings: rks, rankingPatch: rkPatch, modoRanking: rkModo})
 	if err != nil {
 		k.mu.Unlock()
 		return Coleta{}, "", err
@@ -481,7 +561,10 @@ func (k *Coletor) descobre(ctx context.Context, c *corridaColeta, col Coleta, re
 			continue
 		}
 		descobre := k.descobreElo
-		if col.Amostragem {
+		switch {
+		case col.doRanking():
+			descobre = k.descobreEloRanking
+		case col.Amostragem:
 			descobre = k.descobreEloAmostragem
 		}
 		if err := descobre(ctx, c, col, reg, e, patch); err != nil {
@@ -534,6 +617,9 @@ func (k *Coletor) rodaPartida(ctx context.Context, c *corridaColeta, col Coleta,
 	defer c.partida.Store(0)
 	falhaPartida := func(msg string) error {
 		mudaPartida(k.d.DB, p.ID, PartidaErro, msg)
+		// As outras da coleta na mesma partida (aproveitados) têm o mesmo replay: falham junto.
+		k.d.DB.Exec(`UPDATE aprendizado_partidas SET estado = ?, erro = ?, atualizado_em = ? WHERE coleta_id = ? AND game_id = ?
+			AND id <> ? AND rastreio_id IS NULL AND estado IN ('pendente','baixando')`, PartidaErro, msg, banco.Agora(), col.ID, p.GameID, p.ID)
 		ex.Emite("partida_fim", map[string]any{"partida_id": p.ID, "game_id": p.GameID, "estado": PartidaErro, "erro": msg})
 		return nil
 	}
@@ -557,7 +643,8 @@ func (k *Coletor) rodaPartida(ctx context.Context, c *corridaColeta, col Coleta,
 		}
 		switch r.Estado {
 		case rastreio.Concluido:
-			mudaPartida(k.d.DB, p.ID, PartidaConcluida, "")
+			// Concluída só com todos os passes pedidos bons (incompleta.go).
+			fechaRastreada(k.d.DB, col.ID, r.ID, col.Quem, p.ID)
 			return nil
 		case rastreio.Cancelado:
 			mudaPartida(k.d.DB, p.ID, PartidaCancelada, "o rastreio foi cancelado fora da coleta")
@@ -604,9 +691,30 @@ func (k *Coletor) rodaPartida(ctx context.Context, c *corridaColeta, col Coleta,
 			mudaPartida(k.d.DB, p.ID, PartidaPendente, "")
 			return errPausa
 		}
+		// Os outros jogadores da coleta nesta mesma partida (os aproveitados, ou
+		// quem já era da coleta) vão no MESMO rastreio: um passe a mais na mesma
+		// abertura do replay, sem baixar nem abrir de novo.
+		irmas, err := lePartidas(k.d.DB, `WHERE p.coleta_id = ? AND p.game_id = ? AND p.id <> ? AND p.rastreio_id IS NULL
+			AND p.estado IN ('pendente','baixando')`, col.ID, p.GameID, p.ID)
+		if err != nil {
+			return err
+		}
 		var jogadores []int
 		if col.Quem == QuemJogador {
 			jogadores = []int{p.ParticipanteID}
+			for _, x := range irmas {
+				if !contemInt(jogadores, x.ParticipanteID) {
+					jogadores = append(jogadores, x.ParticipanteID)
+				}
+			}
+		}
+		// A origem "estudo" (com o jogador de referência) vai ANTES do rastreio:
+		// se o processo cair no meio, a partida não fica sem origem e o
+		// preenchimento da subida não a confunde com uma partida pesquisada.
+		for _, x := range append([]PartidaDaColeta{p}, irmas...) {
+			if err := rastreio.MarcaOrigemDoParticipante(k.d.DB, p.GameID, rastreio.OrigemEstudo, x.ParticipanteID); err != nil {
+				return err
+			}
 		}
 		r, exID, err := k.d.Fila.Cria(ctx, p.GameID, rastreio.Pedido{Jogadores: jogadores, Velocidade: col.Velocidade})
 		if err != nil {
@@ -619,6 +727,9 @@ func (k *Coletor) rodaPartida(ctx context.Context, c *corridaColeta, col Coleta,
 		}
 		rid = r.ID
 		ligaRastreio(k.d.DB, p.ID, rid)
+		for _, x := range irmas {
+			ligaRastreio(k.d.DB, x.ID, rid)
+		}
 		ex.Emite("rastreio", map[string]any{"partida_id": p.ID, "rastreio_id": rid, "execucao": map[string]string{"id": exID}})
 	}
 
@@ -636,13 +747,26 @@ func (k *Coletor) rodaPartida(ctx context.Context, c *corridaColeta, col Coleta,
 	if err != nil {
 		return err
 	}
+	// As irmãs (o mesmo rastreio, na mesma abertura) terminam junto.
+	irmas := func(estado, erro string) {
+		k.d.DB.Exec(`UPDATE aprendizado_partidas SET estado = ?, erro = ?, atualizado_em = ? WHERE coleta_id = ? AND rastreio_id = ? AND id <> ?`,
+			estado, erro, banco.Agora(), col.ID, rid, p.ID)
+	}
 	switch r.Estado {
 	case rastreio.Concluido:
-		mudaPartida(k.d.DB, p.ID, PartidaConcluida, "")
-		ex.Emite("partida_fim", map[string]any{"partida_id": p.ID, "game_id": p.GameID, "estado": PartidaConcluida})
+		// O rastreio fecha "concluido" mesmo com passe ruim que sobrou da
+		// refação automática: a partida só é "concluida" com todos os passes
+		// pedidos bons; senão fica "incompleta" (incompleta.go).
+		estado, faltam := fechaRastreada(k.d.DB, col.ID, rid, col.Quem, p.ID)
+		fim := map[string]any{"partida_id": p.ID, "game_id": p.GameID, "estado": estado}
+		if estado == PartidaIncompleta {
+			fim["passes_ruins"], fim["participantes_ruins"], fim["erro"] = len(faltam), faltam, fraseIncompleta(len(faltam))
+		}
+		ex.Emite("partida_fim", fim)
 		return nil
 	case rastreio.Pausado:
 		mudaPartida(k.d.DB, p.ID, PartidaPausada, "")
+		irmas(PartidaPausada, "")
 		if c.pausar.Load() {
 			return errPausa
 		}
@@ -656,9 +780,11 @@ func (k *Coletor) rodaPartida(ctx context.Context, c *corridaColeta, col Coleta,
 			return ctx.Err()
 		}
 		mudaPartida(k.d.DB, p.ID, PartidaCancelada, "o rastreio foi cancelado fora da coleta")
+		irmas(PartidaCancelada, "o rastreio foi cancelado fora da coleta")
 		ex.Emite("partida_fim", map[string]any{"partida_id": p.ID, "game_id": p.GameID, "estado": PartidaCancelada})
 		return nil
 	case rastreio.Falhou:
+		irmas(PartidaErro, r.Erro)
 		return falhaPartida(r.Erro)
 	}
 	return &erroParada{fmt.Sprintf("o rastreio da partida ficou %s", r.Estado)}

@@ -1,12 +1,14 @@
 package rastreio
 
 import (
+	"context"
 	"errors"
 	"log"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"loltracking/server/lcu"
 	"loltracking/server/partida"
@@ -19,6 +21,8 @@ func Registra(mux *http.ServeMux, f *Fila) {
 	mux.HandleFunc("POST /api/partidas/{id}/rastreio", c.cria)
 	mux.HandleFunc("GET /api/partidas/{id}/rastreio/repescagem", c.planoRepescagem)
 	mux.HandleFunc("POST /api/partidas/{id}/rastreio/repescagem", c.repesca)
+	mux.HandleFunc("GET /api/partidas/{id}/rastreio/ruins", c.ruins)
+	mux.HandleFunc("POST /api/partidas/{id}/rastreio/refazer", c.refaz)
 	mux.HandleFunc("GET /api/rastreios", c.lista)
 	mux.HandleFunc("GET /api/rastreios/{id}", c.le)
 	mux.HandleFunc("POST /api/rastreios/{id}/pausar", c.pausa)
@@ -81,6 +85,56 @@ func (c *controller) rastreiaVisao(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	web.WriteJSON(w, http.StatusAccepted, map[string]any{"execucao": map[string]string{"id": exID}, "passes": pvs, "estimativa_s": est})
+}
+
+// GET /api/partidas/{id}/rastreio/ruins — os passes ruins sem passe bom
+// depois (o "refazer N passes ruins" da tela da partida).
+func (c *controller) ruins(w http.ResponseWriter, r *http.Request) {
+	id, err := idDe(r)
+	if err == nil {
+		_, err = partida.Le(c.f.d.DB, id)
+	}
+	var ar PassesARefazer
+	if err == nil {
+		ar, err = ARefazer(c.f.d.DB, id)
+	}
+	if err != nil {
+		c.erro(w, err, "listar os passes ruins")
+		return
+	}
+	web.WriteJSON(w, http.StatusOK, ar)
+}
+
+// POST /api/partidas/{id}/rastreio/refazer {"velocidade": 4?}
+func (c *controller) refaz(w http.ResponseWriter, r *http.Request) {
+	id, err := idDe(r)
+	if err != nil {
+		c.erro(w, err, "")
+		return
+	}
+	var corpo struct {
+		Velocidade float64 `json:"velocidade"`
+	}
+	if err := web.LeJSON(w, r, &corpo); err != nil {
+		web.WriteErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if corpo.Velocidade != 0 && (corpo.Velocidade < 0.5 || corpo.Velocidade > 8) {
+		web.WriteErr(w, http.StatusBadRequest, "velocidade precisa estar entre 0,5 e 8")
+		return
+	}
+	if _, err := partida.Le(c.f.d.DB, id); err != nil {
+		c.erro(w, err, "ler a partida")
+		return
+	}
+	rs, exID, ar, err := c.f.RefazRuins(r.Context(), id, corpo.Velocidade)
+	if err != nil {
+		c.erro(w, err, "refazer os passes ruins")
+		return
+	}
+	c.comExecucao(&rs)
+	web.WriteJSON(w, http.StatusAccepted, map[string]any{"rastreio": rs, "execucao": map[string]string{"id": exID},
+		"participantes": ar.Participantes, "retomado": ar.RastreioPausado != nil})
 }
 
 type controller struct{ f *Fila }
@@ -174,6 +228,9 @@ func (c *controller) cria(w http.ResponseWriter, r *http.Request) {
 		AteMs int64 `json:"ate_ms"`
 		// Visao: os dois passes de visão de time no fim.
 		Visao bool `json:"visao"`
+		// Puuid: o jogador pesquisado na tela Jogadores (a origem "pesquisa"
+		// da partida; origem.go).
+		Puuid string `json:"puuid"`
 	}
 	if err := web.LeJSON(w, r, &corpo); err != nil {
 		web.WriteErr(w, http.StatusBadRequest, err.Error())
@@ -183,14 +240,58 @@ func (c *controller) cria(w http.ResponseWriter, r *http.Request) {
 		web.WriteErr(w, http.StatusBadRequest, "de_ms e ate_ms precisam ser ≥ 0, com ate_ms > de_ms (ate_ms 0 = até o fim)")
 		return
 	}
+	corpo.Puuid = strings.TrimSpace(corpo.Puuid)
+	if corpo.Puuid != "" {
+		p, err := partida.Le(c.f.d.DB, id)
+		if err != nil {
+			c.erro(w, err, "ler a partida")
+			return
+		}
+		achou := false
+		for _, pt := range p.Participantes {
+			achou = achou || pt.Puuid == corpo.Puuid
+		}
+		if !achou {
+			web.WriteErr(w, http.StatusBadRequest, "o jogador pesquisado (puuid) não está nesta partida")
+			return
+		}
+	}
 	ras, exID, err := c.f.Cria(r.Context(), id, Pedido{Jogadores: corpo.Jogadores, Velocidade: corpo.Velocidade,
 		TInicioMs: corpo.DeMs, TFimMs: corpo.AteMs, Visao: corpo.Visao})
 	if err != nil {
 		c.erro(w, err, "criar o rastreio")
 		return
 	}
+	c.marcaPesquisa(r, id, corpo.Puuid)
 	ras.Execucao = &IDExec{ID: exID}
 	web.WriteJSON(w, http.StatusAccepted, map[string]any{"rastreio": ras, "execucao": map[string]string{"id": exID}})
+}
+
+// marcaPesquisa grava a origem "pesquisa" de um rastreio pedido por esta rota
+// (a tela Jogadores). Sem puuid no pedido (cliente antigo, script), deduz o
+// pesquisado só se a partida ainda não tem origem: rastrear de novo uma
+// partida de estudo por aqui, sem dizer quem, não a faz virar do usuário.
+// Falha aqui não desfaz o rastreio: a origem é preenchida na próxima subida.
+func (c *controller) marcaPesquisa(r *http.Request, gameID int64, puuid string) {
+	db := c.f.d.DB
+	if puuid == "" {
+		if ors, err := OrigensDe(db, gameID); err != nil || len(ors) > 0 {
+			return
+		}
+		conta := ""
+		ctx, cancela := context.WithTimeout(r.Context(), 2*time.Second)
+		if inv, err := c.f.d.LCU.InvocadorAtual(ctx); err == nil {
+			conta = inv.Puuid
+		}
+		cancela()
+		var err error
+		if puuid, err = PesquisadoProvavel(db, gameID, conta, ""); err != nil {
+			return
+		}
+	}
+	if err := MarcaOrigem(db, gameID, OrigemPesquisa, puuid); err != nil {
+		log.Printf("rastreio: gravar a origem da partida %d: %v", gameID, err)
+	}
 }
 
 // GET /api/partidas/{id}/rastreio/repescagem — os buracos que a repescagem
@@ -337,13 +438,28 @@ func (c *controller) eventosSSE(w http.ResponseWriter, r *http.Request) {
 	c.f.d.Hub.Servir(w, r, exID)
 }
 
+// GET /api/partidas/rastreadas?origem=pesquisa|estudo|todas&puuid=...
 func (c *controller) rastreadas(w http.ResponseWriter, r *http.Request) {
-	l, err := ListaRastreadas(c.f.d.DB)
+	q := r.URL.Query()
+	f := FiltroRastreadas{Origem: strings.TrimSpace(q.Get("origem")), Puuid: strings.TrimSpace(q.Get("puuid")), SemEstudo: c.f.d.SemEstudo}
+	switch f.Origem {
+	case "", OrigemPesquisa, OrigemTodas:
+	case OrigemEstudo:
+		if f.SemEstudo {
+			// Com o estudo desligado, as partidas dele não existem para fora.
+			web.WriteErr(w, http.StatusNotFound, "rota não encontrada")
+			return
+		}
+	default:
+		web.WriteErr(w, http.StatusBadRequest, "origem precisa ser pesquisa, estudo ou todas")
+		return
+	}
+	l, jogs, err := FiltraRastreadas(c.f.d.DB, f)
 	if err != nil {
 		c.erro(w, err, "listar as partidas rastreadas")
 		return
 	}
-	web.WriteLista(w, "partidas", l, nil)
+	web.WriteLista(w, "partidas", l, map[string]any{"jogadores": web.NuncaNil(jogs)})
 }
 
 // GET /api/partidas/{id}/amostras?participante=3&de=0&ate=600&passo=0&limite=5000 (tempos em segundos)

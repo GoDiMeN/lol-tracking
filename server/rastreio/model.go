@@ -159,14 +159,22 @@ func Migra(db *banco.DB) error {
 	if err := banco.AdicionaColuna(db, "passes", "repescagem", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// Por que a trava caiu (uso.go, DiagnosticoPasse, JSON) e o passe ruim que
+	// este passe refaz (qualidade_passe.go; 0 = nenhum).
+	if err := banco.AdicionaColuna(db, "passes", "diagnostico", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := banco.AdicionaColuna(db, "passes", "refaz_de", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	// Linhas de trabalho de passe já fechado só existem durante a repescagem de
 	// um passe gravado (o bloco é carregado de volta nelas). Se o processo morreu
 	// no meio, o bloco antigo continua valendo: as linhas sobrando saem.
-	if _, err := db.Exec(`DELETE FROM amostras_brutas WHERE passe_id IN (SELECT id FROM passes WHERE estado IN ('concluido','cancelado'))
+	if _, err := db.Exec(`DELETE FROM amostras_brutas WHERE passe_id IN (SELECT id FROM passes WHERE estado IN ('concluido','cancelado','ruim'))
 		AND passe_id IN (SELECT passe_id FROM passes_compactos)`); err != nil {
 		return err
 	}
-	if _, err := db.Exec(`DELETE FROM amostras_time_brutas WHERE passe_id IN (SELECT id FROM passes WHERE estado IN ('concluido','cancelado'))
+	if _, err := db.Exec(`DELETE FROM amostras_time_brutas WHERE passe_id IN (SELECT id FROM passes WHERE estado IN ('concluido','cancelado','ruim'))
 		AND passe_id IN (SELECT passe_id FROM passes_compactos)`); err != nil {
 		return err
 	}
@@ -177,7 +185,14 @@ func Migra(db *banco.DB) error {
 	if _, err := db.Exec(`DELETE FROM visao_capturas_brutas WHERE passe_id IN (SELECT id FROM passes_visao WHERE estado IN ('concluido','cancelado'))`); err != nil {
 		return err
 	}
-	return nil
+	// Por que cada partida foi rastreada (origem.go). O preenchimento das
+	// partidas antigas roda em main.go, depois de todas as migrações.
+	return migraOrigem(db)
+}
+
+// passeTerminado: o passe não roda mais (concluído, cancelado ou ruim).
+func passeTerminado(estado string) bool {
+	return estado == Concluido || estado == Cancelado || estado == Ruim
 }
 
 // Estados de rastreio e de passe.
@@ -250,6 +265,10 @@ type Passe struct {
 	Conferencia         json.RawMessage `json:"conferencia_riot"`
 	// Repescagem: a última repescagem dos buracos do passe (nulo = nunca rodou).
 	Repescagem *ResumoRepescagem `json:"repescagem"`
+	// RefazDe: o passe ruim que este refaz (0 = nenhum; qualidade_passe.go).
+	RefazDe int64 `json:"refaz_de"`
+	// Diagnostico: por que a trava caiu (uso.go, DiagnosticoPasse; nulo = sem registro).
+	Diagnostico json.RawMessage `json:"diagnostico"`
 }
 
 // ErrNaoEncontrado: rastreio ou passe que não existe.
@@ -319,7 +338,7 @@ func completaRastreio(db *banco.DB, r *Rastreio) {
 			nRep++
 			somaBuracos += p.Repescagem.Buracos
 		}
-		if p.Estado != Concluido && p.Estado != Cancelado {
+		if !passeTerminado(p.Estado) {
 			faltam++
 		}
 	}
@@ -337,6 +356,8 @@ func completaRastreio(db *banco.DB, r *Rastreio) {
 		case p.Estado == Concluido:
 			r.PassesConcluidos++
 			frac = 1
+		case p.Estado == Ruim:
+			frac = 1
 		case fim > ini && p.DuracaoMs > 0:
 			frac = min(1, max(0, float64(p.TAtualMs-ini)/float64(fim-ini)))
 		}
@@ -345,7 +366,7 @@ func completaRastreio(db *banco.DB, r *Rastreio) {
 			r.PasseAtual = &pid
 		}
 		soma += frac
-		if p.Estado != Concluido && p.Estado != Cancelado {
+		if !passeTerminado(p.Estado) {
 			dur := float64(fim - ini)
 			if dur <= 0 {
 				dur = 35 * 60000 // duração ainda não lida: estimativa grosseira
@@ -411,7 +432,7 @@ const colunasPasse = `p.id, p.rastreio_id, p.game_id, p.participante_id, p.ordem
 	p.tentativas_trava, p.retravas, p.amostras_sem_trava, p.taxa, p.calibracao, p.calibracao_pontos,
 	p.erro_calibracao_mediano, p.erro_calibracao_maximo, p.iniciado_em, p.terminado_em, p.erro,
 	p.conferencia_n, p.conferencia_iguais, p.conferencia_maior_dif, p.conferencia_riot,
-	COALESCE((SELECT SUM(bytes) FROM passes_compactos c WHERE c.passe_id = p.id), -1), p.repescagem`
+	COALESCE((SELECT SUM(bytes) FROM passes_compactos c WHERE c.passe_id = p.id), -1), p.repescagem, p.refaz_de, p.diagnostico`
 
 func lePasses(db *banco.DB, filtro string, args ...any) ([]Passe, error) {
 	linhas, err := db.Query(`SELECT `+colunasPasse+` FROM passes p `+filtro, args...)
@@ -424,10 +445,10 @@ func lePasses(db *banco.DB, filtro string, args ...any) ([]Passe, error) {
 		var p Passe
 		var taxa, med, mx, cmd sql.NullFloat64
 		var cn, ci sql.NullInt64
-		var conf, resc string
+		var conf, resc, diag string
 		if err := linhas.Scan(&p.ID, &p.RastreioID, &p.GameID, &p.ParticipanteID, &p.Ordem, &p.Estado, &p.TAtualMs,
 			&p.DuracaoMs, &p.Amostras, &p.TentativasTrava, &p.Retravas, &p.AmostrasSemTrava, &taxa, &p.Calibracao,
-			&p.CalibracaoPontos, &med, &mx, &p.IniciadoEm, &p.TerminadoEm, &p.Erro, &cn, &ci, &cmd, &conf, &p.Bytes, &resc); err != nil {
+			&p.CalibracaoPontos, &med, &mx, &p.IniciadoEm, &p.TerminadoEm, &p.Erro, &cn, &ci, &cmd, &conf, &p.Bytes, &resc, &p.RefazDe, &diag); err != nil {
 			return nil, err
 		}
 		if resc != "" {
@@ -448,6 +469,10 @@ func lePasses(db *banco.DB, filtro string, args ...any) ([]Passe, error) {
 			p.Conferencia = json.RawMessage(conf)
 		} else {
 			p.Conferencia = json.RawMessage("null")
+		}
+		p.Diagnostico = json.RawMessage("null")
+		if diag != "" {
+			p.Diagnostico = json.RawMessage(diag)
 		}
 		p.Compactado = p.Bytes >= 0
 		if p.Bytes < 0 {
@@ -492,7 +517,7 @@ func mudaEstadoRastreio(db *banco.DB, id int64, estado, erro string) error {
 func mudaEstadoPasse(db *banco.DB, id int64, estado, erro string) error {
 	_, err := db.Exec(`UPDATE passes SET estado = ?, erro = ?,
 		iniciado_em = CASE WHEN iniciado_em = '' AND ? = 'rodando' THEN ? ELSE iniciado_em END,
-		terminado_em = CASE WHEN ? IN ('concluido','cancelado','falhou') THEN ? ELSE terminado_em END WHERE id = ?`,
+		terminado_em = CASE WHEN ? IN ('concluido','cancelado','falhou','ruim') THEN ? ELSE terminado_em END WHERE id = ?`,
 		estado, erro, estado, banco.Agora(), estado, banco.Agora(), id)
 	return err
 }

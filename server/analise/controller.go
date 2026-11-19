@@ -382,7 +382,21 @@ var (
 func filtroDaQuery(r *http.Request) (FiltroResumos, error) {
 	q := r.URL.Query()
 	f := FiltroResumos{Campeao: strings.TrimSpace(q.Get("campeao")), Funcao: strings.ToUpper(strings.TrimSpace(q.Get("funcao"))),
-		Resultado: q.Get("resultado"), Puuid: q.Get("puuid"), Tipo: q.Get("tipo"), Tag: q.Get("tag"), Texto: strings.TrimSpace(q.Get("texto"))}
+		Resultado: q.Get("resultado"), Puuid: q.Get("puuid"), Tipo: q.Get("tipo"), Tag: q.Get("tag"), Texto: strings.TrimSpace(q.Get("texto")),
+		Elo: strings.TrimSpace(q.Get("elo")), Papel: strings.TrimSpace(q.Get("papel")), Estilo: strings.TrimSpace(q.Get("estilo"))}
+	switch q.Get("origem") {
+	case "", "todas":
+	case "pesquisa":
+		f.SoPesquisa = true
+	default:
+		return f, &erroPedido{"origem precisa ser pesquisa ou todas"}
+	}
+	if f.Papel != "" && RotuloPapel(f.Papel) == "" {
+		return f, &erroPedido{"papel precisa ser um de: " + strings.Join(PapeisValidos, ", ")}
+	}
+	if f.Estilo != "" && RotuloEstilo(f.Estilo) == "" {
+		return f, &erroPedido{"estilo desconhecido: veja os estilos em docs/arquitetura/dados.md (Papel do jogador)"}
+	}
 	if f.Funcao != "" && !funcoesValidas[f.Funcao] {
 		return f, &erroPedido{"funcao precisa ser TOP, JUNGLE, MIDDLE, BOTTOM ou UTILITY"}
 	}
@@ -415,13 +429,14 @@ func filtroDaQuery(r *http.Request) (FiltroResumos, error) {
 	return f, nil
 }
 
-// GET /api/resumos?campeao=&funcao=&resultado=&puuid=&tipo=&tag=&texto=&ate=&limite=
+// GET /api/resumos?campeao=&funcao=&resultado=&puuid=&elo=&papel=&estilo=&tipo=&tag=&texto=&ate=&limite=
 func (c *controller) buscaResumos(w http.ResponseWriter, r *http.Request) {
 	f, err := filtroDaQuery(r)
 	if err != nil {
 		c.erro(w, err, "")
 		return
 	}
+	f.SoPesquisa = f.SoPesquisa || c.d.SemEstudo
 	l, err := BuscaResumos(c.d.DB, f)
 	if err != nil {
 		c.erro(w, err, "buscar na base de fatos")
@@ -437,6 +452,7 @@ func (c *controller) contextoVarias(w http.ResponseWriter, r *http.Request) {
 		c.erro(w, err, "")
 		return
 	}
+	f.SoPesquisa = f.SoPesquisa || c.d.SemEstudo
 	ctx, err := ContextoDeVariasPartidas(c.d.DB, f)
 	if err != nil {
 		c.erro(w, err, "montar o contexto")

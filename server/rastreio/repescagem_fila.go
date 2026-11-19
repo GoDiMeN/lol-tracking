@@ -161,7 +161,8 @@ func (f *Fila) Repesca(ctx context.Context, gameID int64, ped PedidoRepescagem) 
 	ex := f.d.Hub.Nova()
 	cctx, cancela := context.WithCancelCause(context.Background())
 	ex.AoCancelar(func() { cancela(ErrCancelado) })
-	c := &corrida{rastreioID: planos[0].passe.RastreioID, ex: ex, cancela: cancela, feito: make(chan struct{}), repescagemDe: gameID}
+	c := &corrida{rastreioID: planos[0].passe.RastreioID, ex: ex, cancela: cancela, feito: make(chan struct{}), repescagemDe: gameID,
+		pedidoRepescagem: PedidoRepescagem{Participantes: ped.Participantes, Velocidade: vel}}
 	f.atual = c
 	f.repescagens[gameID] = ex.ID()
 	go f.correRepescagem(cctx, c, pt, planos, vel)
@@ -205,6 +206,12 @@ func (f *Fila) correRepescagem(ctx context.Context, c *corrida, pt partida.Parti
 		switch {
 		case errors.Is(err, ErrCancelado):
 			ex.Emite("cancelado", map[string]any{"game_id": gameID})
+		case errors.Is(err, ErrPausado):
+			// Pausar a captura no meio da repescagem: o que já foi regravado ficou;
+			// "retomar" pede a repescagem de novo (o plano é refeito do gravado).
+			motivo := MotivoPausa(err)
+			ex.Emite("pausado", map[string]any{"game_id": gameID, "motivo": motivo})
+			f.anotaParada(Parada{Tipo: TipoRepescagem, ID: gameID, GameID: gameID, Motivo: motivo})
 		case errors.As(err, &fase):
 			ex.Emite("aviso", map[string]string{"texto": err.Error()})
 			ex.Emite("erro", map[string]string{"texto": err.Error()})

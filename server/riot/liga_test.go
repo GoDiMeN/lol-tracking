@@ -131,3 +131,38 @@ func TestRegioes(t *testing.T) {
 		t.Fatal(Regioes())
 	}
 }
+
+func TestEloSoloPorRiotID(t *testing.T) {
+	c := clienteDeTeste(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/riot/account/v1/accounts/by-riot-id/GoDi Me/BR1":
+			w.Write([]byte(`{"puuid":"riot-p1","gameName":"GoDi Me","tagLine":"BR1"}`))
+		case "/riot/account/v1/accounts/by-riot-id/SemRank/BR1":
+			w.Write([]byte(`{"puuid":"riot-p2","gameName":"SemRank","tagLine":"BR1"}`))
+		case "/lol/league/v4/entries/by-puuid/riot-p1":
+			w.Write([]byte(`[{"queueType":"RANKED_FLEX_SR","tier":"GOLD","rank":"I"},{"queueType":"RANKED_SOLO_5x5","tier":"PLATINUM","rank":"II","leaguePoints":40,"wins":30,"losses":28}]`))
+		case "/lol/league/v4/entries/by-puuid/riot-p2":
+			w.Write([]byte(`[{"queueType":"RANKED_FLEX_SR","tier":"GOLD","rank":"I"}]`))
+		default:
+			w.WriteHeader(404)
+		}
+	})
+	ctx := context.Background()
+	e, ok, err := c.EloSoloPorRiotID(ctx, "GoDi Me", "BR1")
+	if err != nil || !ok || e.Tier != "PLATINUM" || e.Rank != "II" || e.LP != 40 || e.Fila != FilaSolo {
+		t.Fatalf("%+v %v %v", e, ok, err)
+	}
+	if _, ok, err := c.EloSoloPorRiotID(ctx, "SemRank", "BR1"); err != nil || ok {
+		t.Fatalf("sem ranqueada solo: %v %v", ok, err)
+	}
+	_, _, err = c.EloSoloPorRiotID(ctx, "Fantasma", "BR1")
+	if !errors.Is(err, ErrNaoEncontradoRiot) || strings.Contains(err.Error(), "Fantasma") {
+		t.Fatalf("não achado: %v", err)
+	}
+	if _, _, err := Novo(filepath.Join(t.TempDir(), "nao-existe"), false).EloSoloPorRiotID(ctx, "a", "b"); !errors.Is(err, ErrSemChave) {
+		t.Fatalf("sem chave: %v", err)
+	}
+	if rotaSemID("/riot/account/v1/accounts/by-riot-id/Nome/TAG") != "/riot/account/v1/accounts/by-riot-id" {
+		t.Fatal("o Riot ID não pode ir para a mensagem de erro")
+	}
+}

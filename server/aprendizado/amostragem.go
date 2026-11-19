@@ -245,7 +245,7 @@ func (k *Coletor) descobreEloAmostragem(ctx context.Context, c *corridaColeta, c
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			res, info, err := k.avaliaCandidato(ctx, col, reg, e.Elo, vistos+1, ce, patch)
+			res, info, err := k.avaliaCandidato(ctx, col, reg, e.Elo, vistos+1, ce, patch, opcCandidato{})
 			if err != nil {
 				return err
 			}
@@ -256,11 +256,11 @@ func (k *Coletor) descobreEloAmostragem(ctx context.Context, c *corridaColeta, c
 			}
 			c.ex.Emite("candidato", ev)
 			vistos++
-			if res == Aceito {
-				aceitos++
-			} else if res != "" {
+			if res != Aceito && res != "" {
 				desc[res]++
 			}
+			// Recontado do banco: os aproveitados também ocupam vaga.
+			aceitos = achadosNoElo(k.d.DB, col.ID, e.Elo)
 			grava(EloDescobrindo, "")
 		}
 		return nil
@@ -312,6 +312,9 @@ func (k *Coletor) descobreEloAmostragem(ctx context.Context, c *corridaColeta, c
 	if aceitos < alvo {
 		aviso = fmt.Sprintf("por amostragem: achou %d de %d jogadores com partida no patch %s entre %d candidatos conferidos (%d páginas, %d pedidos à liga)",
 			aceitos, alvo, patch, vistos, paginas, pedidos)
+		if a := avisoCotas(k.d.DB, col, e.Elo); a != "" {
+			aviso += "; " + a
+		}
 	}
 	grava(EloPronto, aviso)
 	c.ex.Emite("elo_fim", map[string]any{"elo": e.Elo, "jogadores": aceitos, "aviso": aviso, "candidatos_vistos": vistos,

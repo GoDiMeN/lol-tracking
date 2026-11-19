@@ -126,7 +126,7 @@ func (m *motor) guardaCapturaVisao(p PasseVisao, l leituraVisao) {
 	img := image.NewRGBA(l.img.Bounds())
 	copy(img.Pix, l.img.Pix)
 	info := map[string]any{"game_id": p.GameID, "passe_visao_id": p.ID, "time": p.Time, "t_ms": l.tMs, "regiao": m.regiaoVisao().String(),
-		"largura": m.s.Largura, "altura": m.s.Altura, "modo": l.lt.Modo, "retratos": l.lt.Retratos, "sentinelas": l.lt.Sentinelas}
+		"largura": m.s.Largura, "altura": m.s.Altura, "modo": l.lt.Modo, "retratos": l.lt.Retratos, "sentinelas": l.lt.Sentinelas, "arcos": l.lt.Arcos}
 	go func() {
 		defer m.salvando.Unlock()
 		dir := filepath.Join(m.cfg.PastaCapturas, fmt.Sprint(p.GameID))
@@ -153,7 +153,18 @@ func (m *motor) ligaNevoa(ctx context.Context, time int, teclas *int) error {
 	quer := ModoDoTime(time)
 	lido := ""
 	for tentativa := 1; tentativa <= MaxTeclasNevoa; tentativa++ {
-		if err := m.s.MudaVisao(ctx, time); err != nil {
+		if err := m.s.MudaVisao(ctx, time); errors.Is(err, replay.ErrUsuarioUsando) {
+			// A pessoa está usando o computador: espera ela parar (replay
+			// pausado), despausa e tenta de novo, sem contar a tentativa.
+			if err := m.esperaUsuario(ctx, m.s.GameID, &pedidoEspera{motivo: err.Error(), ultimoBomMs: -1}); err != nil {
+				return err
+			}
+			if _, err := m.d.API.MudaPlayback(ctx, replay.MudaPlayback{Pausado: replay.Ptr(false)}); err != nil {
+				return err
+			}
+			tentativa--
+			continue
+		} else if err != nil {
 			return err
 		}
 		*teclas++
@@ -335,7 +346,7 @@ func (m *motor) rodaPasseVisao(ctx context.Context, p PasseVisao) (EstatPasse, e
 			// Captura sem leitura não entra: o trecho fica sem cobertura (nem
 			// visível nem fora), em vez de virar "fora da visão" por engano.
 		} else {
-			c := CapturaVisao{TMs: tMs, Modo: lt.Modo, Retratos: lt.Retratos, Sentinelas: lt.Sentinelas}
+			c := CapturaVisao{TMs: tMs, Modo: lt.Modo, Retratos: lt.Retratos, Sentinelas: lt.Sentinelas, Arcos: lt.Arcos}
 			pend = append(pend, c)
 			total++
 			st.Amostras++
@@ -350,10 +361,15 @@ func (m *motor) rodaPasseVisao(ctx context.Context, p PasseVisao) (EstatPasse, e
 				} else if tMs-semModoDesde >= LimiteSemModoMs && teclas < MaxTeclasNevoa*2 {
 					semModoDesde = -1
 					m.ex.Emite("aviso", map[string]string{"texto": fmt.Sprintf("o painel do replay saiu da visão do time %d; apertando a tecla de novo", p.Time)})
-					if err := m.s.MudaVisao(ctx, p.Time); err != nil {
+					if err := m.s.MudaVisao(ctx, p.Time); errors.Is(err, replay.ErrUsuarioUsando) {
+						// A pessoa está usando o computador: não aperta agora (as capturas
+						// fora da névoa do time não contam como visão), tenta depois.
+						m.ex.Emite("aviso", map[string]string{"texto": "a tecla da névoa espera: " + err.Error()})
+					} else if err != nil {
 						return st, err
+					} else {
+						teclas++
 					}
-					teclas++
 				}
 			}
 			retratosInimigos = 0

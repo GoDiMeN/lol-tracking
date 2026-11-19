@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -29,6 +30,39 @@ type Config struct {
 	// LOL_CAPTURA_A_CADA): material de teste da leitura da tela.
 	GuardaCapturas bool
 	CapturaACadaS  float64
+	// IA (só nas telas de análise e conversa, a pedido; o rastreio não usa):
+	// "terminal" (o Claude Code da máquina, padrão) ou "falso" (padrão no
+	// LOL_TESTE). LOL_IA.
+	IA string
+	// IAClaude: o executável do Claude Code (LOL_IA_CLAUDE; padrão "claude"
+	// no PATH). IAModelo / IAModeloConversa: o modelo da análise e o da
+	// conversa (LOL_IA_MODELO, LOL_IA_MODELO_CONVERSA; vazio = o padrão do
+	// pacote ia).
+	IAClaude         string
+	IAModelo         string
+	IAModeloConversa string
+	// Conhecimento: a pasta dos arquivos das vozes do relatório
+	// (LOL_CONHECIMENTO; padrão <Dados>/conhecimento).
+	Conhecimento string
+	// NotebookLMCaderno: o id do caderno do espelho do Especialista Lane
+	// (LOL_NOTEBOOKLM_CADERNO; vazio = a tela informa). NLM: o comando da
+	// ferramenta notebooklm-mcp-cli (LOL_NLM; padrão "nlm" no PATH), com
+	// argumentos e aspas se precisar (`uvx --from notebooklm-mcp-cli nlm`); a
+	// subida confere a versão e cai no uvx se o configurado não serve
+	// (ia/especialista_nlm.go).
+	NotebookLMCaderno string
+	NLM               string
+	// RankingFonte: de onde o ranking do Lane lê o histórico de cada candidato
+	// (LOL_RANKING_FONTE): "lcu" (o cliente do LoL; padrão na máquina do dono, não
+	// gasta a cota da match-v5) ou "riot" (só a API da Riot, para o servidor sem
+	// cliente). O pedido de atualização pode escolher a outra.
+	RankingFonte string
+	// Estudo: a área de Estudo (coleta por elo, estudos, Especialista Lane,
+	// ranking) existe neste servidor (LOL_ESTUDO=1, padrão na máquina do dono).
+	// Desligada (LOL_ESTUDO=0), o menu esconde o Estudo e as rotas dele
+	// respondem 404; as vozes da IA continuam usando as sínteses já prontas.
+	// É a separação para o servidor com outras pessoas: o estudo é só do dono.
+	Estudo bool
 }
 
 // PortaPadrao também está em app/src/main/servidor.js: mexeu aqui, mexa lá.
@@ -73,6 +107,44 @@ func LoadConfig() Config {
 			cfg.CapturaACadaS = v
 		}
 	}
+	cfg.IA = "terminal"
+	if cfg.ModoTeste {
+		cfg.IA = "falso"
+	}
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("LOL_IA"))); v != "" {
+		if v == "terminal" || v == "falso" {
+			cfg.IA = v
+		} else {
+			log.Printf("AVISO: LOL_IA=%q desconhecida (terminal ou falso); usando %s", v, cfg.IA)
+		}
+	}
+	cfg.IAClaude = strings.TrimSpace(os.Getenv("LOL_IA_CLAUDE"))
+	cfg.IAModelo = strings.TrimSpace(os.Getenv("LOL_IA_MODELO"))
+	cfg.IAModeloConversa = strings.TrimSpace(os.Getenv("LOL_IA_MODELO_CONVERSA"))
+	cfg.Conhecimento = filepath.Join(cfg.Dados, "conhecimento")
+	if c := strings.TrimSpace(os.Getenv("LOL_CONHECIMENTO")); c != "" {
+		cfg.Conhecimento = c
+	}
+	cfg.NotebookLMCaderno = strings.TrimSpace(os.Getenv("LOL_NOTEBOOKLM_CADERNO"))
+	cfg.NLM = strings.TrimSpace(os.Getenv("LOL_NLM"))
+	cfg.RankingFonte = "lcu"
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("LOL_RANKING_FONTE"))); v != "" {
+		if v == "lcu" || v == "riot" {
+			cfg.RankingFonte = v
+		} else {
+			log.Printf("AVISO: LOL_RANKING_FONTE=%q desconhecida (lcu ou riot); usando lcu", v)
+		}
+	}
+	cfg.Estudo = true
+	if v := strings.TrimSpace(os.Getenv("LOL_ESTUDO")); v != "" {
+		switch {
+		case ligado(v):
+		case desligado(v):
+			cfg.Estudo = false
+		default:
+			log.Printf("AVISO: LOL_ESTUDO=%q desconhecido (0 ou 1); usando 1", v)
+		}
+	}
 	// LookupEnv: "definida e vazia" (não servir a interface) é diferente de
 	// "não definida" (servir a pasta padrão).
 	if r, definida := os.LookupEnv("LOL_RENDERER"); definida {
@@ -85,6 +157,15 @@ func LoadConfig() Config {
 func ligado(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "sim", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// desligado é o contrário de ligado (o documentado é "0").
+func desligado(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "false", "nao", "não", "no", "off":
 		return true
 	}
 	return false

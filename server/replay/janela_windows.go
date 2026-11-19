@@ -47,6 +47,9 @@ var (
 	pPrintWindow                   = user32.NewProc("PrintWindow")
 	pGetCursorPos                  = user32.NewProc("GetCursorPos")
 	pSetCursorPos                  = user32.NewProc("SetCursorPos")
+	pGetLastInputInfo              = user32.NewProc("GetLastInputInfo")
+	pGetAsyncKeyState              = user32.NewProc("GetAsyncKeyState")
+	pGetTickCount                  = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetTickCount")
 
 	pCreateCompatibleDC     = gdi32.NewProc("CreateCompatibleDC")
 	pCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
@@ -208,7 +211,101 @@ func centralizaCursor() {
 	if image.Pt(int(p.x), int(p.y)).In(dentro) {
 		return
 	}
+	ini := tick()
 	pSetCursorPos.Call(uintptr(area.Min.X+area.Dx()/2), uintptr(area.Min.Y+area.Dy()/2))
+	entradas.marca(ini, tick())
+}
+
+// --- Presenca (presenca.go): a pessoa está usando o computador? ---
+
+// tick é o GetTickCount (ms desde que o Windows ligou), a mesma base do
+// GetLastInputInfo.
+func tick() uint32 {
+	t, _, _ := pGetTickCount.Call()
+	return uint32(t)
+}
+
+// entradasDoApp guarda os intervalos (em tick) em que a entrada de teclado ou
+// mouse foi do próprio app (a tecla do motor, o cursor posto no meio): o
+// GetLastInputInfo conta essas também, e elas não são a pessoa.
+type entradasDoApp struct {
+	mu        sync.Mutex
+	janelas   [16][2]uint32
+	n         int
+	ultVisto  uint32
+	ultPessoa time.Time
+}
+
+var entradas entradasDoApp
+
+// folgaEntradaApp: quanto depois do fim da tecla/cursor ainda conta como do app
+// (o Windows carimba o evento quando o processa).
+const folgaEntradaApp = 150
+
+func (e *entradasDoApp) marca(ini, fim uint32) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.janelas[e.n%len(e.janelas)] = [2]uint32{ini - 20, fim + folgaEntradaApp}
+	e.n++
+}
+
+func (e *entradasDoApp) doApp(t uint32) bool {
+	for i := 0; i < min(e.n, len(e.janelas)); i++ {
+		j := e.janelas[i]
+		if t-j[0] <= j[1]-j[0] { // aritmética de uint32: aguenta a volta do contador
+			return true
+		}
+	}
+	return false
+}
+
+type lastInputInfo struct {
+	tamanho uint32
+	tempo   uint32
+}
+
+// UltimaEntradaDoUsuario: o GetLastInputInfo, descontadas as entradas do app.
+// Só sabe da última entrada; uma da pessoa que veio antes de uma tecla do
+// motor e não foi vista a tempo se perde (o motor pergunta antes de cada tecla
+// e a cada ciclo de espera, então a janela é pequena).
+func (j *JanelaWindows) UltimaEntradaDoUsuario() time.Time {
+	li := lastInputInfo{tamanho: 8}
+	if ok, _, _ := pGetLastInputInfo.Call(uintptr(unsafe.Pointer(&li))); ok == 0 {
+		return time.Time{}
+	}
+	agora, agoraTick := time.Now(), tick()
+	entradas.mu.Lock()
+	defer entradas.mu.Unlock()
+	if li.tempo != entradas.ultVisto {
+		entradas.ultVisto = li.tempo
+		if !entradas.doApp(li.tempo) {
+			entradas.ultPessoa = agora.Add(-time.Duration(agoraTick-li.tempo) * time.Millisecond)
+		}
+	}
+	return entradas.ultPessoa
+}
+
+// ModificadorPressionado: Shift (0x10), Ctrl (0x11), Alt (0x12), Windows
+// (0x5B, 0x5C) apertados agora (bit alto do GetAsyncKeyState). Só o estado
+// dessas cinco; nenhuma outra tecla é lida.
+func (j *JanelaWindows) ModificadorPressionado() bool {
+	for _, vk := range []uintptr{0x10, 0x11, 0x12, 0x5B, 0x5C} {
+		if r, _, _ := pGetAsyncKeyState.Call(vk); r&0x8000 != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// PrimeiroPlano: o executável da janela da frente (só o nome do arquivo).
+func (j *JanelaWindows) PrimeiroPlano() string {
+	h := primeiroPlano()
+	if h == 0 {
+		return ""
+	}
+	var pid uint32
+	pGetWindowThreadProcessId.Call(h, uintptr(unsafe.Pointer(&pid)))
+	return exeDoPid(pid)
 }
 
 func (j *JanelaWindows) Encerra() error {
@@ -280,6 +377,8 @@ func (j *JanelaWindows) Aperta(tecla rune) error {
 		}
 		return nil
 	}
+	ini := tick()
+	defer func() { entradas.marca(ini, tick()) }()
 	if err := envia(keyeventfScancode); err != nil {
 		return err
 	}

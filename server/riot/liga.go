@@ -38,6 +38,9 @@ type EntradaLiga struct {
 	Veteran    bool `json:"veteran"`
 	HotStreak  bool `json:"hotStreak"`
 	Inactive   bool `json:"inactive"`
+	// Fila: a fila da entrada (RANKED_SOLO_5x5, RANKED_FLEX_SR); só vem na
+	// consulta por jogador (entries/by-puuid).
+	Fila string `json:"queueType,omitempty"`
 }
 
 // Divisoes são as divisões abaixo de Mestre, da mais alta para a mais baixa.
@@ -106,6 +109,35 @@ func (c *Cliente) ContaPorPuuid(ctx context.Context, reg Regiao, puuid string) (
 	var ct Conta
 	err := c.pedeJSON(ctx, c.host(reg.Roteamento), "/riot/account/v1/accounts/by-puuid/"+url.PathEscape(puuid), &ct)
 	return ct, err
+}
+
+// EloSoloPorRiotID: o elo da fila solo de um jogador pelo Riot ID (nome#tag), na
+// região padrão. Dois pedidos: account-v1 (o puuid da Riot, que não é o do
+// LCU) e league-v4 por puuid. ok falso: a conta existe mas não tem ranqueada
+// solo nesta temporada. Erros: ErrSemChave, ErrChaveRecusada (vencida),
+// ErrNaoEncontradoRiot (Riot ID que não existe).
+func (c *Cliente) EloSoloPorRiotID(ctx context.Context, nome, tag string) (EntradaLiga, bool, error) {
+	reg, ok := RegiaoPorCodigo(RegiaoPadrao)
+	if !ok {
+		return EntradaLiga{}, false, errors.New("região padrão desabilitada")
+	}
+	if strings.TrimSpace(nome) == "" || strings.TrimSpace(tag) == "" {
+		return EntradaLiga{}, false, errors.New("sem o Riot ID (nome e tag) do jogador")
+	}
+	var ct Conta
+	if err := c.pedeJSON(ctx, c.host(reg.Roteamento), "/riot/account/v1/accounts/by-riot-id/"+url.PathEscape(nome)+"/"+url.PathEscape(tag), &ct); err != nil {
+		return EntradaLiga{}, false, err
+	}
+	var l []EntradaLiga
+	if err := c.pedeJSON(ctx, c.host(reg.Plataforma), "/lol/league/v4/entries/by-puuid/"+url.PathEscape(ct.Puuid), &l); err != nil {
+		return EntradaLiga{}, false, err
+	}
+	for _, e := range l {
+		if e.Fila == FilaSolo {
+			return e, true, nil
+		}
+	}
+	return EntradaLiga{}, false, nil
 }
 
 // Confere diz se dá para usar a chave agora: nil, ErrSemChave (sem
@@ -188,6 +220,10 @@ func (c *Cliente) pedeJSON(ctx context.Context, host, caminho string, destino an
 func rotaSemID(caminho string) string {
 	if i := strings.Index(caminho, "?"); i >= 0 {
 		caminho = caminho[:i]
+	}
+	if i := strings.Index(caminho, "/by-riot-id/"); i >= 0 {
+		// O Riot ID também é dado da pessoa: fora da mensagem.
+		return caminho[:i+len("/by-riot-id")]
 	}
 	if strings.Contains(caminho, "/by-puuid/") {
 		return caminho[:strings.Index(caminho, "/by-puuid/")+len("/by-puuid")]

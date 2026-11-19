@@ -23,6 +23,8 @@ test('no mapa só as vivas com lugar estimado', () => {
 
 test('colocadas por time até o instante', () => {
   assert.deepEqual(colocadasAte(lista, 550000), { 100: 1, 200: 2 });
+  // O UNDEFINED da Riot (comum: false) aparece no mapa, mas não conta (a regra do servidor).
+  assert.deepEqual(colocadasAte([...lista, { t_ms: 1000, time: 100, tipo: 'UNDEFINED', comum: false }], 550000), { 100: 1, 200: 2 });
 });
 
 test('título diz quem, quando e que a posição é estimada', () => {

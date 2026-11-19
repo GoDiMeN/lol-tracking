@@ -207,11 +207,10 @@ type Parametros struct {
 	// estimada em renascer + isso (da fonte até lá andando).
 	JanelaMinimaMs int64
 	JanelaMaximaMs int64
-	// InicioJanelasMs: antes disso não há janela (os acampamentos nascem a
-	// 1:30 e todos começam na base).
-	InicioJanelasMs int64
-	VoltaSelvaMs    int64
-	VoltaRotaMs     int64
+	// (Antes do primeiro nascimento dos acampamentos do patch, tempos_selva.go,
+	// não há janela: todos começam na base.)
+	VoltaSelvaMs int64
+	VoltaRotaMs  int64
 	// UsoMinimoJanelaMs: tempo mínimo invadindo / em torre / em objetivo dentro
 	// da janela para ela contar como aproveitada.
 	UsoMinimoJanelaMs int64
@@ -231,14 +230,29 @@ type Parametros struct {
 	PenalidadeMorteCara int
 	PesoMomentoChave    float64
 	PesoVantagemRota    float64
-	// MinPartidasContexto: partidas guardadas do jogador (fora esta) para dizer
-	// a função principal; com menos, o campo fica vazio.
+	// MinPartidasContexto: partidas de antes do jogador para dizer a função
+	// principal e o campeão; com menos, os campos ficam vazios.
+	// PartidasContexto: quantas partidas de antes (as mais recentes) o
+	// contexto usa. FracaoMono: com o campeão em pelo menos tanto delas, "mono".
 	MinPartidasContexto int
+	PartidasContexto    int
+	FracaoMono          float64
 	// CustoItemCompleto: item com custo total a partir disso é "item completo"
 	// (as botas de nível 2 custam ~1 100; os componentes, até ~1 300).
 	CustoItemCompleto int
 	// LimiteContextoIA: tamanho máximo (caracteres) do pacote de contexto.
 	LimiteContextoIA int
+
+	// Visão antes de um abate ou gank (visao.go, passes de visão de time).
+	// VisaoAntesMs: a janela olhada antes do abate ("o atacante era visto
+	// pelo time da vítima nos X s anteriores?"). VisaoCoberturaNao: para
+	// responder "não" (nunca visto), a fração do tempo da janela em que ele
+	// estava no mapa que precisa ter leitura de "fora" (firme ou herdada);
+	// abaixo disso, "não dá para saber". VisaoNoMapaMinimo: fração mínima da
+	// janela com ele no mapa e com captura para responder qualquer coisa.
+	VisaoAntesMs      int64
+	VisaoCoberturaNao float64
+	VisaoNoMapaMinimo float64
 }
 
 // Param são os parâmetros em uso.
@@ -316,7 +330,6 @@ var Param = Parametros{
 	OuroPorCS:               21,
 	JanelaMinimaMs:          15000,
 	JanelaMaximaMs:          90000,
-	InicioJanelasMs:         90000,
 	VoltaSelvaMs:            20000,
 	VoltaRotaMs:             30000,
 	UsoMinimoJanelaMs:       10000,
@@ -327,8 +340,13 @@ var Param = Parametros{
 	PesoMomentoChave:        0.1,
 	PesoVantagemRota:        0.25,
 	MinPartidasContexto:     5,
+	PartidasContexto:        10,
+	FracaoMono:              0.7,
 	CustoItemCompleto:       2000,
 	LimiteContextoIA:        12000,
+	VisaoAntesMs:            15000,
+	VisaoCoberturaNao:       0.8,
+	VisaoNoMapaMinimo:       0.5,
 }
 
 // Fase do instante: "rotas", "meio" ou "final".

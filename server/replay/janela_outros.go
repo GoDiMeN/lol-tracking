@@ -5,6 +5,7 @@ package replay
 import (
 	"errors"
 	"image"
+	"time"
 )
 
 // O jogo só existe no Windows; fora dele a janela "de verdade" recusa tudo,
@@ -22,3 +23,6 @@ func (*JanelaWindows) Encerra() error                               { return nil
 func (*JanelaWindows) Aperta(rune) error                            { return errSoWindows }
 func (*JanelaWindows) Tamanho() (int, int, error)                   { return 0, 0, errSoWindows }
 func (*JanelaWindows) Captura(image.Rectangle) (*image.RGBA, error) { return nil, errSoWindows }
+func (*JanelaWindows) UltimaEntradaDoUsuario() time.Time            { return time.Time{} }
+func (*JanelaWindows) ModificadorPressionado() bool                 { return false }
+func (*JanelaWindows) PrimeiroPlano() string                        { return "" }

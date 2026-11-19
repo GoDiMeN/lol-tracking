@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	"loltracking/server/banco"
-	"loltracking/server/partida"
 )
 
 // O resumo de cada jogador, a build lado a lado com o estado do jogo, a nota de
@@ -21,21 +20,40 @@ type ComponenteNota struct {
 	Detalhe string `json:"detalhe"`
 }
 
-// ContextoJogador: o que o banco já sabe do jogador fora desta partida. Campo
-// vazio = não se sabe; Falta diz o quê e de onde viria.
+// ContextoJogador: quem o jogador era ANTES desta partida (fatos_historico.go),
+// pelas até Param.PartidasContexto partidas de Summoner's Rift de antes dela
+// (banco + histórico buscado). Campo vazio = não se sabe; Falta diz o quê e de
+// onde viria. Informação ao lado: a nota de impacto não usa.
 type ContextoJogador struct {
+	// PartidasGuardadas: as partidas de antes usadas (no máximo PartidasContexto).
 	PartidasGuardadas int            `json:"partidas_guardadas"`
 	FuncoesGuardadas  map[string]int `json:"funcoes_guardadas"`
 	FuncaoPrincipal   string         `json:"funcao_principal"`
-	ForaDaFuncao      *bool          `json:"fora_da_funcao"`
-	// Sequencia: nas partidas guardadas logo antes desta, +n vitórias seguidas
-	// ou −n derrotas seguidas (0 = nenhuma guardada).
+	// FracaoPrincipal: a fração das partidas (com função conhecida) na principal.
+	FracaoPrincipal float64 `json:"fracao_principal"`
+	ForaDaFuncao    *bool   `json:"fora_da_funcao"`
+	// Sequencia: nas partidas logo antes desta, +n vitórias seguidas ou −n
+	// derrotas seguidas (0 = nenhuma).
 	Sequencia int `json:"sequencia"`
-	// Ultimas e VitoriasUltimas: as até 10 partidas guardadas antes desta.
-	Ultimas         int           `json:"ultimas"`
-	VitoriasUltimas int           `json:"vitorias_ultimas"`
-	Elo             *EloConhecido `json:"elo"`
-	Falta           []string      `json:"falta"`
+	// Ultimas e VitoriasUltimas: as até PartidasContexto partidas de antes.
+	Ultimas         int `json:"ultimas"`
+	VitoriasUltimas int `json:"vitorias_ultimas"`
+	// CampeaoVezes de CampeaoDe: das partidas de antes, quantas com o campeão
+	// desta. Mono: em ≥ FracaoMono delas; SemOCampeao: em nenhuma (talvez a
+	// primeira vez). Nulos com menos de MinPartidasContexto partidas.
+	CampeaoVezes int   `json:"campeao_vezes"`
+	CampeaoDe    int   `json:"campeao_de"`
+	Mono         *bool `json:"mono"`
+	SemOCampeao  *bool `json:"sem_o_campeao"`
+	// Fonte: "banco", "cliente" ou "riot" (o histórico buscado; "+ banco" se o
+	// banco somou partidas); BuscadoEm: quando foi buscado.
+	Fonte     string `json:"fonte"`
+	BuscadoEm string `json:"buscado_em,omitempty"`
+	// Alcance: o histórico buscado não chega (ou chega só em parte) a antes
+	// desta partida; nunca se usam partidas posteriores no lugar.
+	Alcance string        `json:"alcance,omitempty"`
+	Elo     *EloConhecido `json:"elo"`
+	Falta   []string      `json:"falta"`
 }
 
 // EvidenciaBuild: a compra de um item completo e o estado do jogo naquele
@@ -143,7 +161,8 @@ func (f *fatos) jogadores(db *banco.DB) []ResumoJogador {
 			}
 		}
 		for _, w := range f.dp.wards {
-			if w.quem == pid {
+			// Só os tipos conhecidos (NomesSentinela): o UNDEFINED da Riot não é sentinela.
+			if w.quem == pid && ContaComoSentinela(w.tipo) {
 				j.Sentinelas++
 				if w.tipo == TipoControle {
 					j.SentinelasControle++
@@ -168,7 +187,7 @@ func (f *fatos) jogadores(db *banco.DB) []ResumoJogador {
 		}
 		j.Itens = f.compras(pid)
 		j.Build = f.evidenciasBuild(pid, j.Itens)
-		j.Contexto = contextoDoJogador(db, part.Puuid, part.Posicao, f.dp.pt.CriadaEmMs)
+		j.Contexto = contextoDoJogador(db, f.dp.pt.GameID, part, f.dp.pt.CriadaEmMs)
 		if j.Contexto.Elo != nil {
 			j.Elo = j.Contexto.Elo.Elo
 			if j.Contexto.Elo.Divisao != "" {
@@ -440,65 +459,4 @@ func (f *fatos) notas(js []ResumoJogador, ms []MomentoChave) {
 	for k, i := range ordem {
 		js[i].PosicaoNota = k + 1
 	}
-}
-
-// --- Contexto do jogador ----------------------------------------------------------------------
-
-// RotaHistoricoLCU é a rota PERMITIDA (lcu/permitidas.go) que daria o histórico
-// recente de qualquer jogador; a base de fatos NÃO a chama (só lê o banco).
-const RotaHistoricoLCU = "GET /lol-match-history/v1/products/lol/{puuid}/matches"
-
-func contextoDoJogador(db *banco.DB, puuid, funcao string, criadaEmMs int64) ContextoJogador {
-	c := ContextoJogador{FuncoesGuardadas: map[string]int{}, Falta: []string{}}
-	hist, err := partida.HistoricoGuardado(db, puuid, criadaEmMs)
-	if err != nil {
-		c.Falta = append(c.Falta, "histórico guardado: "+err.Error())
-	}
-	c.PartidasGuardadas = len(hist)
-	for _, h := range hist {
-		if h.Posicao != "" {
-			c.FuncoesGuardadas[h.Posicao]++
-		}
-	}
-	for i, h := range hist {
-		if i >= 10 {
-			break
-		}
-		c.Ultimas++
-		if h.Venceu {
-			c.VitoriasUltimas++
-		}
-	}
-	for i, h := range hist {
-		if i == 0 {
-			c.Sequencia = map[bool]int{true: 1, false: -1}[h.Venceu]
-			continue
-		}
-		if h.Venceu != hist[0].Venceu {
-			break
-		}
-		c.Sequencia += map[bool]int{true: 1, false: -1}[h.Venceu]
-	}
-	if len(hist) >= Param.MinPartidasContexto {
-		melhor, n := "", 0
-		for _, k := range []string{"TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"} {
-			if c.FuncoesGuardadas[k] > n {
-				melhor, n = k, c.FuncoesGuardadas[k]
-			}
-		}
-		c.FuncaoPrincipal = melhor
-		if melhor != "" && funcao != "" {
-			fora := funcao != melhor
-			c.ForaDaFuncao = &fora
-		}
-	} else {
-		c.Falta = append(c.Falta, fmt.Sprintf("função principal e histórico: %d partida(s) guardada(s) antes desta (mín. %d); viria de %s (não chamada)",
-			len(hist), Param.MinPartidasContexto, RotaHistoricoLCU))
-	}
-	if e, ok := eloDoJogador(db, puuid); ok {
-		c.Elo = &e
-	} else {
-		c.Falta = append(c.Falta, "elo: nenhuma rota permitida do LCU dá; só a API da Riot (league-v4)")
-	}
-	return c
 }

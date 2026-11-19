@@ -4,6 +4,7 @@ import {
   estimativaVisao,
   estimativaVisaoNoRastreio,
   estadoEm,
+  herdadoEm,
   estadosNoInstante,
   sentinelasLidasEm,
   temSentinelasLidas,
@@ -40,6 +41,10 @@ test('estado no instante: intervalos [de, ate)', () => {
   assert.equal(estadoEm(j, 6500), 'indeterminado');
   assert.equal(estadoEm(j, 7000), '');
   assert.equal(estadoEm(null, 0), '');
+  const yi = { visivel: [[0, 1000]], fora: [[1000, 3000]], indeterminado: [], fora_do_mapa: [[3000, 4200]], inferido: [[1500, 2000]] };
+  assert.equal(estadoEm(yi, 3500), 'fora_do_mapa');
+  assert.equal(herdadoEm(yi, 1700), true);
+  assert.equal(herdadoEm(yi, 2500), false);
 });
 
 test('estados dos inimigos do observador', () => {

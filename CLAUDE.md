@@ -24,6 +24,20 @@ medido no jogo de verdade: **leia antes de tocar em `lcu`, `replay` ou `visao`**
    Sondas e testes reais também: abriu, usou, fechou.
 6. **`token.txt`** (chave da Riot) nunca vai para o git nem para log. A chave é opcional.
 
+## Renovar a chave da Riot (vence a cada 24 h)
+
+A chave de desenvolvimento só serve à descoberta de jogadores (`server/aprendizado`, API de ligas). Quando o app disser
+"a Riot recusou a chave", o passo combinado com o dono é:
+
+1. Abrir `https://developer.riotgames.com/` no Chrome do dono. Ele faz o login e o "não sou um robô" e clica em
+   **Regenerate API Key**: isso é sempre dele, nunca automatizado.
+2. Com a chave aparecendo na página (campo que começa com `RGAPI-`; a linha "Expires" tem de dizer ~24 h), ler o valor
+   do campo e gravar em `token.txt` (UTF-8 sem BOM, sem quebra de linha). O dono autorizou essa leitura em 2026-11-18.
+3. Não repetir a chave em resposta, commit, log ou doc. Conferir com `GET /api/estado` (`chave_riot.valida`): o app
+   percebe que o `token.txt` mudou e confere a chave nova na hora.
+
+Para não depender disso, o dono pode pedir no mesmo portal uma **Personal API Key** (Register Product), que não vence.
+
 ## Idioma e estilo
 
 Tudo em português do Brasil: comentários (explicam o **porquê**), erros, interface, docs, commits (conventional commits:
@@ -41,6 +55,7 @@ server/      Go (stdlib + modernc.org/sqlite, sem CGO). MVC por função: cada f
   visao/               leitura da tela por gabarito
   rastreio/            fila dos passes, laço de amostragem, eventos SSE
   analise/ estudo/     zonas, saída de rota, retrato dos abates, listas e comparação
+  ia/                  análise e conversa com IA (Claude Code sem ferramentas), vozes e referências da coleta por elo
 app/         Electron. src/main (mínimo) e src/renderer (HTML/CSS/JS puro, sem framework), servido pelo servidor em /.
 docs/        arquitetura/ (descobertas, contrato HTTP, dados) e decisoes/.
 ```

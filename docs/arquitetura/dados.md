@@ -99,12 +99,33 @@ cadeia reduzida (`cadeia`), e as linhas de trabalho do passe são apagadas. Deci
 | `criado_em`, `atualizado_em`, `terminado_em` | TEXT | |
 | `erro` | TEXT | frase para a pessoa |
 
+### `partidas_origem` (`rastreio/origem.go`)
+
+Por que a partida foi rastreada. Uma linha por (partida, origem, jogador); a partida pode ter as duas origens.
+
+| coluna | tipo | |
+|---|---|---|
+| `game_id` | INTEGER | |
+| `origem` | TEXT | `pesquisa` (rastreada a partir da busca de um jogador na tela Jogadores) ou `estudo` (coleta por elo, estudo de um jogador, ranking) |
+| `puuid` | TEXT | `pesquisa`: o jogador pesquisado (o `puuid` do pedido de rastreio); `estudo`: o jogador de referência. Vazio = não se soube quem |
+| `como` | TEXT | `pedido` (gravada no pedido do rastreio) ou `preenchida` (deduzida na subida para partida rastreada antes da tabela) |
+| `criado_em` | TEXT | |
+
+PK (`game_id`, `origem`, `puuid`). Quem grava: `POST /api/partidas/{id}/rastreio` com `puuid` (a tela Jogadores manda o
+jogador aberto) grava `pesquisa`; a coleta (`aprendizado/coletor.go`) grava `estudo` com o jogador de referência ANTES de pedir o
+rastreio (se o processo cair no meio, a partida não fica sem origem). Pedido sem `puuid` só deduz o pesquisado se a partida ainda
+não tem origem. **Preenchimento** (`rastreio.PreencheOrigens`, na subida, depois de todas as migrações; só partida com rastreio e
+sem origem): com linha em `aprendizado_partidas` ou `estudo_partidas` → `estudo` com a referência; senão `pesquisa` com o
+pesquisado deduzido entre os participantes que estão em `jogadores`: (1) o invocador da conta do cliente, se está na partida; (2)
+o buscado por último ANTES do primeiro rastreio da partida; (3) o mais buscado; ninguém buscado → `pesquisa` com `puuid` vazio.
+"Partidas rastreadas" mostra só `pesquisa`; a conversa geral com a IA e a busca `origem=pesquisa` também.
+
 ### `passes`
 
 | coluna | |
 |---|---|
 | `id`, `rastreio_id`, `game_id`, `participante_id`, `ordem` | |
-| `estado` | `pendente rodando pausado concluido cancelado falhou` |
+| `estado` | `pendente rodando pausado concluido cancelado falhou ruim` (`ruim`: fechou e não vale; abaixo, "Passe ruim") |
 | `t_atual_ms` | último tempo de jogo gravado: a retomada continua daqui |
 | `duracao_ms` | duração do replay (`playback.length`) |
 | `amostras`, `amostras_sem_trava` | quantas leituras; quantas com a trava perdida (jogador vivo sem a câmera nele) |
@@ -115,6 +136,12 @@ cadeia reduzida (`cadeia`), e as linhas de trabalho do passe são apagadas. Deci
 | `calibracao_pontos`, `erro_calibracao_mediano`, `erro_calibracao_maximo` | o ajuste contra os quadros da linha do tempo (unidades do mapa) |
 | `iniciado_em`, `terminado_em`, `erro` | |
 | `repescagem` | JSON da última repescagem dos buracos do passe (vazio = nunca rodou): `{quando: "fim_do_passe"|"depois", buracos, recuperados, sobraram, restantes: [{de_ms, ate_ms, duracao_ms, amostras, motivo, tipo?}], feita_em}` (`tipo: "nao_selecionavel"` = o jogo tira o jogador da tela ali; numa repescagem de passe gravado, `restantes` inclui os que ficaram de fora do plano por isso). Regras em "Buracos e repescagem" abaixo |
+| `refaz_de` | o passe ruim que este passe refaz (0 = nenhum): a refação automática do fim do rastreio e o "refazer passes ruins" |
+| `diagnostico` | JSON do porquê a trava caiu, somado a cada trecho do passe (vazio = passe de antes de 2026-11-18): `{teclas_enviadas, foco_trocado (o jogo não estava na frente antes da tecla), recusadas_por_uso, recusadas_modificador, frente_antes: {exe: n} (o programa da janela da frente antes de cada tecla), conferencia: {selecao_vazia, selecao_outro, fora_da_tela, outro} (o motivo de cada amostra viva sem a câmera), esperas_usuario, espera_usuario_s, disjuntor}` |
+
+#### Passe ruim (`rastreio/qualidade_passe.go`, 2026-11-18)
+
+O passe que fecha num destes critérios fica `ruim` (`erro` = o motivo): mais de **25%** das amostras vivas sem a câmera no jogador (bons: 0,3–4,5%); **taxa abaixo de 75%** da pedida (3,0 por segundo de jogo; bons: 3,98 a 2×/4×, 3,5–3,67 a 8×); conferência com a Riot em ≥ 10 valores com **menos de 50%** iguais. Passe com menos de 40 amostras vivas não é julgado. O passe ruim é compactado (fica para diagnóstico) mas **não vale**: `melhorPasse`, o estado dos 10, a cadeia, a análise e a base de fatos o ignoram (o jogador fica como não rastreado se só tem ele); a repescagem não roda nele; a fila o refaz uma vez no fim do rastreio (`MaxRefacoesAutomaticas`); uma refação que sai ruim fica ruim. Na subida do servidor, os concluídos já gravados que caem no critério (pelas contagens gravadas, que incluem as amostras mortas: a fração sai igual ou menor) viram `ruim` e a análise da partida é refeita. Passe parado no meio cuja parte gravada cai no critério recomeça do início na retomada.
 
 ### `amostras_brutas` (trabalho)
 Uma linha por leitura do jogador seguido (~4 por segundo de jogo). Colunas = as do bloco `amostras` abaixo, mais `passe_id`,
@@ -181,7 +208,7 @@ PK `(passe_id, conteudo)`. `conteudo` = `amostras` ou `amostras_time`; `versao` 
 
 Depois de montados os trechos (`rotulaAproximacoes`): o deslocamento (trechos `andando` e `invadindo` sem acampamento, seguidos) que termina numa luta, troca ou dive com inimigo vira a aproximação, até 25 s antes dela e só se nesse tempo o jogador percorreu ≥ 1500 até o lugar da luta: `gankando` para o caçador chegando numa rota, `roaming` para quem é de rota e está fora da própria rota (`com` = os inimigos da luta), `rotacionando` para qualquer um depois do fim da fase de rotas (primeira torre, no máximo 14 min; `GET /api/partidas/{id}/fases`). No `gankando`, `com` = só os inimigos de ROTA da luta (o caçador inimigo que chegou junto sai da lista; se não houver nenhum de rota, ficam todos). **`counter_gank`**: se um caçador inimigo da mesma luta também veio andando de longe (percorreu ≥ 1500 nos 25 s antes da luta) e chegou ao primeiro contato DEPOIS do outro, ele é o counter gank (`com` = o caçador que gankou). Contato = o primeiro instante, de 25 s antes da luta até 5 s depois (`JanelaContatoDepoisMs`), a ≤ `AlcanceTroca` (1000) de um inimigo que está na zona da luta, pelas posições rastreadas (o contexto de um passe não tem as etiquetas dos outros); diferença menor que `MargemCounterMs` (0,5 s) = chegaram juntos, os dois ficam `gankando`. Só caçador e só na fase de rotas: quem é de rota e chega para responder continua `roaming`. Partida 3304217746: a Vi encosta na Diana aos 3:56,6 e o Shaco na Vi aos 4:02,4 → Vi `gankando` Diana, Shaco `counter_gank` em Vi. `objetivo` e `torre` levam `alvo` (ex.: `dragão infernal`, `torre do meio`, `placa da torre de baixo`).
 
-**Sentinelas** (`server/analise/sentinelas.go`; `GET /api/partidas/{id}/sentinelas`, itens `sentinela_colocada`/`sentinela_destruida`, indicadores `sentinelas_*`). Só com a linha do tempo da Riot guardada (sem ela: nada, e a tela diz o motivo). Posição ESTIMADA como no item da cadeia (quem não foi rastreado: só instante e contagem). Vida (League of Legends Wiki, "Ward", conferida em 17/11/2026): `YELLOW_TRINKET` (amarela, Totem) 90–120 s pela média dos níveis dos 10 no último quadro de minuto (a reta entre os dois extremos é estimativa: `aproximado`); `SIGHT_WARD` (do item de suporte) 150 s; `CONTROL_WARD` e `BLUE_TRINKET` até serem destruídas. Limites por jogador: 3 entre amarela e do item (a quarta derruba a mais velha: `substituida`), 1 de controle. Um `WARD_KILL` derruba a sentinela viva do mesmo tipo, do outro time, mais perto de onde quem destruiu estava (a até o raio dela + 800); sem posição de quem destruiu, só se houver uma candidata (`destruida`, `aproximado`). De controle/azul sem destruição casada: `pode_estar_ativa` (`ate_ms` nulo). Outro `wardType` (`UNDEFINED`, bonecos de campeão) aparece com o tipo cru, `comum: false`, vida `desconhecido`. Conferência na 3304217746: a pontuação de visão do dono (campo `ward` das amostras) NÃO muda quando a sentinela é colocada; ela sobe quando a sentinela ACABA — a até ~2 s do `ate_ms` estimado em 58 de 62 amarelas que expiraram e 14 de 16 do item, e a até 0,3 s em todas as 30 destruídas e nas 12 substituídas.
+**Sentinelas** (`server/analise/sentinelas.go`; `GET /api/partidas/{id}/sentinelas`, itens `sentinela_colocada`/`sentinela_destruida`, indicadores `sentinelas_*`). Só com a linha do tempo da Riot guardada (sem ela: nada, e a tela diz o motivo). Posição ESTIMADA como no item da cadeia (quem não foi rastreado: só instante e contagem). Vida (League of Legends Wiki, "Ward", conferida em 17/11/2026): `YELLOW_TRINKET` (amarela, Totem) 90–120 s pela média dos níveis dos 10 no último quadro de minuto (a reta entre os dois extremos é estimativa: `aproximado`); `SIGHT_WARD` (do item de suporte) 150 s; `CONTROL_WARD` e `BLUE_TRINKET` até serem destruídas. Limites por jogador: 3 entre amarela e do item (a quarta derruba a mais velha: `substituida`), 1 de controle. Um `WARD_KILL` derruba a sentinela viva do mesmo tipo, do outro time, mais perto de onde quem destruiu estava (a até o raio dela + 800); sem posição de quem destruiu, só se houver uma candidata (`destruida`, `aproximado`). De controle/azul sem destruição casada: `pode_estar_ativa` (`ate_ms` nulo). Outro `wardType` (`UNDEFINED`, bonecos de campeão) aparece com o tipo cru, `comum: false`, vida `desconhecido`. **Contagem: uma regra só** (`analise.ContaComoSentinela`): só os quatro tipos conhecidos contam como sentinela colocada ou destruída, em todo lugar — base de fatos (`sentinelas`), resumo por jogador e por time desta rota, indicadores `sentinelas_*` e `wards_ate14`, seção "Visão" do pacote de contexto da IA e o placar do mapa com play. O `UNDEFINED` continua na lista, mas não conta (o Kayn da 3305481832 saía com 0 num lugar e 88 no outro). Conferência na 3304217746: a pontuação de visão do dono (campo `ward` das amostras) NÃO muda quando a sentinela é colocada; ela sobe quando a sentinela ACABA — a até ~2 s do `ate_ms` estimado em 58 de 62 amarelas que expiraram e 14 de 16 do item, e a até 0,3 s em todas as 30 destruídas e nas 12 substituídas.
 
 **Zonas** (`analise.Zona(x, y)`, fronteiras em `server/analise/fronteiras.go`, conferência em `docs/arquitetura/zonas.png`):
 `base_azul`/`base_vermelha` (subzona `fonte` ou `base`), `rota_topo`/`rota_meio`/`rota_baixo` (subzona `lado_azul`, `centro`,
@@ -235,15 +262,16 @@ continua daqui), `duracao_ms`, `capturas`, `capturas_modo_ok` (o painel dizia a 
 jogo), `teclas` (F1/F2 e o F3 do fim), `iniciado_em`, `terminado_em`, `erro`.
 
 `visao_capturas_brutas` (trabalho, só durante o passe): `passe_id`, `t_ms` (média dos dois `playback` em volta da captura),
-`modo` (`azul vermelho todos` ou vazio = o painel não foi lido), `retratos`, `sentinelas` (marcas `time:x:y:cobertura`
-separadas por `;`, posição já no mapa). Captura em que a leitura do minimapa falhou não entra (o trecho fica sem cobertura).
+`modo` (`azul vermelho todos` ou vazio = o painel não foi lido), `retratos`, `sentinelas`, `arcos` (marcas `time:x:y:cobertura`
+separadas por `;`, posição já no mapa; nos retratos e arcos, `:máscara` em hexadecimal quando falta pedaço do anel — bit k =
+direção 2πk/64 em que o anel apareceu; `arcos` = anéis parciais com cobertura de 0,30 a 0,62, desde 2026-11-18). Captura em que a leitura do minimapa falhou não entra (o trecho fica sem cobertura).
 
 Arquivos (pacote `arquivo`, em `dados/partidas/<id>/`):
 
 | arquivo | conteúdo |
 |---|---|
-| `visao-p<passe>-capturas.tsv.zst` | as capturas lidas do passe, `t_ms \t modo \t retratos \t sentinelas`, depois de uma primeira linha `#geometria \t x0 \t x_px \t y0 \t y_px` (a geometria do minimapa com que as marcas viraram posição; arquivo sem ela é de antes de 2026-11-18, `replay.GeometriaMinimapa20261117`). Ao ler, cada marca volta ao pixel pela geometria do arquivo e vira posição pela atual. É o dado bruto (não depende das posições). Passe **concluído** sempre grava e apaga o arquivo dos passes de visão anteriores do mesmo time; **cancelado** só grava se o time ainda não tinha nenhum. O passe que vale para um time é o concluído mais recente com arquivo (senão o cancelado mais recente com arquivo). |
-| `visao.json.zst` | `VisaoDaPartida` (contrato): para cada time observador, por inimigo, os intervalos `visivel` / `fora` / `indeterminado` e as sentinelas lidas. **Derivado**: `rastreio.RecalculaVisao` refaz no fim de cada passe de visão e no começo de cada `analise.Recalcula` (passe de jogador novo ou repescado muda as posições). Sem passe de visão que valha, o arquivo some. |
+| `visao-p<passe>-capturas.tsv.zst` | as capturas lidas do passe, `t_ms \t modo \t retratos \t sentinelas \t arcos` (a 5ª coluna e a máscara desde 2026-11-18; arquivo de 4 colunas continua valendo, sem arcos), depois de uma primeira linha `#geometria \t x0 \t x_px \t y0 \t y_px` (a geometria do minimapa com que as marcas viraram posição; arquivo sem ela é de antes de 2026-11-18, `replay.GeometriaMinimapa20261117`). Ao ler, cada marca volta ao pixel pela geometria do arquivo e vira posição pela atual. É o dado bruto (não depende das posições). Passe **concluído** sempre grava e apaga o arquivo dos passes de visão anteriores do mesmo time; **cancelado** só grava se o time ainda não tinha nenhum. O passe que vale para um time é o concluído mais recente com arquivo (senão o cancelado mais recente com arquivo). |
+| `visao.json.zst` | `VisaoDaPartida` (contrato): para cada time observador, por inimigo, os intervalos `visivel` / `fora` / `indeterminado` / `fora_do_mapa`, os pedaços `inferido` (herdados pela continuidade, dentro de `visivel`/`fora`) e as sentinelas lidas. Regras da decisão em `descobertas-replay.md` 9.2. **Derivado**: `rastreio.RecalculaVisao` refaz no fim de cada passe de visão e no começo de cada `analise.Recalcula` (passe de jogador novo ou repescado muda as posições). Sem passe de visão que valha, o arquivo some. |
 
 **A decisão por captura** (`rastreio.ClassificaCaptura`; tolerâncias em pixels do minimapa, 1 px ≈ 44 unidades; as posições
 rastreadas usadas são as de `replay.AtrasoMinimapaMs` antes do carimbo da captura — 22 ms reais × a velocidade do passe, 176 ms
@@ -375,7 +403,7 @@ quatro das ondas são sempre aproximados e só da fase de rotas) (rotador rastre
 `dano_campeoes_10/15`, `wards_ate14`, `sentinelas_rotas`, `sentinelas_meio`, `sentinelas_final` (marcos fixos de 14 e 25 min), `sentinelas_controle`, `sentinelas_destruidas` — Riot, os 10; `sentinelas_metade_inimiga` (pela posição estimada; sempre aproximado) — Riot, rastreados; `mortes_com_r_em_recarga`, `mortes_com_flash_em_recarga`, `mortes_com_passiva_em_recarga`, `abates_com_passiva_em_recarga` (os dois da passiva só existem se ela entrou em recarga alguma vez no passe) (só mortes com a
 recarga lida), `dist_aliado_mais_proximo_morte`, `mortes_em_inferioridade` — retrato; `tempo_morto_s`, `tempo_vida_baixa_s`,
 `cs_divergencias` — estado dos 10 no trecho rastreado; `habilidades_por_min`, `recalls` — rastreados;
-`pct_visivel_inimigo_<fase>` (tempo à vista do time inimigo ÷ (à vista + fora), sem o indeterminado; aproximado com mais de 10% indeterminado; fase com ≥ 1 min decidido) e `ganks_fora_da_visao_n` (caçador: trechos `gankando` que começaram com ele fora da visão do inimigo; o detalhe traz os vistos e os indeterminados) — passe de visão, rastreados (`analise/visao.go`);
+`pct_visivel_inimigo_<fase>` (tempo à vista do time inimigo ÷ (à vista + fora), sem o indeterminado; aproximado com mais de 10% indeterminado; fase com ≥ 1 min decidido) e `ganks_fora_da_visao_n` (caçador: trechos `gankando` em que ele não foi visto pelo inimigo da aproximação até a luta — `VisaoAntes` resposta `nao`; até 2026-11-18 era "começou fora da visão"; o detalhe traz os vistos e os de "não dá para saber", que deixam o valor aproximado) — passe de visão, rastreados (`analise/visao.go`);
 `pct_<grupo>_<fase>` (grupo relativo de zona: `rota_propria outra_rota rio covas selva_propria selva_inimiga base_propria
 base_inimiga`; fase `rotas` < 14 min, `meio` 14–25, `final`) e `pct_atv_<atividade>_<fase>` — rastreados, só fase com ≥ 1 min
 rastreado.
@@ -406,9 +434,10 @@ com dragões nomeados, arautos, vastilarvas, atakhan, inibidores, placas; `curva
 `rastreado`, `elo`, `abates`, `mortes`, `assistencias`, `kda`, `ouro_10/15/fim`, `cs_10/15/fim`, `adversario`,
 `dif_ouro_10/15`, `dif_cs_10/15` (nulos sem quadro), `mortes_rotas/meio/final` (marcos fixos de 14 e 25 min), `mortes_caras`,
 `objetivos_participou` / `objetivos_time` (dragão, barão, arauto, vastilarvas, atakhan, torre, inibidor do time em que matou ou
-ajudou), `sentinelas`, `sentinelas_controle`, `nota`, `posicao_nota`, `funcao_principal`, `etiquetas` (JSON
-`{"total"|"rotas"|"meio"|"final": {atividade: segundos}}`, só rastreados), `dados` (JSON: `itens` na ordem, `build`,
-`componentes` da nota, `contexto`). Índices `(campeao, funcao)` e `(puuid)`.
+ajudou), `sentinelas` (só os quatro tipos conhecidos da Riot: o `UNDEFINED` não conta; desde a `versao` 2), `sentinelas_controle`, `nota`, `posicao_nota`, `funcao_principal`, `etiquetas` (JSON
+`{"total"|"rotas"|"meio"|"final": {atividade: segundos}}`, só rastreados), `papel` e `estilo` (o papel do jogador na
+partida, desde a `versao` 3; ver "Papel do jogador" abaixo), `dados` (JSON: `itens` na ordem, `build`, `componentes` da nota,
+`contexto`, `papel` = o `PapelJogador` inteiro). Índices `(campeao, funcao)`, `(puuid)` e `(funcao, papel, estilo)`.
 
 `momentos_chave`: PK `(game_id, n)` (n na ordem do tempo); `t_ms`, `fim_ms`, `tipo`, `subtipo`, `time` (quem ganhou o
 momento), `participante_id` (protagonista), `autor`, `funcao` e `campeao` (do protagonista), `envolvidos` (JSON), `atividade` (a
@@ -426,7 +455,16 @@ Regras (limiares em `analise.Param`, seção "Base de fatos"; valores em ouro s�
   inimigo levou até `JanelaMorteObjetivoMs` depois. Etiquetas: `sozinho` (aliado mais perto além de `DistanciaSozinho`),
   `inferioridade`, `sem_troca` (o time dela não matou ninguém a ±`JanelaLutaTimeMs`), `r_em_recarga`, `flash_em_recarga`,
   `passiva_em_recarga` (só campeão cuja passiva entra em recarga), `antes_de_objetivo`, `fora_da_rota`, `luta`,
-  `previa_<atividade>`. **Morte cara** (`subtipo = 'morte_cara'`): `sozinho`, ou `antes_de_objetivo`, ou alguma recarga COM
+  `previa_<atividade>`, `atacante_nao_visto` (o matador, resposta firme "não" na janela de `VisaoAntesMs` ou antes de chegar à
+  vítima), `cacador_nao_visto` (o mesmo para o caçador do outro time). **Visão antes do abate** (com passe de visão do time da
+  vítima; `analise/visao.go`): `dados.visao_atacantes` = [`VisaoAntes`] de cada atacante do outro time e `dados.visao_cacador` =
+  `VisaoAntes` do caçador inimigo: "era visto pelo time da vítima nos `VisaoAntesMs` (15 s) antes?" — `resposta` `sim` (visto
+  em algum instante; `visto_desde_ms`, `ultimo_visto_ms`, `visto_inferido` = só por continuidade), `nao` (leitura de fora em
+  ≥ `VisaoCoberturaNao` = 80% do tempo dele no mapa) ou `nao_sabe` (ou menos de `VisaoNoMapaMinimo` = 50% da janela com
+  leitura); `cobertura` (fração firme do tempo no mapa) e `cobertura_com_inferido`; `visivel_ms`, `fora_ms`, `inferido_ms`,
+  `indeterminado_ms`, `fora_do_mapa_ms`; e `chegada_ms` (começo do último trecho a até `AlcanceLuta` da vítima) com
+  `antes_da_chegada` (a mesma pergunta até ali, se a janela tiver ≥ 2 s): nos 15 s antes de um abate o atacante quase sempre
+  aparece (está lutando), "veio sem ser visto" é o `antes_da_chegada`. **Morte cara** (`subtipo = 'morte_cara'`): `sozinho`, ou `antes_de_objetivo`, ou alguma recarga COM
   `sem_troca` (a recarga sozinha marcava ~90% das mortes da 3304217746: o R e o Flash se gastam na própria luta).
 - **luta**: `AbatesLutaTime`+ abates seguidos a menos de `JanelaLutaTimeMs` um do outro; custo de cada time = soma do custo dos
   mortos dele; `objetivo_depois` quando o vencedor levou objetivo/torre logo depois.
@@ -439,27 +477,91 @@ Regras (limiares em `analise.Param`, seção "Base de fatos"; valores em ouro s�
 - **janela_perdida / janela_aproveitada** (protagonista = quem tinha a janela): o adversário direto (mesma posição) morto (do
   abate até voltar à PRÓPRIA selva, caçador, ou à rota, os outros, pela posição rastreada; sem rastreio, renascer +
   `VoltaSelvaMs`/`VoltaRotaMs`, estimado) ou na base (`recall`/`na_base` dele). Teto `JanelaMaximaMs`; menos que
-  `JanelaMinimaMs`, antes de `InicioJanelasMs` ou com o protagonista morto mais da metade da janela: não há janela. Caçador:
-  estado de cada acampamento do lado do ausente (`TemposAcampamento`: nascimento, volta e ouro, escritos de memória da Wiki e
-  ainda A CONFERIR; limpeza deduzida das amostras de quem foi rastreado: perto do centro usando habilidade — ESTIMADO), onde ele
+  `JanelaMinimaMs`, antes do primeiro nascimento dos acampamentos do patch ou com o protagonista morto mais da metade da
+  janela: não há janela. Caçador: estado de cada acampamento do lado do ausente (nascimento e volta pela **tabela de tempos da
+  selva por patch**, `analise/tempos_selva.go`, abaixo; o ouro é equivalente escolhido à mão; limpeza deduzida das amostras de quem foi rastreado: perto do centro usando habilidade — ESTIMADO), onde ele
   estava e a distância ao acampamento vivo mais perto. Aproveitada = participou de abate/objetivo na janela, limpou acampamento do
   lado do ausente, ou ≥ `UsoMinimoJanelaMs` invadindo / em objetivo (caçador) ou em torre/dive / placa derrubada na rota dele
   (rota). Valor: acampamentos vivos (caçador) ou ondas da janela × `OuroOnda` + `OuroPlaca` com a torre externa de pé antes dos
   14 min (rota).
+- **Tempos da selva por patch** (`TabelaTemposSelva`, `TemposDaSelva(patch)`; a partida usa a linha do seu patch, e patch fora
+  da tabela vira aviso no resumo). Fontes: Wiki (infobox e Patch History de cada monstro) e notas do patch 26.1, consultadas em
+  18/11/2026. 26.1 em diante (cliente 16.x): azul, vermelho, lobos e aves nascem 0:55; sapo e krugues 1:07; caranguejo 2:55;
+  volta 5:00 (buffs), 2:15 (pequenos), 2:30 (caranguejo); dragão 5:00 e 5:00; ancião 6:00 depois da alma e 6:00; vastilarvas
+  8:00 sem volta (somem 14:45); arauto 15:00 sem volta (some 19:45); barão 20:00 e 6:00; sem Atakhan. 25.9–25.24: acampamentos
+  1:30 (sapo e krugues 1:42, caranguejo 3:30), barão 25:00, Atakhan 20:00. 25.1–25.8: vastilarvas 6:00 com volta de 4:00,
+  arauto 16:00. Conferência no dado: `go test -tags real -run TestRealTemposSelva ./analise/` numa cópia do banco.
 - **Nota de impacto** (ouro equivalente, com os componentes): abates/assistências (custo da morte ÷ participantes), objetivos
   (valor ÷ participantes), − custo das próprias mortes, − `PenalidadeMorteCara` por morte cara, ± `PesoMomentoChave` × impacto
   dos momentos-chave em que esteve (+ o time dele ganhou, − perdeu; janela só conta para o protagonista), + `PesoVantagemRota` ×
   diferença de ouro aos 15 (ou 10) contra o adversário. `posicao_nota` 1 = maior.
-- **Contexto do jogador** (só banco): partidas guardadas dele antes desta (`partida.HistoricoGuardado`), função principal (com ≥
-  `MinPartidasContexto`), sequência de vitórias/derrotas, vitórias nas últimas 10, elo (registrado pelo pacote `aprendizado`,
-  da coleta por elo). O que faltar vai em `falta`, com a rota permitida que daria (o histórico:
-  `GET /lol-match-history/v1/products/lol/{puuid}/matches`; o elo não vem de rota permitida do LCU). Nenhuma chamada nova.
+- **Contexto do jogador** (dos 10; só banco na geração; `fatos_historico.go`): as até `PartidasContexto` (10) partidas de
+  Summoner's Rift (filas 400, 420, 430, 440, 490; sem remake) **criadas antes desta**, juntando as guardadas
+  (`partida.HistoricoGuardado`) e o histórico buscado a pedido (`contexto_historicos`, abaixo), sem repetir partida. Dá: função
+  principal e a fração (com ≥ `MinPartidasContexto`), fora da função nesta, sequência de vitórias/derrotas logo antes, vitórias nas
+  últimas, o campeão desta em quantas delas (`mono` com ≥ `FracaoMono` = 70 %; `sem_o_campeao` = nenhuma, talvez a primeira vez),
+  a fonte e a data da busca, `alcance` quando o histórico buscado não chega (ou chega só em parte) a antes da partida, e o elo
+  (registrado pelos pacotes `aprendizado`, da coleta, e `ia`, a league-v4 consultada com a chave, cache de 24 h: o elo de HOJE).
+  O que faltar vai em `falta`. Informação ao lado: a nota de impacto não usa.
+- **`contexto_historicos`** (`game_id`, `participante_id`, `puuid`, `fonte` `cliente`|`riot`, `buscado_em`, `estado`
+  `ok`|`parcial`|`nao_alcanca`|`nao_achado`|`erro`, `aviso`, `vistas`, `mais_velha_ms`, `jogos` JSON): escrito pela busca do
+  contexto dos jogadores (`server/contexto`, `POST /api/partidas/{id}/contexto-jogadores`, a pedido ou antes da análise com IA
+  quando falta alguém; nunca em lote). Fontes: o cliente do LoL (`GET /lol-match-history/v1/products/lol/{puuid}/matches`, já
+  permitida, pelo puuid do LCU; só as 20 mais recentes: partida velha fica `nao_alcanca`) ou a match-v5 (ids com `endTime` = início
+  da partida, `ranking/antes.go`, com o cache de partidas do ranking). Limites em `contexto/model.go`: 10 partidas por jogador,
+  até 15 pedidos de partida por jogador, 200 pedidos à Riot por busca. A base de fatos da partida é refeita no fim.
 - **Build como evidência**: cada item completo (custo ≥ `CustoItemCompleto`, fora o item de suporte) com o que o item dá, a
   vantagem de ouro do time, ouro dele × do adversário, o placar dele, o inimigo de mais ouro (com o tipo de dano dele na partida),
   o dano por tipo do time inimigo (partida inteira) e o dano que ele recebeu nas mortes até ali (Riot). Sem julgamento. As
   compras vêm do `ITEM_PURCHASED` da Riot (com `ITEM_UNDO`); sem ela, das mudanças do inventário no estado dos 10.
 - **Pacote de contexto** (`MontaContextoIA`): Markdown com limite `LimiteContextoIA`; seções na ordem de prioridade; a que não
-  cabe entra até onde der e a última linha diz o que ficou de fora.
+  cabe entra até onde der e a última linha diz o que ficou de fora. O papel do jogador em foco vai na seção dele ("Papel na
+  partida (por regra)": papel, confiança, números, estilo, o que não deu para avaliar) e o de cada um nos jogadores-chave.
+
+#### Papel do jogador (`analise/papel.go`, limiares em `analise.ParamPapel`)
+
+COMO ele jogou, por regra (sem IA), só com o que a análise já tem. Números (`dados.papel.numeros`; % = do time dele):
+`fatia_ouro`, `fatia_dano` (dano a campeões), `participacao_abates` ((abates + assistências) ÷ abates do time), `fatia_abates`,
+`fatia_mortes`, `fatia_visao` (placar de visão), `fatia_controle` (tempo de CC aplicado), `fatia_dano_recebido` (recebido +
+mitigado), `dif_ouro_10/15/20/fim` (contra o adversário direto, quadros de minuto), `mortes_caras`, `mortes_rotas`,
+`objetivos_participou/time`, `epicos_participou/time` (dragão, arauto, barão, vastilarvas, atakhan); da POSIÇÃO POR MINUTO da
+linha do tempo (os 10 têm, rastreados ou não; minuto na própria base não conta): `pct_rota_propria`, `pct_fora_da_rota` (min 2–14),
+`pct_selva_inimiga` (min 2–25), `pct_com_atirador` (min 2–14, a menos de `DistanciaAtirador`), `pct_sozinho_no_lado` (depois dos
+14, numa rota lateral com o aliado mais perto além de `DistanciaSozinhoLado`), `pct_agrupado` (depois dos 14, 2+ aliados a menos
+de `DistanciaGrupo`); dos abates: `abates_em_rota` (caçador: abates/assistências nas rotas antes dos 14), `abates_na_rota` /
+`abates_fora_rota` (quem é de rota, antes dos 14), `picks_isolados` (abates DELE em vítima `sozinho`); `cs_selva_15`, `dif_cs_15`,
+`sentinelas_por_min`; `mortes_em_luta_vencida` (mortes dele em que, na janela de ±15 s, o time matou pelo menos tantos quantos perdeu; desde a `versao` 4); `atividades` (segundos das etiquetas, só rastreado).
+
+**Papel** (`papel`; a primeira regra que passa):
+
+| papel | regra |
+|---|---|
+| `carregou` | 3+ de 4: `fatia_ouro` ≥ 24, `fatia_dano` ≥ 25, `fatia_abates` ≥ 27, vantagem crescente (dif. no fim ≥ +1 000 e maior que aos 15) |
+| `afundou` | 2+ de 3 (`fatia_mortes` ≥ 25, `mortes_caras` ≥ 5, desvantagem que cresceu: fim ≤ −1 500 e pior que aos 15) E KDA < 2 E não terminou ≥ +1 000 à frente E não é **linha de frente da vitória** (abaixo) |
+| `habilitou` | `participacao_abates` ≥ 55, `fatia_ouro` ≤ 19 e 1+ de: `fatia_visao` ≥ 25, ≥ 50% dos objetivos do time, assistências ≥ 2 × abates |
+| (linha de frente) | venceu, `fatia_dano_recebido` ≥ 20 (sempre: separa o tanque de quem só dá lentidão de longe) e `fatia_controle` ≥ 30 OU `fatia_dano_recebido` ≥ 25, `participacao_abates` ≥ 25 e `fatia_mortes` < 25 (não foi quem mais morreu): `estavel`, com o motivo "linha de frente da vitória" e os sinais de afundou que a frente explica; confiança média com metade das mortes (ou mais) em luta vencida (`mortes_em_luta_vencida` × 2 ≥ mortes), baixa se não. O tanque do topo que morre na frente não afundou nem foi carregado (desde a `versao` 4; o Gragas 1/7/10 da 3305486035, 47% do controle do time: estável com confiança baixa, porque 0 das 7 mortes foi em luta vencida — morreu sozinho ou com o time perdendo a troca) |
+| `foi_carregado` | venceu com `participacao_abates` < 45 e `fatia_dano` < 18 |
+| `estavel` | nenhuma das outras |
+
+Confiança (`confianca`): alta com todos os sinais (ou um a mais que o mínimo), média no mínimo; `estavel` fica baixa quando
+faltou um sinal para carregar ou afundar.
+
+**Estilo** (`estilo`; os critérios da função; cada candidato tem força = valor ÷ limiar, vence a maior ≥ 1; os outros que
+passaram vão em `tambem`; nenhum: `estilo` vazio e `motivos_estilo` diz o mais perto):
+
+| função | estilos |
+|---|---|
+| topo | `ilha_split` (`pct_sozinho_no_lado` ≥ 35; com os 10 rastreados, também a etiqueta `split_push` ≥ 15%), `agrupou_cedo` (`pct_agrupado` ≥ 35 sem ser ilha), `fraco_de_lado` (dif. aos 15 ≤ −700 com ≤ 2 mortes até os 14 e ≤ 22% das mortes do time: absorveu a desvantagem), `dominou_rota` (dif. aos 15 ≥ +1 000 ou aos 10 ≥ +600) |
+| meio | `assassino_picks` (`picks_isolados` ≥ 3 e ≥ 40% dos abates dele), `roaming` (`pct_fora_da_rota` ≥ 30 com ≥ 2 abates fora da rota antes dos 14), `dominou_rota`, `ficou_na_rota` (`pct_rota_propria` ≥ 70 com < 2 abates fora) |
+| selva | `ganks` (`abates_em_rota` ≥ 4), `power_farm` (CS +15 sobre o caçador inimigo aos 15 com ≤ 2 abates nas rotas), `invasao` (`pct_selva_inimiga` ≥ 20, ou etiqueta `invadindo` ≥ 10% da partida: não depende dos outros), `objetivos` (≥ 5 épicos e ≥ 85% dos do time, E acima do esperado para caçador: ≥ 65% dos objetivos do time, torres incluídas, ou, rastreado, a etiqueta `objetivo` em ≥ 8% do tempo dele; dar o Golpear em quase todos os épicos é o esperado da função e sozinho não faz o estilo; desde a `versao` 4) |
+| atirador | `dominou_rota`, `escala` (sem dominar a rota, `fatia_dano` ≥ 28 e a dif. cresceu ≥ 1 500 dos 15 ao fim) |
+| suporte | `engajador` (`participacao_abates` ≥ 55 e `fatia_controle` ≥ 35), `roaming_visao` (`fatia_visao` ≥ 30 e `pct_fora_da_rota` ≥ 30), `com_atirador` (`pct_com_atirador` ≥ 60) |
+
+Confiança do estilo (`confianca_estilo`): alta com força ≥ 1,4, senão média; o que saiu SÓ da posição por minuto (sem a
+etiqueta dos 10) fica no máximo média. `nao_avaliado` diz o que faltou: sem rastreio, o tempo por atividade; com menos de 10
+rastreados (a coleta tem 1), luta/troca/gank/roaming/split push/agrupado pela etiqueta (usada a posição por minuto, 1 ponto
+por minuto); sem adversário direto com quadro, a diferença de rota. `fonte` diz de onde vieram os números e `frase` é a linha
+curta. Busca: `GET /api/resumos?funcao=TOP&elo=PLATINUM&papel=carregou`.
 
 Perguntas em SQL simples, por exemplo:
 
@@ -544,12 +646,15 @@ Coletas de partidas de referência por elo (contrato: "Aprendizado por elo"). Re
 função principal exigida dos jogadores; os outros contam no descarte `outra_funcao`), `estudo_id` (0; > 0 = o
 rastreio das partidas desse estudo: sem elos nem jogadores, começa na fase `rastreio`, `regiao` vazia, fora da lista do
 cartão), `amostragem` (0/1: descoberta por amostragem do meio do elo, sem os filtros de subida), `jogadores_por_elo`
-(padrão 10).
+(padrão 10; com cota por rota, a soma das cotas), `funcoes` (JSON da cota por rota; vazio = sem cota; coleta antiga com `funcao`
+vale como cota de uma rota), `jogadores_por_funcao` (a cota de cada rota em cada elo), `aproveitar` (0/1: confere os outros 9
+da partida escolhida; coleta antiga 0).
 
 ### `aprendizado_elos`
 PK `(coleta_id, elo)`; `ordem`, `estado` (`pendente descobrindo pronto`), `candidatos_vistos` (quantos da lista ordenada já foram
 olhados: a retomada continua dali), `descartes` (JSON `{inativo, veterano, poucas_partidas, travado, nao_achado, nao_mono,
-sem_historico, sem_partida}`; `sem_partida` = sem vitória rastreável no histórico, não ocupa vaga), `aviso` (ex.: achou menos de 10),
+sem_historico, sem_partida, outra_funcao, rota_completa}`; `sem_partida` = sem vitória rastreável no histórico, não ocupa vaga;
+`rota_completa` = função pedida cuja cota no elo já encheu), `aviso` (ex.: achou menos de 10),
 `paginas_vistas` (páginas da liga de onde saíram candidatos), `pedidos_liga` (pedidos à league-v4 no elo).
 
 ### `aprendizado_jogadores`
@@ -559,17 +664,103 @@ sem_historico, sem_partida}`; `sem_partida` = sem vitória rastreável no histó
 `fracao_campeao`, `partidas_solo`, `mono`, `funcao` (`TOP JUNGLE MIDDLE BOTTOM UTILITY` ou vazio: a posição mais jogada nas
 ranqueadas solo do histórico, pelo participantId do item), `fracao_funcao`, `vitorias_rastreaveis`, `derrotas_rastreaveis`
 (ranqueada solo do patch instalado, ≥ 15 min, sem rendição antecipada, na função principal), `estado`
-(`com_partidas`/`sem_partida`; `sem_partida` só em coletas antigas), `criado_em`. `UNIQUE (coleta_id, puuid_riot)`.
+(`com_partidas`/`sem_partida`; `sem_partida` só em coletas antigas), `criado_em`, `origem` (`""` = achado pela descoberta;
+`aproveitado` = estava na partida escolhida de outro jogador da coleta: `origem_game_id`, `origem_jogador_id`; `funcao` = a posição
+dele NAQUELA partida; `puuid_riot` vem da league-v4 por puuid ou, sem ele, `lcu:<puuid do LCU>`). `UNIQUE (coleta_id, puuid_riot)`.
 
 ### `aprendizado_partidas`
 `id`, `coleta_id`, `jogador_id`, `regiao`, `elo`, `game_id`, `participante_id`, `campeao_id`, `campeao`, `abates`, `mortes`,
-`assistencias`, `duracao_s`, `pontuacao` (0–100), `ordem`, `estado` (`pendente baixando rastreando pausada concluida erro
-cancelada`), `rastreio_id` (o rastreio do pacote `rastreio`), `erro`, `atualizado_em`. `UNIQUE (coleta_id, game_id,
+`assistencias`, `duracao_s`, `pontuacao` (0–100), `ordem`, `estado` (`pendente baixando rastreando pausada concluida incompleta erro
+cancelada`), `rastreio_id` (o rastreio do pacote `rastreio`; as linhas da MESMA partida (o jogador e os aproveitados) dividem um
+rastreio: um passe por jogador na mesma abertura do replay), `erro`, `atualizado_em`, `pontuacao_jogador` e
+`pontuacao_aproveitaveis` (os dois componentes: `pontuacao` = jogador + `PesoAproveitavel` × `aproveitaveis`), `aproveitaveis`,
+`aproveitado` (0/1: o passe deste jogador vai na abertura de outro). `UNIQUE (coleta_id, game_id,
 participante_id)`; com `quem = todos` a mesma partida não entra duas vezes na coleta. Na coleta de um estudo, `jogador_id` é 0 e
 `elo` vazio (o jogador é o do estudo).
 
+### `aprendizado_elos_vistos`
+O elo da fila solo dos outros 9 de uma partida, consultado pelo aproveitamento (cache): PK `puuid_lcu`; `nome`, `tag`,
+`puuid_riot`, `tem_solo` (0 = sem ranqueada solo ou Riot ID não achado), `elo`, `divisao`, `lp`, `vitorias`, `derrotas`,
+`fresh_blood`, `veteran`, `hot_streak`, `inactive`, `consultado_em` (vale `ValidadeEloVisto` = 24 h).
+
+`aprendizado_coletas` ganhou `rankings` (JSON `[{elo, rota, ranking_id}]`: a coleta parte do ranking do Lane; vazio =
+descoberta), `ranking_patch` e `modo_ranking` (`subindo`/`melhor`). Ver "ranking".
+
 O espaço da coleta (`GET .../espaco`) soma `passes_compactos.bytes` e a cadeia dos rastreios dela e os retratos e indicadores
 das partidas dela (texto das colunas + estimativa dos números; sem a sobra do SQLite).
+
+## ranking
+
+O ranking do Lane (`server/ranking`; contrato: "Ranking do Lane"). Nosso e transparente: nenhum dado de site de terceiros.
+
+### A fórmula (versão da regra 1; números em `server/ranking/parametros.go`)
+
+`nota = 100 × Σ peso × componente`, cada componente de 0 a 1; os pesos positivos de cada modo somam 1 (nota máxima 100).
+"Recorte" = a rota (ranking de rota) ou o campeão (ranking de campeão). Só ranqueada solo (420) do patch pedido, sem remake
+(< 5 min ou rendição antecipada).
+
+| Componente | Como |
+|---|---|
+| `liga` (posição na liga) | abaixo de Mestre: `((divisão: IV=0, III=1, II=2, I=3) × 100 + PDL) ÷ 400`; Mestre para cima: `PDL ÷ maior PDL da liga lida` |
+| `vitorias_temporada` | limite inferior de Wilson a **99%** (z = 2,576) de vitórias/partidas da temporada (league-v4), na escala `(W − 0,35) ÷ 0,30` (0,35 → 0; 0,65 → 1) |
+| `vitorias_recorte` | o mesmo, com as partidas do patch no recorte |
+| `volume_temporada` | `partidas da temporada ÷ 200` (teto 1) |
+| `volume_recorte` | `partidas do patch no recorte ÷ 20` (teto 1) |
+| `fracao_recorte` | `partidas do patch no recorte ÷ partidas do patch` (é a rota/o campeão dele?) |
+| `sinais_subida` | `0,5 × hotStreak + 0,5 × freshBlood` |
+| `vitorias_recentes` | `vitórias nas 5 mais recentes do recorte ÷ 5` |
+| `veterano` | 1 se `veteran` (peso negativo) |
+
+| Peso | rota, `subindo` | rota, `melhor` | campeão, `subindo` | campeão, `melhor` |
+|---|---|---|---|---|
+| `liga` | 0,05 | 0,30 | — | 0,25 |
+| `vitorias_temporada` | 0,10 | 0,15 | 0,10 | 0,10 |
+| `vitorias_recorte` | 0,25 | 0,25 | 0,30 | 0,30 |
+| `volume_temporada` | — | 0,05 | — | — |
+| `volume_recorte` | 0,10 | 0,10 | 0,15 | 0,20 |
+| `fracao_recorte` | 0,10 | 0,15 | 0,10 | 0,15 |
+| `sinais_subida` | 0,20 | — | 0,20 | — |
+| `vitorias_recentes` | 0,20 | — | 0,15 | — |
+| `veterano` | −0,10 | — | −0,10 | — |
+
+Por quê: `melhor` mede quem está no topo e joga bem a rota de forma consistente (a liga pesa mais, mas sozinha premiaria quem
+chegou e parou); `subindo` é o critério do dono, quem tem a ação de subir: ganhar agora (no patch e nas 5 mais recentes) e os
+sinais da liga; a posição na liga quase não conta e o veterano (travado) perde 10. Wilson a 99% e não a 95%: com 95%, 5
+vitórias em 5 (0,566) passariam na frente de 60 em 100 (0,502); com 99% ficam 0,43 contra 0,47.
+
+Entra no ranking do recorte quem tem **≥ 3 partidas** do patch nele (senão `poucas_no_recorte`; 0 = `sem_o_recorte`; 0 no
+patch = `sem_partida_no_patch`); com **< 8** a posição sai `amostra_pequena`. Inativo fica de fora antes de tudo. Ranking de
+campeão só com ≥ 2 jogadores. **Empate**: notas iguais com 2 casas (`empatado`, a frase diz com quem); desempata por mais
+partidas no recorte, depois na temporada, depois PDL, depois puuid.
+
+**Quem tem o histórico lido** (pré-nota, só com a liga): `subindo` = Wilson da temporada na escala + 0,5 hotStreak + 0,5
+freshBlood − 1 veteran; `melhor` = o componente `liga`. Os primeiros de cada uma, intercalados (um de cada, sem repetir), até
+o teto de candidatos (padrão 60). Os mesmos candidatos servem às 5 rotas e aos campeões.
+
+### Tabelas
+
+- `ranking_atualizacoes`: `id`, `regiao`, `patch` (vazio até se saber), `elo`, `fonte` (`lcu`/`riot`), `teto_candidatos`,
+  `teto_partidas`, `estado` (`rodando pausado concluido cancelado falhou`; na subida `rodando` vira `pausado`), `fase` (`liga
+  historicos calculo fim`), `pausa_pedida`, `erro`, `paginas_lidas`, `entradas_lidas`, `elo_inteiro` (0/1: Mestre para cima),
+  `lp_max`, `inativos`, `pedidos_liga`, `pedidos_conta`, `pedidos_ids`, `pedidos_partidas` (pedidos à Riot gastos), `do_cache`
+  (leituras que vieram do cache), `rankings` (quantos gravou), `criado_em`, `atualizado_em`, `terminado_em`.
+- `ranking_candidatos`: PK `(atualizacao_id, puuid)`; `ordem` (a retomada segue por ela), `entrada` (JSON da league-v4),
+  `pre_ordem` (`subindo`/`melhor`: de qual lista veio), `estado` (`pendente visto fora`), `motivo` (`nao_achado`,
+  `sem_historico`), `nome`, `tag`, `partidas` (JSON das ranqueadas solo do patch lidas: `match_id`, `criada_ms`, `posicao`,
+  `campeao_id`, `venceu`), `truncado` (parou no teto).
+- `rankings` (cabeçalho): `id`, `atualizacao_id`, `regiao`, `patch`, `elo`, `tipo` (`rota`/`campeao`), `rota`, `campeao_id`,
+  `versao_regra`, `fonte`, `amostra` (quantos entraram), `candidatos_olhados`, `candidatos_lista`, `entradas_lidas`,
+  `paginas_lidas`, `elo_inteiro` (0 = amostra de páginas, não o elo inteiro), `teto_candidatos`, `teto_partidas`, `lp_max`,
+  `fora` (JSON por motivo), `criado_em`. O "atual" de um recorte é o de maior `id`; os antigos ficam (histórico).
+- `ranking_posicoes`: PK `(ranking_id, modo, posicao)`; `puuid` (da Riot), `nome`, `tag`, `nota`, `empatado`,
+  `amostra_pequena`, `frase`, `componentes` (JSON: `nome`, `rotulo`, `cru`, `valor`, `peso`, `contribuicao`), `numeros` (JSON
+  dos números crus) e, em colunas para consulta, `lp`, `divisao`, `vitorias`, `derrotas`, `partidas_recorte`,
+  `vitorias_recorte`, `fracao_recorte`, `campeao_id` (o mais jogado na rota) e `rota` (a mais jogada com o campeão).
+- Cache: `ranking_historicos` (PK `regiao, puuid, fonte`: `ids` JSON da match-v5, `buscado_em`; vale 6 h), `ranking_contas`
+  (PK `regiao, puuid`: Riot ID, `consultado_em`; vale 24 h), `ranking_partidas_cache` (PK `regiao, match_id`: `versao`,
+  `patch`, `fila`, `criada_ms`, `duracao_s`, `completa` = os 10 participantes guardados) e `ranking_participacoes` (PK
+  `regiao, match_id, puuid`: `nome`, `tag`, `posicao` (teamPosition, ou a ordem do participante no LCU), `campeao_id`,
+  `venceu`, `rendicao`). O 404 (conta que sumiu) não fica no cache.
 
 ## estudo
 
@@ -581,3 +772,88 @@ marcar `fora_do_filtro`; a lista é escolhida à mão —, `criado_em`, `atualiz
 PK `(estudo_id, game_id)`; `resultado` (`vitoria`/`derrota`, dos dados da partida, não da pessoa), `anotacao` (texto livre),
 `adicionada_em`, `atualizada_em`. Ao entrar, a partida é analisada se ainda não foi (os indicadores da linha do tempo saem
 mesmo sem rastreio).
+
+## ia
+
+Relatórios e conversas com a IA (contrato: "IA"). Nada aqui é usado pelo rastreio nem pela análise; apagar estas tabelas só
+perde os relatórios e as conversas. Na subida, relatório ou mensagem `rodando` vira `falhou` ("o servidor fechou no meio").
+
+### `ia_relatorios`
+`id`, `game_id`, `participante_id`, `versao` (1, 2, 3... por partida + jogador; refazer cria outra), `estado` (`rodando concluido
+falhou cancelado`), `erro`, `criado_em`, `terminado_em`, `modelo` (o que o Claude Code usou), `implementacao` (`terminal`/`falso`),
+`versao_prompt`, `conteudo` (JSON validado: ConteudoIA), `bruto` (a resposta crua da IA), `avisos` (JSON), `vozes` (JSON: o material
+de cada voz), `enviado` (JSON: o que saiu da máquina), `duracao_ms`, `caracteres_entrada`, `caracteres_saida`, `tokens_entrada`,
+`tokens_saida`, `custo_usd` (estimativa do Claude Code). `UNIQUE (game_id, participante_id, versao)`.
+
+### `ia_conversas`
+`id`, `game_id` (0 = conversa geral), `participante_id` (o jogador em foco; 0 na geral), `titulo` (a primeira pergunta),
+`criada_em`, `atualizada_em`.
+
+### `ia_mensagens`
+`id`, `conversa_id`, `papel` (`usuario assistente dados`; `dados` = o que o servidor anexou a pedido da IA, que volta para ela no
+histórico), `texto`, `estado` (`ok falhou cancelada`), `erro`, `criada_em`, `modelo`, `duracao_ms`, `caracteres_entrada`,
+`caracteres_saida` (somados das voltas), `partidas` (JSON: as citadas), `dados` (JSON: `pedido`, `filtro`, `partidas_escolhidas`,
+`proxima_pergunta`).
+
+### `ia_elos_jogador`
+O elo de comparação de cada jogador (voz "o que os melhores do elo fazem"; a partida do dono não tem elo na base de fatos).
+`puuid` PK (o do LCU), `nome`, `tag` (Riot ID, para a consulta), `elo_escolhido` + `escolhido_em` (o que a pessoa escolheu na
+tela; '' = padrão), `elo_riot`, `divisao_riot`, `pdl_riot`, `vitorias_riot`, `derrotas_riot`, `consultado_em` (fila solo pela API
+da Riot; `elo_riot` '' com `consultado_em` = sem ranqueada solo; vale 24 h), `erro_riot` + `erro_em` (a frase do último erro da
+Riot; não pergunta de novo por 10 min). Ordem de uso: escolhido > Riot > elo da coleta da partida. Nunca guarda a chave.
+
+### Pasta de conhecimento (`LOL_CONHECIMENTO`, padrão `<dados>/conhecimento`)
+Fora do banco e do git (fica em `dados/`): um Markdown por voz do relatório (nomes no contrato, "IA"). O app só lê; o conteúdo vai
+para a IA como material da voz.
+
+As vozes de arquivo fixo podem ter também uma subpasta de **temas** com o nome do arquivo sem `.md`:
+
+```
+conhecimento/
+  profissional.md                     resumo geral curto (vale quando não há tema que case)
+  profissional/
+    indice.md                         só para quem lê: os temas, as fontes e o que o caderno não cobre
+    rotas-e-ondas.md  selva.md  visao.md  objetivos.md  lutas.md  meio-de-jogo.md  morte-e-risco.md
+    build-e-adaptacao.md  funcao-topo.md  funcao-selva.md  funcao-meio.md  funcao-atirador.md  funcao-suporte.md
+  especialista-solo-queue.md
+  especialista-solo-queue/            os mesmos temas e mais mentalidade.md
+```
+
+Cada tema é Markdown curto (até 5 000 caracteres; o excesso é cortado): um cabeçalho (título, tema, situações e funções a que
+se aplica) e regras "se X e Y, então Z, porque W", cada uma com a fonte (título do vídeo). O nome do arquivo é o tema; qual
+situação puxa qual tema está só em `server/ia/temas.go` (`TemasPorSinal`, `TemaDaFuncao`). Em cada pedido entram só os temas
+que casam com as situações candidatas e com a função do jogador em foco, até 18 000 caracteres por voz. Os arquivos de
+`profissional/` e `especialista-solo-queue/` foram extraídos dos cadernos do NotebookLM do dono (36 vídeos cada) e podem ser
+refeitos à mão; o app não consulta o NotebookLM.
+
+### Especialista Lane (`server/ia/especialista*.go`; contrato: "Especialista Lane")
+
+`especialista_relatorios`: o relatório de referência por partida + jogador de referência + versão. `id`, `game_id`,
+`participante_id`, `versao`, `estado` (`rodando concluido falhou cancelado`), `erro`, `criado_em`, `terminado_em`, `modelo`,
+`implementacao`, `versao_prompt`, `patch`, `elo` ("PLATINUM II"), `elo_tier` ("PLATINUM"), `funcao`, `campeao`, `puuid` (para contar
+jogadores distintos na síntese; não sai na API), `venceu`, `rastreados` (de 10, na hora do relatório), `conteudo` (JSON:
+ConteudoReferencia), `bruto`, `avisos`, `enviado`, `arquivo` (relativo à pasta de conhecimento), `duracao_ms`, `caracteres_*`,
+`tokens_*`, `custo_usd`. `UNIQUE (game_id, participante_id, versao)`; índice `(patch, elo_tier, funcao)`.
+
+`especialista_sinteses`: a síntese por recorte + versão. `id`, `patch`, `elo` (a liga), `funcao`, `versao`, `estado`, `erro`,
+`criado_em`, `terminado_em`, `modelo`, `implementacao`, `versao_prompt`, `relatorios` (JSON: ids dos relatórios usados; a
+síntese fica "desatualizada" quando o conjunto atual de relatórios concluídos do recorte é outro), `partidas`, `jogadores`,
+`conteudo` (JSON: ConteudoSintese), `bruto`, `avisos`, `enviado`, `arquivo`, uso. `UNIQUE (patch, elo, funcao, versao)`.
+
+`especialista_espelho`: o que já está no caderno do NotebookLM. `caderno`, `chave` (`relatorio:<game>:<pid>` ou
+`sintese:<patch>:<elo>:<rota>`) PK juntos, `tipo`, `versao` (a enviada), `fonte_id` (o id da fonte no caderno; substituída quando
+há versão nova), `titulo`, `caracteres`, `enviado_em`, `erro`.
+
+`especialista_config`: `chave` PK, `valor`. Hoje só `notebooklm_caderno` (o id do caderno escolhido na tela).
+
+Na subida, relatório ou síntese `rodando` vira `falhou`. Arquivos na pasta de conhecimento:
+
+```
+conhecimento/especialista-lane/
+  indice.md                                   as sínteses (refeito a cada síntese)
+  16.23/platinum-jungle.md                    a síntese (o material da voz especialista_lane)
+  16.23/relatorios/platinum-jungle-kayn-3305481832-p7.md
+```
+
+A síntese começa com `<!-- lane: tipo=sintese patch=… elo=… rota=… versao=… partidas=… jogadores=… relatorios=… -->`: é de onde a
+voz tira a amostra. Pode ser editada à mão (a voz lê o arquivo); refazer a síntese sobrescreve.

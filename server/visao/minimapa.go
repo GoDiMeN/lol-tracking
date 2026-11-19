@@ -43,6 +43,14 @@ const (
 	// aparece. Retrato inteiro: 1,00; a Diana meio coberta pela Orianna: 0,83;
 	// os círculos dos inibidores da base azul (raio menor) chegam a 0,52.
 	CoberturaMinimaRetrato = 0.62
+	// CoberturaMinimaArco: abaixo da do retrato e a partir disto, o anel vira
+	// um ARCO (LeituraMinimapa.Arcos, com a máscara das direções): o pedaço
+	// que sobra de um retrato embaixo de outro. Na 3305449546 o retrato do
+	// time azul com um vermelho a menos de 14 px (o vermelho é desenhado por
+	// cima) só foi achado em 10% das capturas: o resto ficou abaixo de 0,62.
+	// Um anel com metade escondida por um disco de 15,5 px a 10 px de
+	// distância ainda mostra ~0,4.
+	CoberturaMinimaArco = 0.30
 	// MioloMaximo: fração máxima de pixels da cor do anel no miolo (raio 9).
 	MioloMaximo = 0.15
 	// SemelhancaMinimaSentinela: semelhança mínima com o gabarito do marcador
@@ -103,7 +111,10 @@ func (l *Leitor) LeMinimapa(img *image.RGBA, regiao image.Rectangle, largura, al
 	if !v.molduraPresente() {
 		return rastreio.LeituraMinimapa{Modo: lt.Modo}, ErrMinimapa
 	}
-	lt.Retratos = append(v.retratos(anelAzul, 100), v.retratos(anelVermelho, 200)...)
+	ra, aa := v.retratos(anelAzul, 100)
+	rv, av := v.retratos(anelVermelho, 200)
+	lt.Retratos = append(ra, rv...)
+	lt.Arcos = append(aa, av...)
 	lt.Sentinelas = append(v.sentinelas(sentinelaAzul, 100, lt.Retratos), v.sentinelas(sentinelaVermelha, 200, lt.Retratos)...)
 	return lt, nil
 }
@@ -189,8 +200,11 @@ func (v vista) molduraPresente() bool {
 	return n > 0 && pretos*10 >= n*7
 }
 
-// retratos acha os anéis de uma cor.
-func (v vista) retratos(cor func([]uint8) bool, time int) []rastreio.MarcaMinimapa {
+// retratos acha os anéis de uma cor: os retratos (cobertura a partir de
+// CoberturaMinimaRetrato) e os arcos (de CoberturaMinimaArco até ela), cada
+// um com a máscara das direções em que o anel apareceu (só quando falta
+// algum pedaço).
+func (v vista) retratos(cor func([]uint8) bool, time int) ([]rastreio.MarcaMinimapa, []rastreio.MarcaMinimapa) {
 	r := replay.RegiaoMinimapa
 	w, h := r.Dx(), r.Dy()
 	mask := make([]bool, w*h)
@@ -204,7 +218,7 @@ func (v vista) retratos(cor func([]uint8) bool, time int) []rastreio.MarcaMinima
 		}
 	}
 	if len(pontos) < 40 {
-		return nil
+		return nil, nil
 	}
 	em := func(x, y int) bool { return x >= 0 && y >= 0 && x < w && y < h && mask[y*w+x] }
 	// Votação: cada pixel da cor vota nos centros a 13,5–15,5 px.
@@ -233,8 +247,10 @@ func (v vista) retratos(cor func([]uint8) bool, time int) []rastreio.MarcaMinima
 	}
 	sort.Slice(cs, func(a, b int) bool { return cs[a].v > cs[b].v })
 	type achado struct {
-		x, y float64
-		cob  float64
+		x, y    float64
+		cob     float64
+		mascara uint64
+		arco    bool
 	}
 	var achados []achado
 	for _, c := range cs {
@@ -262,7 +278,7 @@ func (v vista) retratos(cor func([]uint8) bool, time int) []rastreio.MarcaMinima
 				if em(x, y) {
 					continue
 				}
-				cob := cobertura(em, x, y)
+				cob, _ := cobertura(em, x, y)
 				if cob < 0 || miolo(em, x, y) > MioloMaximo {
 					continue
 				}
@@ -270,7 +286,7 @@ func (v vista) retratos(cor func([]uint8) bool, time int) []rastreio.MarcaMinima
 				melhor = math.Max(melhor, cob)
 			}
 		}
-		if melhor < CoberturaMinimaRetrato {
+		if melhor < CoberturaMinimaArco {
 			continue
 		}
 		sx, sy, n := 0.0, 0.0, 0.0
@@ -281,16 +297,27 @@ func (v vista) retratos(cor func([]uint8) bool, time int) []rastreio.MarcaMinima
 				n++
 			}
 		}
-		achados = append(achados, achado{sx / n, sy / n, melhor})
+		a := achado{x: sx / n, y: sy / n, cob: melhor, arco: melhor < CoberturaMinimaRetrato}
+		if melhor < 1 {
+			// A máscara no pixel mais perto do centro achado.
+			_, a.mascara = cobertura(em, int(math.Round(a.x)), int(math.Round(a.y)))
+		}
+		achados = append(achados, a)
 	}
-	var out []rastreio.MarcaMinimapa
+	var out, arcos []rastreio.MarcaMinimapa
 	for _, a := range achados {
 		px, py := float64(r.Min.X)+a.x, float64(r.Min.Y)+a.y
 		mx, my := replay.MinimapaParaMapa(px, py, refLargura, refAltura)
-		out = append(out, rastreio.MarcaMinimapa{Time: time, X: math.Round(mx), Y: math.Round(my), Cobertura: math.Round(a.cob*100) / 100})
+		m := rastreio.MarcaMinimapa{Time: time, X: math.Round(mx), Y: math.Round(my), Cobertura: math.Round(a.cob*100) / 100, Arco: a.mascara}
+		if a.arco {
+			arcos = append(arcos, m)
+		} else {
+			out = append(out, m)
+		}
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].X < out[b].X })
-	return out
+	sort.Slice(arcos, func(a, b int) bool { return arcos[a].X < arcos[b].X })
+	return out, arcos
 }
 
 // raiosDeVoto: os deslocamentos (48 direções × 3 raios) sem repetição.
@@ -311,20 +338,22 @@ var raiosDeVoto = func() []image.Point {
 }()
 
 // cobertura: fração de 64 direções em que há pixel da cor a 12,5–16,5 px do
-// centro.
-func cobertura(em func(x, y int) bool, cx, cy int) float64 {
-	const n = 64
+// centro, e a máscara dessas direções (bit k = direcoes[k]).
+func cobertura(em func(x, y int) bool, cx, cy int) (float64, uint64) {
+	const n = rastreio.DirecoesArco
 	hit := 0
+	var mascara uint64
 	for k := 0; k < n; k++ {
 		c, s := direcoes[k][0], direcoes[k][1]
 		for r := 12.5; r <= 16.5; r += 0.5 {
 			if em(cx+int(math.Round(r*c)), cy+int(math.Round(r*s))) {
 				hit++
+				mascara |= 1 << k
 				break
 			}
 		}
 	}
-	return float64(hit) / n
+	return float64(hit) / n, mascara
 }
 
 var direcoes = func() [64][2]float64 {

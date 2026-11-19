@@ -67,3 +67,35 @@ func TestEstadoValidaSemChaveEModoTeste(t *testing.T) {
 		t.Fatalf("modo teste: %+v", e)
 	}
 }
+
+// Chave trocada no token.txt dentro dos 10 min do cache: o resultado guardado
+// era da chave velha e não vale; a nova é conferida na hora. A mesma chave
+// continua no cache.
+func TestEstadoConfereDeNovoQuandoAChaveMuda(t *testing.T) {
+	const nova = "RGAPI-outra-chave-nova"
+	var pedidos atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pedidos.Add(1)
+		if r.Header.Get("X-Riot-Token") == nova {
+			w.Write([]byte(`{}`))
+			return
+		}
+		w.WriteHeader(403)
+	}))
+	defer srv.Close()
+	arq := filepath.Join(t.TempDir(), "token.txt")
+	os.WriteFile(arq, []byte(chaveDeTeste), 0o600)
+	c := Novo(arq, false)
+	c.base = srv.URL
+	if e := c.Estado(context.Background()); e.Valida == nil || *e.Valida {
+		t.Fatalf("chave velha (vencida): %+v", e)
+	}
+	os.WriteFile(arq, []byte(nova+"\n"), 0o600)
+	if e := c.Estado(context.Background()); e.Valida == nil || !*e.Valida {
+		t.Fatalf("chave nova devia ser conferida na hora: %+v", e)
+	}
+	c.Estado(context.Background())
+	if pedidos.Load() != 2 {
+		t.Fatalf("a mesma chave devia ficar no cache: %d pedidos", pedidos.Load())
+	}
+}

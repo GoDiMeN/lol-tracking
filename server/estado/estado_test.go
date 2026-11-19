@@ -15,7 +15,7 @@ import (
 func pedeEstado(t *testing.T, f *lcu.Falso) Estado {
 	t.Helper()
 	mux := http.NewServeMux()
-	Registra(mux, f, riot.Novo(filepath.Join(t.TempDir(), "sem-token.txt"), true), true)
+	Registra(mux, f, riot.Novo(filepath.Join(t.TempDir(), "sem-token.txt"), true), true, true)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/estado", nil))
 	if rec.Code != 200 {

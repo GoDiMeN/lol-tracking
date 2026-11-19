@@ -7,7 +7,9 @@ import { duracao, dataCurta, kda, posicao, plural, POSICOES } from '../formato.j
 import { relogio, valorIndicador, diferenca, tempoHumano } from '../texto.js';
 import { el, botao, link, pilula, cartao, retrato, barra, carregando, vazio, erroNaTela, confirmaNoBotao, toast } from '../ui.js';
 import { ESTADOS_COLETA, estimativaEstudo } from '../aprendizado.js';
-import { montaCartao } from './aprendizado.js';
+import { montaCartao, botaoRefazRuins } from './aprendizado.js';
+import { montaCartao as cartaoEspecialista } from './especialista.js';
+import { montaCartao as cartaoRanking } from './ranking.js';
 
 export async function desenha(raiz, rota, ctx) {
   if (rota.id) return detalhe(raiz, rota, ctx);
@@ -48,8 +50,14 @@ async function lista(raiz, ctx) {
     }
   }
   const aprendizado = montaCartao(ctx);
-  raiz.replaceChildren(h1, explica, aprendizado.el, caixa, formNovo(jogadores, ctx));
-  return aprendizado.limpa;
+  const especialista = cartaoEspecialista();
+  const rankingDoLane = cartaoRanking();
+  raiz.replaceChildren(h1, explica, aprendizado.el, rankingDoLane.el, especialista.el, caixa, formNovo(jogadores, ctx));
+  return () => {
+    aprendizado.limpa?.();
+    especialista.limpa();
+    rankingDoLane.limpa();
+  };
 }
 
 function formNovo(jogadores, ctx) {
@@ -291,7 +299,7 @@ function cartaoRastreio(estudo, partidas, ctx) {
       partes.push(
         el('div', 'linha geral pad', [
           pilula(est.texto, est.classe),
-          el('span', 'num', `${c.partidas_concluidas} de ${plural(c.partidas_total, 'partida', 'partidas')}${c.partidas_com_erro ? ` · ${c.partidas_com_erro} não deram` : ''}`),
+          el('span', 'num', `${c.partidas_concluidas} de ${plural(c.partidas_total, 'partida', 'partidas')}${c.partidas_incompletas ? ` · ${c.partidas_incompletas} incompletas` : ''}${c.partidas_com_erro ? ` · ${c.partidas_com_erro} não deram` : ''}`),
           barra(c.progresso, 'progresso do rastreio do estudo', 'larga'),
           el('span', 'sub', `${Math.round((c.progresso || 0) * 100)}%`),
           c.estimativa_s > 0 ? el('span', 'num', `faltam ${tempoHumano(c.estimativa_s)}`) : null,
@@ -301,6 +309,18 @@ function cartaoRastreio(estudo, partidas, ctx) {
       if (c.erro) partes.push(el('p', `aviso-linha${c.estado === 'falhou' ? ' erro' : ''}`, c.erro));
       for (const p of r.partidas) {
         if (p.estado === 'erro') partes.push(el('p', 'aviso-linha', `Partida ${p.game_id} (${p.campeao}): ${p.erro}`));
+        // Sobrou passe ruim (também na refação automática): a partida não vale até refazer.
+        if (p.estado === 'incompleta' && p.passes_ruins > 0) {
+          partes.push(
+            el('div', 'linha aviso-linha', [
+              el('span', '', `Partida ${p.game_id} (${p.campeao}) incompleta: ${p.erro}`),
+              botaoRefazRuins(p, () => {
+                ctx.atualizaSeloRastreio();
+                recarrega();
+              }),
+            ]),
+          );
+        }
       }
     }
     corpo.replaceChildren(...partes);
@@ -476,6 +496,7 @@ function listaPartidas(estudo, partidas, ctx) {
       }),
     );
     const acoes = el('div', 'linha acoes', [
+      p.rastreado ? link('Mapa com play', `#replay/${p.game_id}`, 'btn mini') : null,
       p.rastreado ? link('Abrir', `#partida/${p.game_id}/${p.participante_id}`, 'btn mini') : null,
       tirar,
     ]);

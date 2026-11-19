@@ -48,6 +48,10 @@ type Config struct {
 	VelocidadeVisao float64
 }
 
+// ComPadroes é a configuração com os padrões preenchidos (main usa a taxa
+// pedida na reclassificação dos passes ruins).
+func (c Config) ComPadroes() Config { return c.comPadroes() }
+
 func (c Config) comPadroes() Config {
 	if c.Velocidade <= 0 {
 		c.Velocidade = 2
@@ -115,6 +119,10 @@ type motor struct {
 	ordem []int
 
 	salvando sync.Mutex
+	// diag: o diagnóstico do passe em andamento (uso.go); aoEsperar avisa a
+	// fila de que o motor está esperando a pessoa (GET /api/captura).
+	diag      DiagnosticoPasse
+	aoEsperar func(*EsperaUsuario)
 }
 
 // leituraJogo é uma leitura completa do jogo.
@@ -183,6 +191,7 @@ type EstatPasse struct {
 	Retravas   int     `json:"retravas"`
 	Tentativas int     `json:"tentativas_trava"`
 	SemTrava   int     `json:"amostras_sem_trava"`
+	Camera     int     `json:"amostras_camera"`
 	Mortes     int     `json:"mortes_vistas"`
 	TaxaJogo   float64 `json:"taxa"`
 	MsLeitura  float64 `json:"ms_leitura_mediana"`
@@ -236,10 +245,16 @@ func (m *motor) rodaPasse(ctx context.Context, p Passe, a alvo, fimMs int64) (Es
 	m.ex.Emite("passe_inicio", map[string]any{"passe_id": p.ID, "participante_id": a.pid, "nome": a.nome,
 		"t_inicio_ms": inicio, "t_fim_ms": fimMs, "duracao_ms": duracaoMs})
 	pr := progresso{TAtualMs: inicio, Retravas: p.Retravas, Tentativas: p.TentativasTrava, SemTrava: p.AmostrasSemTrava}
-	return m.segue(ctx, trecho{p: p, a: a, inicio: inicio, fim: fimMs, pr: &pr,
+	// O diagnóstico do passe (por que a trava cai) vai para o banco também
+	// quando o passe para no meio: é o que diz a causa de um passe ruim.
+	m.diag = DiagnosticoPasse{Conferencia: map[string]int{}}
+	antes := m.s.Diagnostico()
+	defer func() { gravaDiagnostico(m.db, p.ID, m.diag, m.s.Diagnostico().Menos(antes)) }()
+	return m.segueComEspera(ctx, trecho{p: p, a: a, inicio: inicio, fim: fimMs, pr: &pr,
 		destino: func(as []Amostra, es []EstadoJogador, pr progresso) error {
 			return gravaBrutas(m.db, p.ID, p.GameID, a.pid, as, es, pr)
-		}})
+		},
+		recua: func(ateMs int64) error { return recuaBrutas(m.db, p.ID, ateMs, &pr) }})
 }
 
 // trecho é um pedaço do replay que o motor segue e grava: o passe inteiro
@@ -255,6 +270,10 @@ type trecho struct {
 	destino func(as []Amostra, es []EstadoJogador, pr progresso) error
 	// repescagem: o evento "amostra" sai marcado (a tela mostra que é repescagem).
 	repescagem bool
+	// recua apaga o que foi entregue depois de ateMs (o trecho sem a câmera
+	// antes de uma espera pela pessoa ou de um disparo do disjuntor: uso.go),
+	// para a retomada regravar dali em vez de deixar o vazio no dado.
+	recua func(ateMs int64) error
 }
 
 // retrava é a retravada da câmera SEM parar de gravar: o motor aperta a tecla
@@ -274,18 +293,23 @@ type retrava struct {
 // passoRetrava avança a retravada depois de uma leitura: ok = a leitura já
 // conferiu a trava; morto = o jogador morreu (a câmera volta sozinha ao
 // renascer); selOK = a seleção do replay está no jogador.
-func (m *motor) passoRetrava(ctx context.Context, rt *retrava, p Passe, a alvo, ok, morto, selOK bool, pr *progresso) error {
+//
+// desistiu = o ciclo acabou as MaxTentativasTrava sem a câmera chegar (o
+// disjuntor conta esses ciclos seguidos). motivo é o da última conferência que
+// falhou (vai no evento "trava"). A tecla recusada porque a pessoa está usando
+// o computador vira pedidoEspera (o passe espera: uso.go).
+func (m *motor) passoRetrava(ctx context.Context, rt *retrava, p Passe, a alvo, ok, morto, selOK bool, motivo string, pr *progresso) (bool, error) {
 	if !rt.ativa {
-		return nil
+		return false, nil
 	}
 	if ok {
 		rt.ativa = false
 		m.ex.Emite("trava", map[string]any{"passe_id": p.ID, "tentativas": rt.tentativas, "ok": true})
-		return nil
+		return false, nil
 	}
 	if morto {
 		rt.ativa = false
-		return nil
+		return false, nil
 	}
 	if rt.esperando {
 		// Espera a câmera chegar até EsperaTrava. Mas se a seleção saiu do
@@ -295,14 +319,14 @@ func (m *motor) passoRetrava(ctx context.Context, rt *retrava, p Passe, a alvo, 
 		// descobertas 8).
 		passou := m.d.Relogio.Agora().Sub(rt.teclaEm)
 		if passou < replay.EsperaTrava && (selOK || passou < replay.EsperaMinimaTrava) {
-			return nil
+			return false, nil
 		}
 	}
 	if rt.tentativas >= replay.MaxTentativasTrava {
 		rt.ativa = false
 		m.ex.Emite("trava", map[string]any{"passe_id": p.ID, "tentativas": rt.tentativas, "ok": false,
-			"motivo": fmt.Sprintf("%s %s", replay.ErrTravaFalhou, a.nome)})
-		return nil
+			"motivo": fmt.Sprintf("%s %s (%s)", replay.ErrTravaFalhou, a.nome, motivo)})
+		return true, nil
 	}
 	rt.tentativas++
 	pr.Tentativas++
@@ -312,22 +336,50 @@ func (m *motor) passoRetrava(ctx context.Context, rt *retrava, p Passe, a alvo, 
 		rt.esperando, rt.teclaEm = true, m.d.Relogio.Agora()
 	case errors.Is(err, replay.ErrMorto):
 		rt.ativa = false
+	case errors.Is(err, replay.ErrUsuarioUsando):
+		rt.tentativas--
+		pr.Tentativas--
+		return false, &pedidoEspera{motivo: err.Error()}
 	default:
 		if ctx.Err() != nil {
-			return context.Cause(ctx)
+			return false, context.Cause(ctx)
 		}
-		return err
+		return false, err
 	}
-	return nil
+	return false, nil
 }
 
 // segue é o laço de leitura: seek para perto de tr.inicio, trava a câmera e lê
 // até tr.fim, entregando as amostras e o estado dos 10 a tr.destino.
-func (m *motor) segue(ctx context.Context, tr trecho) (EstatPasse, error) {
-	var st EstatPasse
+//
+// Devolve *pedidoEspera quando o trecho precisa parar e esperar (a pessoa está
+// usando o computador, ou o disjuntor disparou): quem chama é segueComEspera
+// (uso.go), que espera e chama de novo do ponto bom.
+func (m *motor) segue(ctx context.Context, tr trecho) (st EstatPasse, errSegue error) {
 	cfg := m.cfg
 	p, a, inicio, fimMs, pr := tr.p, tr.a, tr.inicio, tr.fim, tr.pr
 	st.TIniMs = inicio
+	retravasAntes, tentativasAntes, semTravaAntes := pr.Retravas, pr.Tentativas, pr.SemTrava
+	var durLeitura, durCaptura, durTela []time.Duration
+	// O resumo sai também quando o trecho para no meio (espera, pausa): quem
+	// soma as partes (segueComEspera) precisa das contas de cada uma.
+	defer func() {
+		st.TFimMs = max(pr.TAtualMs, st.TIniMs)
+		st.Retravas, st.Tentativas, st.SemTrava = pr.Retravas-retravasAntes, pr.Tentativas-tentativasAntes, pr.SemTrava-semTravaAntes
+		if st.TFimMs > st.TIniMs {
+			st.TaxaJogo = float64(st.Amostras) / (float64(st.TFimMs-st.TIniMs) / 1000)
+		}
+		st.MsLeitura, st.MsCaptura, st.MsTela = medianaDur(durLeitura), medianaDur(durCaptura), medianaDur(durTela)
+	}()
+	// Disjuntor (uso.go): ciclos de retrava seguidos que acabaram sem a câmera,
+	// e as amostras vivas / sem trava deste trecho. ultimoBom: a última amostra
+	// com a posição de verdade (para a retomada recuar até ela).
+	ciclosFalhos, vivas, semTravaTr := 0, 0, 0
+	var primeiroMs, ultimoBom int64 = -1, -1
+	pedeEspera := func(motivo string, disjuntor bool) error {
+		pe := &pedidoEspera{motivo: motivo, disjuntor: disjuntor, ultimoBomMs: ultimoBom}
+		return pe
+	}
 
 	// Na retomada o seek vai um pouco antes do ponto gravado: a trava (que cai
 	// em todo seek) leva ~1 s real, e assim ela já está pronta ao passar pelo
@@ -369,7 +421,6 @@ func (m *motor) segue(ctx context.Context, tr trecho) (EstatPasse, error) {
 	ultimaFase := m.d.Relogio.Agora()
 	errosSeguidos := 0
 	ultimoTempo, paradoDesde := -1.0, time.Time{}
-	var durLeitura, durCaptura, durTela []time.Duration
 	san := novoSaneador()
 	avisouTela := false
 	avisouPainel := false
@@ -395,7 +446,12 @@ func (m *motor) segue(ctx context.Context, tr trecho) (EstatPasse, error) {
 			case err == nil:
 				m.ex.Emite("trava", map[string]any{"passe_id": p.ID, "tentativas": n, "ok": true})
 			case errors.Is(err, replay.ErrMorto):
+			case errors.Is(err, replay.ErrUsuarioUsando):
+				// A pessoa está usando o computador: nada de roubar o foco. O
+				// trecho espera (o replay pausa) e volta daqui.
+				return st, pedeEspera(err.Error(), false)
 			case errors.Is(err, replay.ErrTravaFalhou):
+				ciclosFalhos++
 				m.ex.Emite("trava", map[string]any{"passe_id": p.ID, "tentativas": n, "ok": false, "motivo": err.Error()})
 			default:
 				if ctx.Err() != nil {
@@ -494,6 +550,8 @@ func (m *motor) segue(ctx context.Context, tr trecho) (EstatPasse, error) {
 			sx, sy := j.Centro.X, j.Centro.Y
 			am.TelaX, am.TelaY = &sx, &sy
 		}
+		var ok bool
+		motivoConf := ""
 		if j.Morto {
 			if !estavaMorto {
 				st.Mortes++
@@ -508,13 +566,16 @@ func (m *motor) segue(ctx context.Context, tr trecho) (EstatPasse, error) {
 			if estavaMorto {
 				renascidoEm = tMs
 			}
-			ok, _ := replay.ConfereTrava(l.r, l.js, a.nome, float64(m.s.Largura), float64(m.s.Altura))
+			ok, motivoConf = replay.ConfereTrava(l.r, l.js, a.nome, float64(m.s.Largura), float64(m.s.Altura))
+			vivas++
 			switch {
 			case ok:
 				am.Origem = OrigemCamera
 				x, y := m.cal.Posicao(cx, cz, j.Centro.X, j.Centro.Y)
 				am.X, am.Y = &x, &y
 				perdidaDesde = -1
+				ciclosFalhos = 0
+				st.Camera++
 			case renascidoEm >= 0 && tMs-renascidoEm <= JanelaRenascerMs:
 				// Acabou de renascer: está na fonte; a seleção costuma voltar sozinha.
 				am.Origem = OrigemBase
@@ -527,6 +588,8 @@ func (m *motor) segue(ctx context.Context, tr trecho) (EstatPasse, error) {
 				am.Origem = OrigemInterpolada
 				am.TravaPerdida = true
 				pr.SemTrava++
+				semTravaTr++
+				m.diag.anotaConferencia(motivoConf)
 				if !rt.ativa {
 					if perdidaDesde < 0 {
 						perdidaDesde = tMs
@@ -539,13 +602,42 @@ func (m *motor) segue(ctx context.Context, tr trecho) (EstatPasse, error) {
 				}
 			}
 		}
-		if err := m.passoRetrava(ctx, &rt, p, a, am.Origem == OrigemCamera, j.Morto, am.SelecaoOK, pr); err != nil {
+		desistiu, err := m.passoRetrava(ctx, &rt, p, a, am.Origem == OrigemCamera, j.Morto, am.SelecaoOK, motivoConf, pr)
+		if err != nil {
+			var pe *pedidoEspera
+			if errors.As(err, &pe) {
+				pe.ultimoBomMs = ultimoBom
+			}
 			return st, err
+		}
+		if desistiu {
+			ciclosFalhos++
 		}
 		estavaMorto = j.Morto
 		pendA = append(pendA, am)
 		st.Amostras++
 		pr.TAtualMs = tMs
+		if primeiroMs < 0 {
+			primeiroMs = tMs
+		}
+		if !am.TravaPerdida {
+			ultimoBom = tMs
+		}
+		// Disjuntor: a trava não volta (K ciclos de retrava seguidos sem a
+		// câmera, ou a fração sem trava alta depois de T s de jogo). Não gasta o
+		// resto do passe produzindo lixo: para e espera (uso.go). Na repescagem
+		// o trecho só termina (o buraco fica como estava).
+		if motivo := motivoDisjuntor(ciclosFalhos, vivas, semTravaTr, tMs-primeiroMs); motivo != "" {
+			m.ex.Emite("disjuntor", map[string]any{"passe_id": p.ID, "participante_id": a.pid, "t_ms": tMs, "motivo": motivo,
+				"repescagem": tr.repescagem})
+			if tr.repescagem {
+				break
+			}
+			if err := grava(); err != nil {
+				return st, fmt.Errorf("gravar amostras: %w", err)
+			}
+			return st, pedeEspera(motivo, true)
+		}
 
 		if tMs-ultimoEstado >= cfg.IntervaloEstadoMs {
 			ultimoEstado = tMs
@@ -601,12 +693,6 @@ func (m *motor) segue(ctx context.Context, tr trecho) (EstatPasse, error) {
 			}
 		}
 	}
-	st.TFimMs = pr.TAtualMs
-	st.Retravas, st.Tentativas, st.SemTrava = pr.Retravas-p.Retravas, pr.Tentativas-p.TentativasTrava, pr.SemTrava-p.AmostrasSemTrava
-	if st.TFimMs > st.TIniMs {
-		st.TaxaJogo = float64(st.Amostras) / (float64(st.TFimMs-st.TIniMs) / 1000)
-	}
-	st.MsLeitura, st.MsCaptura, st.MsTela = medianaDur(durLeitura), medianaDur(durCaptura), medianaDur(durTela)
 	return st, nil
 }
 

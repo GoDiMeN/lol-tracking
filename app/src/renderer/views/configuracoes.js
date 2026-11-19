@@ -114,26 +114,55 @@ function preferencias() {
   janela.append(el('legend', '', 'Janela'));
   const cb = el('input');
   cb.type = 'checkbox';
-  cb.checked = true;
+  cb.checked = false;
   const ponte = window.janelaApp;
   cb.disabled = !ponte?.preferencias;
-  janela.append(el('label', 'opcao', [cb, el('span', '', 'abrir em tela cheia (padrão: sim)')]));
+  janela.append(el('label', 'opcao', [cb, el('span', '', 'abrir em tela cheia (padrão: não, abre maximizado)')]));
   if (ponte?.preferencias) {
     ponte
       .preferencias()
       .then((p) => {
-        cb.checked = p.tela_cheia !== false;
+        cb.checked = p.tela_cheia === true;
       })
       .catch(() => {});
     cb.addEventListener('change', async () => {
       try {
         await ponte.guardaPreferencias({ tela_cheia: cb.checked });
-        toast(cb.checked ? 'O app vai abrir em tela cheia.' : 'O app vai abrir em janela.', 'ok');
+        toast(cb.checked ? 'O app vai abrir em tela cheia.' : 'O app vai abrir maximizado.', 'ok');
       } catch (err) {
         toast(`Não guardei: ${err.message}`, 'erro');
       }
     });
     janela.append(el('p', 'sub', 'Vale na próxima vez que o app abrir. Para sair ou voltar agora: o botão ⛶ na barra de cima, F11 ou Esc.'));
+    // O atalho GLOBAL de pausar/retomar a captura (main/pausa.js): funciona com o Lane minimizado.
+    if (ponte.captura) {
+      const campo = el('input');
+      campo.type = 'text';
+      campo.spellcheck = false;
+      campo.placeholder = 'Control+Alt+P';
+      campo.setAttribute('aria-label', 'Atalho de pausar a captura');
+      const gravar = el('button', 'btn', 'Usar este atalho');
+      gravar.type = 'button';
+      ponte.captura
+        .atalho()
+        .then((a) => {
+          campo.value = a || '';
+        })
+        .catch(() => {});
+      gravar.addEventListener('click', async () => {
+        try {
+          const r = await ponte.captura.mudaAtalho(campo.value.trim());
+          if (r?.ok) toast(`Atalho de pausa: ${r.atalho.replace(/Control/g, 'Ctrl')}.`, 'ok');
+          else toast(r?.erro || 'não deu para usar este atalho', 'erro');
+        } catch (err) {
+          toast(err.message, 'erro');
+        }
+      });
+      janela.append(
+        el('label', 'opcao', [el('span', '', 'atalho de pausar/retomar a captura (vale em qualquer programa):'), campo, gravar]),
+        el('p', 'sub', 'Formato do Electron: Control, Alt, Shift + uma letra, número ou F1–F24 (ex.: Control+Alt+P). Precisa de Ctrl ou Alt.'),
+      );
+    }
   } else {
     janela.append(el('p', 'sub', 'Só dentro do app Lane (aqui no navegador, use o F11 do navegador).'));
   }

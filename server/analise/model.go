@@ -65,6 +65,9 @@ type Deps struct {
 	DB        *banco.DB
 	Riot      rastreio.FonteRiot
 	Estaticos campeao.FonteEstaticos
+	// SemEstudo: o interruptor LOL_ESTUDO desligado. A busca da base de fatos
+	// (/api/resumos) só vê as partidas que vieram da busca de um jogador.
+	SemEstudo bool
 }
 
 // ErrSemLinhaDoTempo: a partida não tem a linha do tempo do LCU guardada.

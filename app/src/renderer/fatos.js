@@ -55,18 +55,67 @@ export function jogadoresChave(resumo) {
   return [...(resumo?.jogadores || [])].sort((a, b) => a.posicao_nota - b.posicao_nota);
 }
 
-// textoContexto: o que o banco sabe do jogador fora da partida, numa linha ('' = nada).
+// textoContexto: quem o jogador era ANTES da partida (banco + histórico buscado), numa linha ('' = nada).
 export function textoContexto(ctx, funcao, nomeFuncao = (f) => f) {
   if (!ctx) return '';
   const p = [];
   if (ctx.funcao_principal) {
     let t = `principal: ${nomeFuncao(ctx.funcao_principal)}`;
+    if (ctx.fracao_principal > 0 && ctx.fracao_principal < 1) t += ` (${Math.round(ctx.fracao_principal * 100)}%)`;
     if (ctx.fora_da_funcao) t += ` (aqui fora dela, como ${nomeFuncao(funcao)})`;
     p.push(t);
   }
+  if (ctx.mono) p.push(`mono do campeão (${ctx.campeao_vezes} de ${ctx.campeao_de})`);
+  else if (ctx.sem_o_campeao) p.push(`nenhuma das últimas ${ctx.campeao_de} com ele`);
+  else if (ctx.mono === false && ctx.campeao_de > 0) p.push(`${ctx.campeao_vezes} das últimas ${ctx.campeao_de} com o campeão`);
   if (ctx.ultimas > 0) p.push(`${ctx.vitorias_ultimas} vitória(s) nas últimas ${ctx.ultimas}`);
   if (ctx.sequencia > 1) p.push(`vinha de ${ctx.sequencia} vitórias seguidas`);
   if (ctx.sequencia < -1) p.push(`vinha de ${-ctx.sequencia} derrotas seguidas`);
   if (ctx.elo) p.push(`elo ${[ctx.elo.elo, ctx.elo.divisao].filter(Boolean).join(' ')}`);
+  if (ctx.alcance) p.push(ctx.alcance);
   return p.join(' · ');
+}
+
+const NOME_FONTE = { cliente: 'cliente do LoL', riot: 'API da Riot' };
+
+// estadoBuscaContexto: a linha da seção Jogadores-chave sobre o contexto buscado dos 10
+// (GET /api/partidas/{id}/contexto-jogadores): o que já foi buscado, de onde e quando, e se dá
+// para buscar agora (botão ligado e a dica dele).
+export function estadoBuscaContexto(e) {
+  if (!e) return { texto: '', pode: false, dica: '' };
+  const total = (e.jogadores?.length || 0) + (e.faltam?.length || 0);
+  const fontes = e.fontes || {};
+  const pode = !!(fontes.cliente || fontes.riot);
+  const dica = pode
+    ? `busca o histórico de antes desta partida de cada um pelo ${fontes.cliente ? NOME_FONTE.cliente : NOME_FONTE.riot}`
+    : [fontes.motivo_cliente, fontes.motivo_riot].filter(Boolean).join('; ');
+  if (e.rodando) return { texto: 'buscando o contexto dos jogadores…', pode: false, dica };
+  if (!e.jogadores?.length) return { texto: `contexto dos outros jogadores ainda não buscado (só o que o banco tem)`, pode, dica };
+  const ultima = e.jogadores.reduce((a, j) => (j.buscado_em > a.buscado_em ? j : a), e.jogadores[0]);
+  const de = `${NOME_FONTE[ultima.fonte] || ultima.fonte}, ${String(ultima.buscado_em).slice(0, 10)}`;
+  const problemas = e.jogadores.filter((j) => j.estado !== 'ok').length;
+  let texto = `contexto buscado de ${e.jogadores.length} de ${total} (${de})`;
+  if (problemas) texto += ` · ${problemas} com histórico incompleto ou não achado`;
+  return { texto, pode, dica };
+}
+
+// progressoBusca: o texto do andamento da busca a partir dos eventos ("3 de 10 jogadores").
+export function progressoBusca(feitos, total, fonte) {
+  return `buscando pelo ${NOME_FONTE[fonte] || fonte || '…'}: ${feitos} de ${total || 10} jogadores`;
+}
+
+const CLASSE_PAPEL = { carregou: 'ok', habilitou: 'ac', foi_carregado: 'n', afundou: 'cr', estavel: 'n' };
+const CONFIANCA = { alta: 'alta', media: 'média', baixa: 'baixa' };
+
+// papelNaTela: o papel do jogador (servidor: analise/papel.go) para a tabela dos jogadores-chave:
+// a pílula (texto e cor), o estilo da função e a dica com os números, a confiança e o que não deu para
+// avaliar. null quando a partida é de antes do papel.
+export function papelNaTela(p) {
+  if (!p || !p.papel) return null;
+  const dica = [`${p.rotulo} (confiança ${CONFIANCA[p.confianca] || p.confianca}): ${(p.motivos || []).join(', ')}`];
+  if (p.estilo) dica.push(`estilo ${p.estilo_rotulo} (confiança ${CONFIANCA[p.confianca_estilo] || p.confianca_estilo}): ${(p.motivos_estilo || []).join('; ')}`);
+  else if ((p.motivos_estilo || []).length) dica.push(p.motivos_estilo.join('; '));
+  if ((p.nao_avaliado || []).length) dica.push(`não avaliado: ${p.nao_avaliado.join('; ')}`);
+  dica.push(`fonte: ${p.fonte}`);
+  return { texto: p.rotulo, classe: CLASSE_PAPEL[p.papel] || 'n', estilo: p.estilo ? p.estilo_rotulo : '', dica: dica.join('\n') };
 }

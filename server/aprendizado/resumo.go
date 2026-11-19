@@ -68,6 +68,14 @@ func (k *Coletor) Detalhe(id int64) (Detalhe, error) {
 	} else {
 		d.Coleta.RegiaoNome = col.Regiao
 	}
+	// As partidas antes dos elos: o passe ruim que sobrou (ou que foi refeito
+	// bom) muda o estado guardado, e a contagem dos elos lê o estado do banco.
+	if d.Partidas, err = lePartidas(k.d.DB, `WHERE p.coleta_id = ?`+ordemDasPartidas, id); err != nil {
+		return d, err
+	}
+	for i := range d.Partidas {
+		acompanhaRuins(k.d.DB, col.Quem, &d.Partidas[i])
+	}
 	if d.Elos, err = leElos(k.d.DB, id); err != nil {
 		return d, err
 	}
@@ -87,8 +95,12 @@ func (k *Coletor) Detalhe(id int64) (Detalhe, error) {
 			js[i].Motivo = MotivoAmostragem(js[i])
 		}
 	}
-	if d.Partidas, err = lePartidas(k.d.DB, `WHERE p.coleta_id = ?`+ordemDasPartidas, id); err != nil {
-		return d, err
+	if col.doRanking() {
+		for i := range js {
+			if js[i].Origem == "" {
+				js[i].Motivo = MotivoRanking(js[i], col.ModoRanking)
+			}
+		}
 	}
 	ppp := passesPorPartida(col.Quem)
 	c := &d.Coleta
@@ -98,20 +110,43 @@ func (k *Coletor) Detalhe(id int64) (Detalhe, error) {
 			c.JogadoresSemPartida++
 		}
 	}
+	for _, j := range d.Jogadores {
+		if j.Origem == OrigemAproveitado {
+			c.Aproveitados++
+		}
+	}
 	feito, restanteS := 0.0, 0.0
+	// O rastreio de uma partida com aproveitados é um só (um passe por
+	// jogador): os passes contam na primeira linha dele; as irmãs ficam com 0,
+	// e a irmã ainda sem rastreio, com quem=todos, não soma outros 10.
+	visto := map[int64]bool{}
+	jogo := map[int64]bool{}
 	for i := range d.Partidas {
 		p := &d.Partidas[i]
 		p.PassesTotal = ppp
+		if col.Quem == QuemTodos && jogo[p.GameID] {
+			p.PassesTotal = 0
+		} else if col.Quem != QuemTodos && p.Aproveitado && p.RastreioID == nil {
+			p.PassesTotal = 1
+		}
+		jogo[p.GameID] = true
 		frac := 0.0
 		if p.RastreioID != nil {
-			if r, err := rastreio.LeRastreio(k.d.DB, *p.RastreioID); err == nil {
+			if visto[*p.RastreioID] {
+				p.PassesTotal = 0
+			} else if r, err := rastreio.LeRastreio(k.d.DB, *p.RastreioID); err == nil {
 				p.PassesTotal, p.PassesConcluidos, frac = r.PassesTotal, r.PassesConcluidos, r.Progresso
 			}
+			visto[*p.RastreioID] = true
 		}
 		c.PartidasTotal++
 		switch p.Estado {
 		case PartidaConcluida:
 			c.PartidasConcluidas++
+			frac = 1
+		case PartidaIncompleta:
+			// Os passes rodaram (o progresso conta), mas a partida não vale ainda.
+			c.PartidasIncompletas++
 			frac = 1
 		case PartidaErro, PartidaCancelada:
 			if p.Estado == PartidaErro {
@@ -124,7 +159,7 @@ func (k *Coletor) Detalhe(id int64) (Detalhe, error) {
 		c.PassesTotal += p.PassesTotal
 		c.PassesConcluidos += p.PassesConcluidos
 		feito += float64(p.PassesTotal) * frac
-		if p.Estado != PartidaConcluida && p.Estado != PartidaErro && p.Estado != PartidaCancelada {
+		if p.Estado != PartidaConcluida && p.Estado != PartidaIncompleta && p.Estado != PartidaErro && p.Estado != PartidaCancelada {
 			dur := float64(p.DuracaoS)
 			if dur <= 0 {
 				dur = SegundosPorPasseRef
@@ -199,8 +234,10 @@ func (k *Coletor) EspacoDe(id int64) (Espaco, error) {
 		return Espaco{}, err
 	}
 	var rids, gids []int64
+	vistos := map[int64]bool{}
 	for _, p := range d.Partidas {
-		if p.RastreioID != nil {
+		if p.RastreioID != nil && !vistos[*p.RastreioID] {
+			vistos[*p.RastreioID] = true
 			rids = append(rids, *p.RastreioID)
 			gids = append(gids, p.GameID)
 		}

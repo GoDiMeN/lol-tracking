@@ -161,6 +161,12 @@ type Falso struct {
 	IgnoraVisao bool
 	// SemMinimapa: a captura de região sai sem o minimapa (o HUD escondido).
 	SemMinimapa bool
+	// UsosDoUsuario: trechos do RELÓGIO (tempo real) em que a pessoa usa o
+	// computador (Presenca): digitando em outra janela, que fica na frente.
+	// Enquanto dura, a última entrada da pessoa é "agora".
+	UsosDoUsuario []UsoFalso
+	// Modificador: Shift/Ctrl/Alt apertado (Presenca).
+	Modificador bool
 
 	// Estado.
 	processo     bool
@@ -186,7 +192,9 @@ type Falso struct {
 	imgVisao *image.RGBA
 
 	// Registro para os testes.
-	Teclas     []string
+	Teclas []string
+	// TeclasEm: o instante (relógio) de cada tecla de Teclas.
+	TeclasEm   []time.Time
 	Saidas     int
 	Encerrados int
 	Aberturas  int
@@ -609,6 +617,60 @@ func (f *Falso) Foco() error {
 	return nil
 }
 
+// UsoFalso: a pessoa usa o computador de De a Ate (relógio).
+type UsoFalso struct{ De, Ate time.Time }
+
+// UsuarioUsa: a pessoa começa a usar o computador agora, por d.
+func (f *Falso) UsuarioUsa(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	agora := f.rel.Agora()
+	f.UsosDoUsuario = append(f.UsosDoUsuario, UsoFalso{De: agora, Ate: agora.Add(d)})
+}
+
+// UltimaEntradaDoUsuario (Presenca): dentro de um uso, agora; depois, o fim do
+// último uso que já começou.
+func (f *Falso) UltimaEntradaDoUsuario() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	agora := f.rel.Agora()
+	var u time.Time
+	for _, x := range f.UsosDoUsuario {
+		if x.De.After(agora) {
+			continue
+		}
+		fim := x.Ate
+		if fim.After(agora) {
+			fim = agora
+		}
+		if fim.After(u) {
+			u = fim
+		}
+	}
+	return u
+}
+
+// ModificadorPressionado (Presenca).
+func (f *Falso) ModificadorPressionado() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.Modificador
+}
+
+// PrimeiroPlano (Presenca): a "outra janela" enquanto a pessoa usa o
+// computador; o jogo no resto do tempo.
+func (f *Falso) PrimeiroPlano() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	agora := f.rel.Agora()
+	for _, x := range f.UsosDoUsuario {
+		if !agora.Before(x.De) && agora.Before(x.Ate) {
+			return "Code.exe"
+		}
+	}
+	return ExeDoJogo
+}
+
 func (f *Falso) Encerra() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -627,6 +689,7 @@ func (f *Falso) Aperta(tecla rune) error {
 	defer f.mu.Unlock()
 	agora := f.rel.Agora()
 	f.Teclas = append(f.Teclas, NomeTecla(tecla))
+	f.TeclasEm = append(f.TeclasEm, agora)
 	if r, ok := f.rel.(*RelogioFalso); ok {
 		r.Avanca(60 * time.Millisecond)
 	}

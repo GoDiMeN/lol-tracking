@@ -29,3 +29,22 @@ func TestLoadConfigVariaveis(t *testing.T) {
 		t.Fatal("porta inválida deveria cair no padrão")
 	}
 }
+
+func TestLoadConfigEstudo(t *testing.T) {
+	t.Setenv("LOL_ESTUDO", "")
+	if !LoadConfig().Estudo {
+		t.Fatal("o estudo vem ligado por padrão (máquina do dono)")
+	}
+	t.Setenv("LOL_ESTUDO", "0")
+	if LoadConfig().Estudo {
+		t.Fatal("LOL_ESTUDO=0 desliga o estudo")
+	}
+	t.Setenv("LOL_ESTUDO", "1")
+	if !LoadConfig().Estudo {
+		t.Fatal("LOL_ESTUDO=1 liga o estudo")
+	}
+	t.Setenv("LOL_ESTUDO", "talvez")
+	if !LoadConfig().Estudo {
+		t.Fatal("valor desconhecido cai no padrão (ligado)")
+	}
+}

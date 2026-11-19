@@ -42,6 +42,13 @@ type LeituraMinimapa struct {
 	Retratos []MarcaMinimapa
 	// Sentinelas: o marcador de sentinela ("olho com asas") de cada time.
 	Sentinelas []MarcaMinimapa
+	// Arcos: anéis parciais (cobertura entre CoberturaMinimaArco e a mínima do
+	// retrato), com Arco preenchido: o pedaço que sobra à vista de um retrato
+	// embaixo de outro. Sozinhos não provam nada (os círculos dos inibidores
+	// chegam a 0,52): a decisão só usa um arco quando a parte que falta cai
+	// embaixo de um retrato desenhado por cima (visao_classifica.go). Passes
+	// de antes de 2026-11-18: vazio.
+	Arcos []MarcaMinimapa
 }
 
 // MarcaMinimapa é um retrato ou uma sentinela achada no minimapa.
@@ -54,4 +61,11 @@ type MarcaMinimapa struct {
 	// Cobertura: fração do anel achada (0–1; retrato meio coberto por outro
 	// fica abaixo de 1). Nas sentinelas, a semelhança com o marcador.
 	Cobertura float64 `json:"cobertura"`
+	// Arco: nos retratos e arcos, as direções em que o anel apareceu (bit k =
+	// ângulo 2πk/64 a partir do eixo x da tela, com y para baixo); 0 = não
+	// gravado (anel inteiro, sentinela, ou passe de antes de 2026-11-18).
+	Arco uint64 `json:"arco,omitempty"`
 }
+
+// DirecoesArco é o número de direções da máscara Arco.
+const DirecoesArco = 64

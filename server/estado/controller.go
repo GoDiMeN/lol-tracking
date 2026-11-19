@@ -32,6 +32,9 @@ type Estado struct {
 	PastaReplays       string         `json:"pasta_replays"`
 	ChaveRiot          riot.Estado    `json:"chave_riot"`
 	ModoTeste          bool           `json:"modo_teste"`
+	// Estudo: a área de Estudo existe neste servidor (LOL_ESTUDO); desligada,
+	// o menu a esconde e as rotas dela respondem 404.
+	Estudo bool `json:"estudo"`
 }
 
 // Monta consulta o LCU e a chave. Erro do LCU não é erro da rota: vira
@@ -73,8 +76,10 @@ func Monta(ctx context.Context, cli lcu.Cliente, chave *riot.Cliente, modoTeste 
 }
 
 // Registra pendura GET /api/estado.
-func Registra(mux *http.ServeMux, cli lcu.Cliente, chave *riot.Cliente, modoTeste bool) {
+func Registra(mux *http.ServeMux, cli lcu.Cliente, chave *riot.Cliente, modoTeste, estudo bool) {
 	mux.HandleFunc("GET /api/estado", func(w http.ResponseWriter, r *http.Request) {
-		web.WriteJSON(w, http.StatusOK, Monta(r.Context(), cli, chave, modoTeste))
+		e := Monta(r.Context(), cli, chave, modoTeste)
+		e.Estudo = estudo
+		web.WriteJSON(w, http.StatusOK, e)
 	})
 }

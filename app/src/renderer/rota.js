@@ -7,9 +7,12 @@
 //   #partida/game_id[/participante[/n]]  partida rastreada (n = abate escolhido)
 //   #estudo[/id[/indicador]]             estudos
 //   #replay/game_id[/segundos]           mapa com play, tela cheia
+//   #ia/game_id/participante[/versao]    relatório da partida com IA
+//   #especialista[/relatorio/game_id/participante[/versao] | /sintese/patch/elo/rota]  Especialista Lane (Estudo)
+//   #ranking[/patch/elo/recorte[/modo]]     ranking do Lane (Estudo); recorte = rota (JUNGLE) ou c<id do campeão>
 //   #configuracoes
 
-export const VISTAS = ['jogadores', 'rastreio', 'partidas', 'partida', 'estudo', 'replay', 'configuracoes'];
+export const VISTAS = ['jogadores', 'rastreio', 'partidas', 'partida', 'estudo', 'especialista', 'ranking', 'replay', 'ia', 'configuracoes'];
 
 function decodifica(p) {
   try {
@@ -25,7 +28,7 @@ const numero = (v) => (v !== undefined && /^\d+(\.\d+)?$/.test(v) ? Number(v) : 
 export function lerRota(hash) {
   const h = String(hash ?? '').replace(/^#\/?/, '').trim();
   if (!h) return { vista: 'jogadores' };
-  const [vista, a, b, c] = h.split('/').filter(Boolean).map(decodifica);
+  const [vista, a, b, c, d, e] = h.split('/').filter(Boolean).map(decodifica);
   switch (vista) {
     case 'jogadores':
       return { vista, puuid: a || null };
@@ -39,6 +42,15 @@ export function lerRota(hash) {
     case 'replay':
       if (inteiro(a) === null) return { vista: 'partidas' };
       return { vista, gameId: inteiro(a), t: numero(b) };
+    case 'ia':
+      if (inteiro(a) === null) return { vista: 'partidas' };
+      return { vista, gameId: inteiro(a), participante: inteiro(b), versao: inteiro(c) };
+    case 'especialista':
+      if (a === 'relatorio' && inteiro(b) !== null && inteiro(c) !== null) return { vista, tipo: 'relatorio', gameId: inteiro(b), participante: inteiro(c), versao: inteiro(d) };
+      if (a === 'sintese' && b && c && d) return { vista, tipo: 'sintese', patch: b, elo: c, rota: d, versao: inteiro(e) };
+      return { vista, tipo: null };
+    case 'ranking':
+      return { vista, patch: a || null, elo: b || null, recorte: c || null, modo: d === 'melhor' || d === 'subindo' ? d : null };
     case 'partidas':
     case 'configuracoes':
       return { vista };
@@ -67,6 +79,16 @@ export function montaRota(r) {
     case 'estudo':
       poe(r.id, r.indicador);
       break;
+    case 'ia':
+      poe(r.gameId, r.participante, r.versao);
+      break;
+    case 'especialista':
+      if (r.tipo === 'relatorio') poe('relatorio', r.gameId, r.participante, r.versao);
+      else if (r.tipo === 'sintese') poe('sintese', r.patch, r.elo, r.rota, r.versao);
+      break;
+    case 'ranking':
+      poe(r.patch, r.elo, r.recorte, r.modo);
+      break;
     case 'replay':
       poe(r.gameId, r.t === null || r.t === undefined ? null : Math.round(r.t * 10) / 10);
       break;
@@ -76,6 +98,7 @@ export function montaRota(r) {
 
 // Qual item do menu fica aceso em cada vista.
 export function itemDoMenu(vista) {
-  if (vista === 'partida' || vista === 'replay') return 'partidas';
+  if (vista === 'partida' || vista === 'replay' || vista === 'ia') return 'partidas';
+  if (vista === 'especialista' || vista === 'ranking') return 'estudo';
   return vista;
 }

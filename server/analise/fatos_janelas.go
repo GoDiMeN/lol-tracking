@@ -21,29 +21,9 @@ import (
 //     foi rastreado: perto do acampamento usando habilidade; quem não foi
 //     rastreado não limpa nada no dado) e o valor em ouro da janela.
 //
-// Cada janela vira um momento `janela_perdida` ou `janela_aproveitada`.
-
-// TempoAcampamento: quando o acampamento nasce, em quanto volta depois de
-// limpo e o ouro equivalente. Tempos da League of Legends Wiki ("Jungling",
-// temporada 2025: buffs 1:30 e 5 min; pequenos 1:30 e 2:15; caranguejo 3:30 e
-// 2:30), escritos de memória e NÃO conferidos nesta tarefa nem no patch da
-// partida: a conferir. O ouro é equivalente escolhido à mão.
-type TempoAcampamento struct {
-	PrimeiroMs int64
-	VoltaMs    int64
-	Ouro       int
-}
-
-// TemposAcampamento por tipo (a primeira palavra do nome do acampamento).
-var TemposAcampamento = map[string]TempoAcampamento{
-	"azul":       {90000, 300000, 100},
-	"vermelho":   {90000, 300000, 100},
-	"sapo":       {90000, 135000, 80},
-	"lobos":      {90000, 135000, 85},
-	"aves":       {90000, 135000, 85},
-	"krugues":    {90000, 135000, 100},
-	"caranguejo": {210000, 150000, 55},
-}
+// Cada janela vira um momento `janela_perdida` ou `janela_aproveitada`. Os
+// tempos de nascimento e de volta dos acampamentos vêm da tabela por patch
+// (tempos_selva.go), pela versão da partida.
 
 func tipoAcampamento(nome string) string {
 	if i := strings.Index(nome, " "); i > 0 {
@@ -141,7 +121,7 @@ func (f *fatos) estadoAcampamentos(lado int, ini, fim int64, ls []limpeza) []Est
 		if ladoAcampamento(a.Nome) != lado {
 			continue
 		}
-		tp := TemposAcampamento[tipoAcampamento(a.Nome)]
+		tp := f.selva.Acampamentos[tipoAcampamento(a.Nome)]
 		e := EstadoAcampamento{Nome: a.Nome, Ouro: tp.Ouro, NasceMs: tp.PrimeiroMs, ponto: a.Ponto}
 		for _, l := range ls {
 			if l.acamp != k {
@@ -289,7 +269,7 @@ func (f *fatos) janelas() []MomentoChave {
 	for _, jb := range f.ausencias() {
 		x := jb.ausente
 		j := f.dp.adversario(x)
-		if j == 0 || jb.fim-jb.ini < Param.JanelaMinimaMs || jb.ini < Param.InicioJanelasMs {
+		if j == 0 || jb.fim-jb.ini < Param.JanelaMinimaMs || jb.ini < f.selva.primeiroAcampamentoMs() {
 			continue
 		}
 		if f.mortoNoTrecho(j, jb.ini, jb.fim)*2 > jb.fim-jb.ini {

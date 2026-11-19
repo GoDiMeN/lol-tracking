@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"loltracking/server/banco"
+	"loltracking/server/rastreio"
 )
 
 // Leitura da base de fatos: só as três tabelas (resumos_partida,
@@ -77,9 +78,11 @@ func leJogador(s interface{ Scan(...any) error }) (int64, ResumoJogador, error) 
 		Build       []EvidenciaBuild `json:"build"`
 		Componentes []ComponenteNota `json:"componentes"`
 		Contexto    ContextoJogador  `json:"contexto"`
+		Papel       PapelJogador     `json:"papel"`
 	}
 	json.Unmarshal([]byte(dados), &d)
-	j.Itens, j.Build, j.Componentes, j.Contexto = d.Itens, d.Build, d.Componentes, d.Contexto
+	j.Itens, j.Build, j.Componentes, j.Contexto, j.Papel = d.Itens, d.Build, d.Componentes, d.Contexto, d.Papel
+	j.Papel.nuncaNil()
 	if j.Itens == nil {
 		j.Itens = []ItemComprado{}
 	}
@@ -178,6 +181,21 @@ type FiltroResumos struct {
 	Texto     string // pedaço da frase do momento
 	AteMs     int64  // momento até esse instante (0 = sem limite)
 	Limite    int
+	// Elo: o da PARTIDA (coleta por elo: "PLATINUM", "CHALLENGER"...), sem caixa.
+	Elo string
+	// ExcluiGame: tira uma partida (as referências de uma análise não incluem
+	// a própria partida). Só pelo código, não pela rota.
+	ExcluiGame int64
+	// Papel e Estilo: o papel do jogador na partida (papel.go): "carregou", "ganks"...
+	Papel  string
+	Estilo string
+	// SoComElo: só partidas com elo conhecido (as da coleta por elo, não as
+	// do dono). Só pelo código.
+	SoComElo bool
+	// SoPesquisa: só as partidas rastreadas a partir da busca de um jogador
+	// (origem "pesquisa", rastreio/origem.go). A conversa geral com a IA usa
+	// sempre: partida só de estudo é material das vozes, não partida do usuário.
+	SoPesquisa bool
 }
 
 func (f FiltroResumos) temMomento() bool {
@@ -217,6 +235,25 @@ func BuscaResumos(db *banco.DB, f FiltroResumos) ([]LinhaBusca, error) {
 	}
 	if f.Puuid != "" {
 		cond, args = append(cond, `j.puuid = ?`), append(args, f.Puuid)
+	}
+	if f.Elo != "" {
+		// O elo da partida (coleta) ou o do jogador (o aproveitado de outro elo pedido).
+		cond, args = append(cond, `(LOWER(p.elo) = LOWER(?) OR UPPER(j.elo) = UPPER(?) OR UPPER(j.elo) LIKE UPPER(?) || ' %')`), append(args, f.Elo, f.Elo, f.Elo)
+	}
+	if f.Papel != "" {
+		cond, args = append(cond, `j.papel = ?`), append(args, f.Papel)
+	}
+	if f.Estilo != "" {
+		cond, args = append(cond, `j.estilo = ?`), append(args, f.Estilo)
+	}
+	if f.SoComElo {
+		cond = append(cond, `p.elo <> ''`)
+	}
+	if f.SoPesquisa {
+		cond = append(cond, `j.game_id IN (`+rastreio.SQLPartidasDePesquisa+`)`)
+	}
+	if f.ExcluiGame != 0 {
+		cond, args = append(cond, `j.game_id <> ?`), append(args, f.ExcluiGame)
 	}
 	var q string
 	if f.temMomento() {

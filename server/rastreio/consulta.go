@@ -92,8 +92,9 @@ func estadosDoPasse(db *banco.DB, p Passe) ([]EstadoJogador, error) {
 
 // melhorPasse é o passe que representa o jogador na partida: o concluído
 // mais recente; senão o mais recente com amostras (cancelado ou em andamento).
+// Passe ruim (qualidade_passe.go) nunca: o jogador fica como não rastreado.
 func melhorPasse(db *banco.DB, gameID int64, pid int) (Passe, bool, error) {
-	ps, err := lePasses(db, `WHERE p.game_id = ? AND p.participante_id = ? AND p.amostras > 0
+	ps, err := lePasses(db, `WHERE p.game_id = ? AND p.participante_id = ? AND p.amostras > 0 AND p.estado <> 'ruim'
 		ORDER BY (p.estado = 'concluido') DESC, p.id DESC LIMIT 1`, gameID, pid)
 	if err != nil || len(ps) == 0 {
 		return Passe{}, false, err
@@ -217,7 +218,7 @@ func ListaEstados(db *banco.DB, gameID int64, deMs, ateMs, passoMs int64) ([]Qua
 		}
 	}
 	estados := map[int][]EstadoJogador{}
-	todos, err := lePasses(db, `WHERE p.game_id = ? AND p.amostras > 0 ORDER BY (p.estado = 'concluido') DESC, p.id DESC`, gameID)
+	todos, err := lePasses(db, `WHERE p.game_id = ? AND p.amostras > 0 AND p.estado <> 'ruim' ORDER BY (p.estado = 'concluido') DESC, p.id DESC`, gameID)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +355,7 @@ type RespostaCadeia struct {
 // ListaCadeia devolve a cadeia do participante (tipos vazio = todos).
 func ListaCadeia(db *banco.DB, gameID int64, pid int, tipos map[string]bool) (RespostaCadeia, error) {
 	rc := RespostaCadeia{ParticipanteID: pid, Itens: []ItemCadeia{}}
-	ps, err := lePasses(db, `WHERE p.game_id = ? AND p.participante_id = ? AND EXISTS (SELECT 1 FROM passes_compactos c WHERE c.passe_id = p.id)
+	ps, err := lePasses(db, `WHERE p.game_id = ? AND p.participante_id = ? AND p.estado <> 'ruim' AND EXISTS (SELECT 1 FROM passes_compactos c WHERE c.passe_id = p.id)
 		ORDER BY (p.estado = 'concluido') DESC, p.id DESC LIMIT 1`, gameID, pid)
 	if err != nil {
 		return rc, err
@@ -381,6 +382,11 @@ type PartidaRastreada struct {
 	GameID        int64 `json:"game_id"`
 	Participantes []int `json:"participantes"`
 	Rastreados    int   `json:"rastreados"`
+	// Origens ("pesquisa", "estudo"), os puuids pesquisados e o jogador em
+	// foco da linha (origem.go). Foco null: não se sabe de quem é a partida.
+	Origens     []string       `json:"origens"`
+	Pesquisados []string       `json:"pesquisados"`
+	Foco        *JogadorEmFoco `json:"foco"`
 }
 
 // ListaRastreadas: partidas com pelo menos um passe concluído.
@@ -420,9 +426,10 @@ func MelhorPasse(db *banco.DB, gameID int64, pid int) (Passe, bool, error) {
 	return melhorPasse(db, gameID, pid)
 }
 
-// PassesCompactados são os passes fechados (com bloco) da partida.
+// PassesCompactados são os passes fechados (com bloco) da partida, fora os
+// ruins (qualidade_passe.go: não valem como dado).
 func PassesCompactados(db *banco.DB, gameID int64) ([]Passe, error) {
-	return lePasses(db, `WHERE p.game_id = ? AND EXISTS (SELECT 1 FROM passes_compactos c WHERE c.passe_id = p.id)
+	return lePasses(db, `WHERE p.game_id = ? AND p.estado <> 'ruim' AND EXISTS (SELECT 1 FROM passes_compactos c WHERE c.passe_id = p.id)
 		ORDER BY p.id`, gameID)
 }
 
@@ -431,7 +438,7 @@ func PassesCompactados(db *banco.DB, gameID int64) ([]Passe, error) {
 // de tempo. Instante repetido (dois passes no mesmo trecho) fica uma vez só, o
 // do passe concluído mais recente.
 func EstadosDaPartida(db *banco.DB, gameID int64) (map[int][]EstadoJogador, error) {
-	todos, err := lePasses(db, `WHERE p.game_id = ? AND p.amostras > 0 ORDER BY (p.estado = 'concluido') DESC, p.id DESC`, gameID)
+	todos, err := lePasses(db, `WHERE p.game_id = ? AND p.amostras > 0 AND p.estado <> 'ruim' ORDER BY (p.estado = 'concluido') DESC, p.id DESC`, gameID)
 	if err != nil {
 		return nil, err
 	}

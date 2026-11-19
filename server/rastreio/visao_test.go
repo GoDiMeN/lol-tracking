@@ -94,10 +94,20 @@ func TestClassificaCapturaRegras(t *testing.T) {
 	if r.Estados[8] != VisIndeterminado || r.Motivos[8] != "sem_posicao" || r.Estados[6] != VisFora || r.Estados[7] != VisFora {
 		t.Fatalf("sem posição: %+v", r)
 	}
-	// Retrato de aliado em cima do lugar do inimigo: coberto.
+	// Retrato azul a 8 px do lugar do inimigo vermelho: o vermelho é desenhado
+	// por cima (TimeDesenhadoPorCima), então a falta do anel dele é "fora".
 	lt2 := LeituraMinimapa{Modo: ModoNevoaAzul, Retratos: []MarcaMinimapa{{Time: 100, X: 3000, Y: 3000}, {Time: 100, X: 8000 + 8*44, Y: 8000}}}
 	r = ClassificaCaptura(lt2, true, 100, js)
-	if r.Estados[6] != VisIndeterminado || r.Motivos[6] != "coberto" {
+	if r.Estados[6] != VisFora {
+		t.Fatalf("azul embaixo do vermelho: %+v", r)
+	}
+	// Outro vermelho à vista a 8 px (o anel casa com o 7): pode estar por cima.
+	js7 := append([]PosicaoNoInstante(nil), js...)
+	js7[3].X, js7[3].Y = 8000+8*44, 8000
+	lt3 := LeituraMinimapa{Modo: ModoNevoaAzul, Retratos: []MarcaMinimapa{{Time: 100, X: 3000, Y: 3000}, {Time: 100, X: 5000, Y: 2000},
+		{Time: 200, X: 8000 + 8*44, Y: 8000}}}
+	r = ClassificaCaptura(lt3, true, 100, js7)
+	if r.Estados[7] != VisVisivel || r.Estados[6] != VisIndeterminado || r.Motivos[6] != "coberto" {
 		t.Fatalf("coberto: %+v", r)
 	}
 	// Aliados não achados (menos da metade): tudo indeterminado.
@@ -141,10 +151,18 @@ func TestConferenciaDosAliadosEOclusao(t *testing.T) {
 	if r.AliadosVivos != 1 || r.AliadosAchados != 1 {
 		t.Fatalf("conferência: %d de %d, esperado 1 de 1", r.AliadosAchados, r.AliadosVivos)
 	}
-	// O 6 está a 15 px do 1 (aliado do observador, sem anel achado: embaixo
-	// do 2) e sem anel: coberto. O 7, longe de todos: fora.
-	if r.Estados[6] != VisIndeterminado || r.Motivos[6] != "coberto" || r.Estados[7] != VisFora {
+	// O 6 (vermelho) está a 15 px do 1 (azul, sem anel achado: embaixo do 2),
+	// mas o vermelho é desenhado por cima do azul: sem anel, fora. O 7 também.
+	if r.Estados[6] != VisFora || r.Estados[7] != VisFora {
 		t.Fatalf("oclusão: %+v", r)
+	}
+	// Na visão vermelha, um azul a 15 px de um vermelho (desenhado sempre e
+	// por cima) e sem anel: coberto.
+	jv := []PosicaoNoInstante{pos(6, 200, 6000, 6000), pos(7, 200, 12000, 9000), pos(1, 100, 6000, 6000+15*u), pos(2, 100, 3000, 9000)}
+	lv := LeituraMinimapa{Modo: ModoNevoaVermelho, Retratos: []MarcaMinimapa{{Time: 200, X: 6000, Y: 6000}, {Time: 200, X: 12000, Y: 9000}}}
+	r = ClassificaCaptura(lv, true, 200, jv)
+	if r.Estados[1] != VisIndeterminado || r.Motivos[1] != "coberto" || r.Estados[2] != VisFora {
+		t.Fatalf("oclusão na visão vermelha: %+v", r)
 	}
 	// Com o 1 e o 2 mortos, nada cobre o 6: fora.
 	js2 := append([]PosicaoNoInstante(nil), js...)

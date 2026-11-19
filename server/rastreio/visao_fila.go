@@ -198,7 +198,7 @@ func (f *Fila) RastreiaVisao(ctx context.Context, gameID int64, ped PedidoVisao)
 	ex := f.d.Hub.Nova()
 	cctx, cancela := context.WithCancelCause(context.Background())
 	ex.AoCancelar(func() { cancela(ErrCancelado) })
-	c := &corrida{ex: ex, cancela: cancela, feito: make(chan struct{}), visaoDe: gameID}
+	c := &corrida{ex: ex, cancela: cancela, feito: make(chan struct{}), visaoDe: gameID, pedidoVisao: PedidoVisao{Velocidade: vel}}
 	f.atual = c
 	f.visoes[gameID] = ex.ID()
 	go f.correVisao(cctx, c, pt, pvs)
@@ -254,6 +254,13 @@ func (f *Fila) correVisao(ctx context.Context, c *corrida, pt partida.Partida, p
 		case errors.Is(err, ErrCancelado):
 			f.encerraPassesVisao(pendentes())
 			ex.Emite("cancelado", map[string]any{"game_id": gameID})
+		case errors.Is(err, ErrPausado):
+			// Pausar a captura: o passe de visão fica pausado e o próximo pedido
+			// continua dele (RastreiaVisao sem trecho).
+			motivo := MotivoPausa(err)
+			marcaRodando(Pausado, motivo)
+			ex.Emite("pausado", map[string]any{"game_id": gameID, "motivo": motivo})
+			f.anotaParada(Parada{Tipo: TipoVisao, ID: gameID, GameID: gameID, Motivo: motivo})
 		case errors.As(err, &fase):
 			marcaRodando(Pausado, err.Error())
 			ex.Emite("aviso", map[string]string{"texto": err.Error()})

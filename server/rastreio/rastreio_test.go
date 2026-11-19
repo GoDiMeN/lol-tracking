@@ -91,7 +91,7 @@ func prepara(t *testing.T, ajusta func(j *replay.Falso, c *Config)) *amb {
 	hub := web.NovoHub()
 	a := &amb{db: db, l: l, jogo: jogo, rel: rel, hub: hub, cfg: &cfg}
 	a.fila = NovaFila(Deps{DB: db, LCU: cli, Hub: hub, Config: cfg,
-		Replay: replay.Deps{LCU: cli, API: jogo, Jogo: jogo, Teclado: jogo, Tela: jogo, Relogio: rel}})
+		Replay: replay.Deps{LCU: cli, API: jogo, Jogo: jogo, Teclado: jogo, Tela: jogo, Relogio: rel, Presenca: jogo}})
 	a.mux = http.NewServeMux()
 	web.RegistraExecucoes(a.mux, hub)
 	Registra(a.mux, a.fila)

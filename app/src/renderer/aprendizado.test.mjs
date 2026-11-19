@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ELOS, nomeElo, estimativaColeta, textoDescartes, porcento, destaques, filtraFuncao, numerosLiga, estimativaEstudo } from './aprendizado.js';
+import { ELOS, nomeElo, estimativaColeta, textoDescartes, porcento, destaques, filtraFuncao, numerosLiga, estimativaEstudo, matrizRotas, pedidoRotas, textoPontuacao, textoRefazer, ESTADOS_PARTIDA } from './aprendizado.js';
 
 test('aprendizado: os 8 elos de Prata a Desafiante, mono de Mestre para cima', () => {
   assert.equal(ELOS.length, 8);
@@ -54,4 +54,32 @@ test('aprendizado: textos dos descartes e da fração', () => {
   assert.equal(textoDescartes({ nao_mono: 3, inativo: 1, veterano: 0 }), '1 parado · 3 não jogam um campeão só');
   assert.equal(textoDescartes({}), '');
   assert.equal(porcento(0.754), '75%');
+});
+
+test('matriz elo × rota: achados/alvo, aproveitados e a cota cheia', () => {
+  const d = {
+    coleta: { funcoes: ['TOP', 'JUNGLE'] },
+    elos: [{ elo: 'GOLD', nome: 'Ouro', aproveitados: 1, funcoes: [{ funcao: 'TOP', achados: 1, alvo: 1, aproveitados: 0 }, { funcao: 'JUNGLE', achados: 1, alvo: 2, aproveitados: 1 }] }],
+  };
+  const m = matrizRotas(d);
+  assert.deepEqual(m.colunas, ['TOP', 'JUNGLE']);
+  assert.equal(m.comCota, true);
+  assert.deepEqual(m.linhas[0].celulas.map((c) => [c.texto, c.cheia]), [['1/1', true], ['1/2 · 1 aprov.', false]]);
+  // Sem cota: as cinco colunas, só os achados.
+  const s = matrizRotas({ coleta: { funcoes: [] }, elos: [{ elo: 'GOLD', funcoes: [{ funcao: 'MIDDLE', achados: 3, alvo: 0 }] }] });
+  assert.equal(s.colunas.length, 5);
+  assert.equal(s.linhas[0].celulas[2].texto, '3');
+});
+
+test('pedido das rotas e a pontuação em dois componentes', () => {
+  assert.deepEqual(pedidoRotas(new Set(), 2), {});
+  assert.deepEqual(pedidoRotas(new Set(['UTILITY', 'TOP']), '2'), { funcoes: ['TOP', 'UTILITY'], jogadores_por_funcao: 2 });
+  assert.equal(textoPontuacao({ pontuacao: 71.5, pontuacao_jogador: 61.5, aproveitaveis: 1, pontuacao_aproveitaveis: 10 }), '71,5 = 61,5 do jogador + 10 de 1 aproveitável');
+  assert.equal(textoPontuacao({ pontuacao: 60.2, aproveitaveis: 0 }), '60,2');
+});
+
+test('aprendizado: partida incompleta (sobrou passe ruim) e o botão de refazer', () => {
+  assert.equal(ESTADOS_PARTIDA.incompleta.texto, 'incompleta');
+  assert.equal(textoRefazer(1), 'refazer 1 passe ruim');
+  assert.equal(textoRefazer(3), 'refazer 3 passes ruins');
 });

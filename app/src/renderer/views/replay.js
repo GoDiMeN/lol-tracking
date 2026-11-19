@@ -42,6 +42,7 @@ import { ondasNoInstante, textoEstado, textoOnda, textoCurto } from '../ondas.js
 import * as telaCheia from '../telacheia.js';
 import { noMapa, colocadasAte, tituloSentinela } from '../sentinelas.js';
 import { estadosNoInstante, sentinelasLidasEm, temSentinelasLidas, tituloSentinelaLida, tituloEstado, TEXTO_ESTADO } from '../visao.js';
+import { participanteEmFoco } from '../rastreadas.js';
 
 const VELOCIDADES = [1, 2, 4, 8];
 const SVG = 'http://www.w3.org/2000/svg';
@@ -68,7 +69,8 @@ export async function desenha(raiz, rota, ctx) {
       partidaComNomes(gameId),
       api.eventos(gameId),
       api.zonas(),
-      api.rastreadas(),
+      // Todas as origens: o mapa abre também as partidas do estudo (pela área de Estudo).
+      api.rastreadas({ origem: 'todas' }),
       api.fases(gameId).then((r) => r.fases).catch(() => null),
       api.linhaDoTempo(gameId).catch(() => null),
       api.ondas(gameId).catch(() => null),
@@ -83,8 +85,10 @@ export async function desenha(raiz, rota, ctx) {
   }
   const p = info.partida;
   const duracaoMs = p.duracao_s * 1000;
-  const rastreados = rastreadas.find((x) => x.game_id === gameId)?.participantes || [];
-  const dono = participantePrincipal(p, rastreados);
+  const linhaRastreada = rastreadas.find((x) => x.game_id === gameId);
+  const rastreados = linhaRastreada?.participantes || [];
+  // O ponto de vista: o jogador em foco da partida (o pesquisado, ou a referência do estudo).
+  const dono = linhaRastreada?.foco ? participanteEmFoco(linhaRastreada, p.participantes) : participantePrincipal(p, rastreados);
   const grade = zonas.grade;
   const nomes = info.nomes;
 
@@ -104,7 +108,7 @@ export async function desenha(raiz, rota, ctx) {
   const evMapa = eventos.filter((e) => ['abate', 'monstro', 'estrutura'].includes(e.tipo) && e.x !== null && e.x !== undefined);
 
   // --- Estrutura da tela ---
-  const sair = link('← Voltar', `#partida/${gameId}/${rastreados.includes(dono.participante_id) ? dono.participante_id : rastreados[0] || ''}`, 'btn');
+  const sair = link('← Voltar', `#partida/${gameId}/${linhaRastreada?.foco || rastreados.includes(dono.participante_id) ? dono.participante_id : rastreados[0] || ''}`, 'btn');
   const titulo = el('div', 'rp-titulo', [
     el('b', '', `${dono.campeao} · ${dono.venceu ? 'vitória' : 'derrota'} · ${duracao(p.duracao_s)}`),
     el('span', 'sub', 'mapa com play'),
@@ -1213,7 +1217,7 @@ export async function desenha(raiz, rota, ctx) {
     // Sentinelas colocadas por time até agora (linha do tempo da Riot).
     if (temSentinelas) {
       const sc = colocadasAte(sentinelas.sentinelas, t);
-      blocos.push(linha('sentinelas', String(sc[100]), String(sc[200]), { titulo: 'Sentinelas colocadas pelo time até agora (WARD_PLACED da linha do tempo da Riot, qualquer tipo).' }));
+      blocos.push(linha('sentinelas', String(sc[100]), String(sc[200]), { titulo: 'Sentinelas colocadas pelo time até agora (WARD_PLACED da linha do tempo da Riot; o tipo UNDEFINED não conta).' }));
     } else {
       blocos.push(linha('sentinelas', '—', '—', { titulo: `Sem sentinelas: ${sentinelas?.motivo || 'não deu para ler'}` }));
     }

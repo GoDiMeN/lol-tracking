@@ -18,7 +18,7 @@ import (
 // lidas (visao_capturas_brutas, para pausar e retomar como os outros passes).
 
 func migraVisao(db *banco.DB) error {
-	return banco.Executa(db,
+	if err := banco.Executa(db,
 		`CREATE TABLE IF NOT EXISTS passes_visao (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
 			game_id       INTEGER NOT NULL,
@@ -50,7 +50,11 @@ func migraVisao(db *banco.DB) error {
 			sentinelas TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS visao_capturas_brutas_passe ON visao_capturas_brutas (passe_id, t_ms)`,
-	)
+	); err != nil {
+		return err
+	}
+	// Os arcos (anéis parciais, 2026-11-18): passes de antes ficam com ''.
+	return banco.AdicionaColuna(db, "visao_capturas_brutas", "arcos", "TEXT NOT NULL DEFAULT ''")
 }
 
 // PasseVisao é o passe de visão de um time numa partida.
@@ -145,10 +149,13 @@ type CapturaVisao struct {
 	Modo       string
 	Retratos   []MarcaMinimapa
 	Sentinelas []MarcaMinimapa
+	// Arcos: anéis parciais (LeituraMinimapa.Arcos); vazio antes de 2026-11-18.
+	Arcos []MarcaMinimapa
 }
 
-// textoMarcas: "100:x:y:cob;200:x:y:cob" (posição no mapa em unidades
-// inteiras; cobertura com 2 casas). Curto e legível no arquivo.
+// textoMarcas: "100:x:y:cob;200:x:y:cob:mascara" (posição no mapa em
+// unidades inteiras; cobertura com 2 casas; a máscara Arco em hexadecimal só
+// quando gravada). Curto e legível no arquivo.
 func textoMarcas(ms []MarcaMinimapa) string {
 	var b strings.Builder
 	for i, m := range ms {
@@ -156,6 +163,9 @@ func textoMarcas(ms []MarcaMinimapa) string {
 			b.WriteByte(';')
 		}
 		fmt.Fprintf(&b, "%d:%d:%d:%s", m.Time, int(math.Round(m.X)), int(math.Round(m.Y)), strconv.FormatFloat(m.Cobertura, 'f', -1, 64))
+		if m.Arco != 0 {
+			fmt.Fprintf(&b, ":%x", m.Arco)
+		}
 	}
 	return b.String()
 }
@@ -167,17 +177,22 @@ func marcasDoTexto(s string) ([]MarcaMinimapa, error) {
 	}
 	for _, p := range strings.Split(s, ";") {
 		c := strings.Split(p, ":")
-		if len(c) != 4 {
+		if len(c) != 4 && len(c) != 5 {
 			return nil, fmt.Errorf("marca fora do formato: %q", p)
 		}
 		t, e1 := strconv.Atoi(c[0])
 		x, e2 := strconv.ParseFloat(c[1], 64)
 		y, e3 := strconv.ParseFloat(c[2], 64)
 		k, e4 := strconv.ParseFloat(c[3], 64)
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+		var arco uint64
+		var e5 error
+		if len(c) == 5 {
+			arco, e5 = strconv.ParseUint(c[4], 16, 64)
+		}
+		if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil {
 			return nil, fmt.Errorf("marca fora do formato: %q", p)
 		}
-		ms = append(ms, MarcaMinimapa{Time: t, X: x, Y: y, Cobertura: k})
+		ms = append(ms, MarcaMinimapa{Time: t, X: x, Y: y, Cobertura: k, Arco: arco})
 	}
 	return ms, nil
 }
@@ -190,8 +205,8 @@ func gravaCapturasBrutas(db *banco.DB, p PasseVisao, cs []CapturaVisao, tAtual i
 	}
 	defer tx.Rollback()
 	for _, c := range cs {
-		if _, err := tx.Exec(`INSERT INTO visao_capturas_brutas (passe_id, t_ms, modo, retratos, sentinelas) VALUES (?, ?, ?, ?, ?)`,
-			p.ID, c.TMs, c.Modo, textoMarcas(c.Retratos), textoMarcas(c.Sentinelas)); err != nil {
+		if _, err := tx.Exec(`INSERT INTO visao_capturas_brutas (passe_id, t_ms, modo, retratos, sentinelas, arcos) VALUES (?, ?, ?, ?, ?, ?)`,
+			p.ID, c.TMs, c.Modo, textoMarcas(c.Retratos), textoMarcas(c.Sentinelas), textoMarcas(c.Arcos)); err != nil {
 			return err
 		}
 	}
@@ -203,7 +218,7 @@ func gravaCapturasBrutas(db *banco.DB, p PasseVisao, cs []CapturaVisao, tAtual i
 }
 
 func leCapturasBrutas(db *banco.DB, passeID int64) ([]CapturaVisao, error) {
-	linhas, err := db.Query(`SELECT t_ms, modo, retratos, sentinelas FROM visao_capturas_brutas WHERE passe_id = ? ORDER BY t_ms`, passeID)
+	linhas, err := db.Query(`SELECT t_ms, modo, retratos, sentinelas, arcos FROM visao_capturas_brutas WHERE passe_id = ? ORDER BY t_ms`, passeID)
 	if err != nil {
 		return nil, err
 	}
@@ -211,8 +226,11 @@ func leCapturasBrutas(db *banco.DB, passeID int64) ([]CapturaVisao, error) {
 	var cs []CapturaVisao
 	for linhas.Next() {
 		var c CapturaVisao
-		var r, s string
-		if err := linhas.Scan(&c.TMs, &c.Modo, &r, &s); err != nil {
+		var r, s, a string
+		if err := linhas.Scan(&c.TMs, &c.Modo, &r, &s, &a); err != nil {
+			return nil, err
+		}
+		if c.Arcos, err = marcasDoTexto(a); err != nil {
 			return nil, err
 		}
 		if c.Retratos, err = marcasDoTexto(r); err != nil {

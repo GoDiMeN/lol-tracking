@@ -276,7 +276,7 @@ async function montaDetalhe(raiz, id, rastreios, ctx) {
       desenhaPasses();
       desenhaLeitura();
       for (const p of passes) {
-        if (p.estado === 'falhou' && p.erro) avisa(`${nomeDe(p.participante_id)}: ${p.erro}`, 'cr');
+        if ((p.estado === 'falhou' || p.estado === 'ruim') && p.erro) avisa(`${nomeDe(p.participante_id)}: ${p.erro}`, 'cr');
         const conf = p.conferencia_riot;
         if (conf && conf.n && conf.iguais < conf.n) {
           avisa(`${nomeDe(p.participante_id)}: a leitura da tela bateu com a Riot em ${conf.iguais} de ${conf.n} conferências (maior diferença ${numero(conf.maior_dif)}).`, 'at');

@@ -57,6 +57,7 @@ func TestMontaComLimiteCortaNaOrdem(t *testing.T) {
 
 func TestEstadoAcampamentosPelaLimpeza(t *testing.T) {
 	f := &fatos{}
+	f.selva, _ = TemposDaSelva("16.22")
 	// Os lobos do lado azul limpos aos 2:00 (voltam aos 4:15); o resto nunca visto.
 	lobos := -1
 	for k, a := range Acampamentos {
@@ -76,11 +77,20 @@ func TestEstadoAcampamentosPelaLimpeza(t *testing.T) {
 				t.Fatalf("lobos: %+v", e)
 			}
 		case e.Estado != "vivo":
-			t.Fatalf("sem limpeza vista e depois de 1:30, vivo (estimado): %+v", e)
+			t.Fatalf("sem limpeza vista e depois do primeiro nascimento, vivo (estimado): %+v", e)
 		}
 	}
-	if es := f.estadoAcampamentos(100, 60000, 100000, nil); es[0].Estado != "nasce_na_janela" {
-		t.Fatalf("antes do primeiro nascimento: %+v", es[0])
+	// O azul nasce aos 0:55 no 26.x e aos 1:30 no 25.x: a mesma janela vê
+	// estados diferentes conforme o patch da partida.
+	if es := f.estadoAcampamentos(100, 30000, 60000, nil); es[0].Nome != "azul (lado azul)" || es[0].Estado != "nasce_na_janela" || es[0].NasceMs != 55000 {
+		t.Fatalf("antes do primeiro nascimento (26.x): %+v", es[0])
+	}
+	if es := f.estadoAcampamentos(100, 60000, 100000, nil); es[0].Estado != "vivo" {
+		t.Fatalf("depois do 0:55 (26.x): %+v", es[0])
+	}
+	f.selva, _ = TemposDaSelva("15.20")
+	if es := f.estadoAcampamentos(100, 60000, 100000, nil); es[0].Estado != "nasce_na_janela" || es[0].NasceMs != 90000 {
+		t.Fatalf("antes do 1:30 (25.x): %+v", es[0])
 	}
 }
 
@@ -144,6 +154,23 @@ func TestBaseDeFatosRotasEBusca(t *testing.T) {
 		t.Fatalf("%d %v", cod, m)
 	}
 	texto := m["texto"].(string)
+	// O papel de cada um: do vocabulário, com os números, pesquisável.
+	papeis := map[string]int{}
+	for _, x := range res["jogadores"].([]any) {
+		pp := x.(map[string]any)["papel"].(map[string]any)
+		if RotuloPapel(pp["papel"].(string)) == "" || len(pp["motivos"].([]any)) == 0 || pp["frase"] == "" || pp["confianca"] == "" {
+			t.Fatalf("papel: %v", pp)
+		}
+		papeis[pp["papel"].(string)]++
+	}
+	for p, n := range papeis {
+		if cod, m := a.pede(t, "GET", "/api/resumos?limite=200&papel="+p); cod != 200 || len(m["resumos"].([]any)) != n {
+			t.Fatalf("busca por papel %s: %d %v", p, cod, m)
+		}
+	}
+	if !strings.Contains(texto, "Papel na partida (por regra)") || !strings.Contains(texto, "; papel: ") {
+		t.Fatalf("o papel vai no pacote:\n%s", texto)
+	}
 	if !strings.Contains(texto, "# Partida 3304789000") || !strings.Contains(texto, "## Mortes de") ||
 		int(m["caracteres"].(float64)) > Param.LimiteContextoIA || utf8.RuneCountInString(texto) != int(m["caracteres"].(float64)) {
 		t.Fatalf("contexto:\n%s", texto)
@@ -152,7 +179,7 @@ func TestBaseDeFatosRotasEBusca(t *testing.T) {
 		t.Fatalf("contexto de várias: %d %v", cod, m)
 	}
 	for _, c := range []string{"/api/resumos?funcao=MEIO", "/api/resumos?resultado=empate", "/api/resumos?tipo=gank",
-		"/api/resumos?limite=0", "/api/partidas/3304789000/contexto-ia", "/api/partidas/3304789000/contexto-ia?participante=11"} {
+		"/api/resumos?limite=0", "/api/resumos?papel=heroi", "/api/partidas/3304789000/contexto-ia", "/api/partidas/3304789000/contexto-ia?participante=11"} {
 		if cod, _ := a.pede(t, "GET", c); cod != 400 {
 			t.Fatalf("%s devia ser 400: %d", c, cod)
 		}

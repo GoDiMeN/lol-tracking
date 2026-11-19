@@ -66,6 +66,14 @@ var NomesSentinela = map[string]string{
 	TipoFarsight: "azul (Farsight)",
 }
 
+// ContaComoSentinela é A regra de contagem, a mesma em todo lugar (base de
+// fatos, indicadores, resumo por jogador e time, pacote de contexto da IA):
+// só os quatro tipos conhecidos contam. O UNDEFINED da Riot (e outros tipos
+// crus) continua na lista da partida, marcado comum=false, mas não é
+// sentinela colocada nem destruída: um Kayn com 88 "sentinelas" UNDEFINED não
+// pode virar 88 num lugar e 0 no outro.
+func ContaComoSentinela(tipo string) bool { return NomesSentinela[tipo] != "" }
+
 // eventoSentinela é um WARD_PLACED (colocada) ou WARD_KILL da Riot.
 type eventoSentinela struct {
 	tMs      int64
@@ -434,7 +442,7 @@ func LeSentinelas(db *banco.DB, gameID int64) (SentinelasDaPartida, error) {
 	for _, tm := range []int{100, 200} {
 		rt := ResumoSentinelasTime{Time: tm}
 		for _, s := range r.Sentinelas {
-			if s.Time == tm {
+			if s.Time == tm && ContaComoSentinela(s.Tipo) {
 				rt.Colocadas++
 				if s.Tipo == TipoControle {
 					rt.DeControle++
@@ -442,7 +450,7 @@ func LeSentinelas(db *banco.DB, gameID int64) (SentinelasDaPartida, error) {
 			}
 		}
 		for _, x := range r.Destruicoes {
-			if x.Time == tm {
+			if x.Time == tm && ContaComoSentinela(x.Tipo) {
 				rt.Destruidas++
 			}
 		}
@@ -462,7 +470,7 @@ func (d *dadosPartida) resumoSentinelas(pid, time int) ResumoSentinelasJogador {
 	}
 	inimiga, comPos := 0, 0
 	for _, x := range s {
-		if x.ParticipanteID != pid {
+		if x.ParticipanteID != pid || !ContaComoSentinela(x.Tipo) {
 			continue
 		}
 		j.Colocadas++
@@ -483,7 +491,7 @@ func (d *dadosPartida) resumoSentinelas(pid, time int) ResumoSentinelasJogador {
 		j.MetadeInimiga = &inimiga
 	}
 	for _, x := range ds {
-		if x.ParticipanteID == pid {
+		if x.ParticipanteID == pid && ContaComoSentinela(x.Tipo) {
 			j.Destruidas++
 		}
 	}
@@ -501,7 +509,7 @@ func (d *dadosPartida) indicadoresSentinelas(c *coleta) {
 	mom := func(f func(Sentinela) bool) []Momento {
 		l := []Momento{}
 		for _, x := range s {
-			if x.ParticipanteID == c.pid && f(x) {
+			if x.ParticipanteID == c.pid && ContaComoSentinela(x.Tipo) && f(x) {
 				l = append(l, Momento{x.TMs, fmt.Sprintf("sentinela %s aos %s", x.TipoNome, MinSeg(x.TMs))})
 			}
 		}
@@ -514,7 +522,7 @@ func (d *dadosPartida) indicadoresSentinelas(c *coleta) {
 	c.conta("sentinelas_controle", mom(func(x Sentinela) bool { return x.Tipo == TipoControle }), false, nil)
 	dest := []Momento{}
 	for _, x := range ds {
-		if x.ParticipanteID == c.pid {
+		if x.ParticipanteID == c.pid && ContaComoSentinela(x.Tipo) {
 			dest = append(dest, Momento{x.TMs, fmt.Sprintf("destruiu uma sentinela %s aos %s", x.TipoNome, MinSeg(x.TMs))})
 		}
 	}

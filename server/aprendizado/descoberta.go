@@ -103,14 +103,15 @@ func (k *Coletor) descobreElo(ctx context.Context, c *corridaColeta, col Coleta,
 		desc[kk] = descFiltro[kk]
 	}
 	mudaElo(k.d.DB, col.ID, e.Elo, EloDescobrindo, vistos, desc, "")
-	for ; vistos < len(cands) && vistos < MaxCandidatosPorElo && aceitos < alvo; vistos++ {
+	limite := col.limiteCandidatos()
+	for ; vistos < len(cands) && vistos < limite && aceitos < alvo; vistos++ {
 		if c.pausar.Load() {
 			return errPausa
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		res, info, err := k.avaliaCandidato(ctx, col, reg, e.Elo, vistos+1, cands[vistos], patch)
+		res, info, err := k.avaliaCandidato(ctx, col, reg, e.Elo, vistos+1, cands[vistos], patch, opcCandidato{})
 		if err != nil {
 			return err
 		}
@@ -121,20 +122,23 @@ func (k *Coletor) descobreElo(ctx context.Context, c *corridaColeta, col Coleta,
 			ev[kk] = v
 		}
 		c.ex.Emite("candidato", ev)
-		if res == Aceito {
-			aceitos++
-		} else if res != "" {
+		if res != Aceito && res != "" {
 			desc[res]++
 		}
+		// Recontado do banco: os aproveitados (de qualquer partida) também ocupam vaga.
+		aceitos = achadosNoElo(k.d.DB, col.ID, e.Elo)
 		mudaElo(k.d.DB, col.ID, e.Elo, EloDescobrindo, vistos+1, desc, "")
 	}
 	aviso := ""
 	if aceitos < alvo {
-		limite := min(len(cands), MaxCandidatosPorElo)
+		limite := min(len(cands), limite)
 		if exigeMono(e.Elo) {
 			aviso = fmt.Sprintf("achou %d de %d mono champions com partida rastreável entre os %d primeiros candidatos", aceitos, alvo, limite)
 		} else {
 			aviso = fmt.Sprintf("achou %d de %d jogadores com partida rastreável entre os %d primeiros candidatos", aceitos, alvo, limite)
+		}
+		if a := avisoCotas(k.d.DB, col, e.Elo); a != "" {
+			aviso += "; " + a
 		}
 	}
 	mudaElo(k.d.DB, col.ID, e.Elo, EloPronto, vistos, desc, aviso)
@@ -147,18 +151,25 @@ func (k *Coletor) descobreElo(ctx context.Context, c *corridaColeta, col Coleta,
 // quando a coleta precisa parar (chave, cliente fechado, contexto); o resto é
 // um resultado ("nao_achado" e afins). Resultado "" = repetido (já na coleta).
 func (k *Coletor) avaliaCandidato(ctx context.Context, col Coleta, reg riot.Regiao, elo string, posicao int,
-	e riot.EntradaLiga, patch string) (string, map[string]any, error) {
+	e riot.EntradaLiga, patch string, opc opcCandidato) (string, map[string]any, error) {
 	var ja int
 	k.d.DB.QueryRow(`SELECT COUNT(*) FROM aprendizado_jogadores WHERE coleta_id = ? AND puuid_riot = ?`, col.ID, e.Puuid).Scan(&ja)
 	if ja > 0 {
 		return "", nil, nil
 	}
-	conta, err := k.d.Riot.ContaPorPuuid(ctx, reg, e.Puuid)
-	if errors.Is(err, riot.ErrNaoEncontradoRiot) {
-		return NaoAchado, nil, nil
-	}
-	if err != nil {
-		return "", nil, err
+	var conta riot.Conta
+	var err error
+	if opc.conta != nil {
+		// O ranking já tem o Riot ID: nenhum pedido à account-v1.
+		conta = *opc.conta
+	} else {
+		conta, err = k.d.Riot.ContaPorPuuid(ctx, reg, e.Puuid)
+		if errors.Is(err, riot.ErrNaoEncontradoRiot) {
+			return NaoAchado, nil, nil
+		}
+		if err != nil {
+			return "", nil, err
+		}
 	}
 	info := map[string]any{"riot_id": conta.Nome + "#" + conta.Tag}
 	// O puuid da Riot não é o do LCU: o jogador é achado no cliente pelo Riot ID.
@@ -204,7 +215,8 @@ func (k *Coletor) avaliaCandidato(ctx context.Context, col Coleta, reg riot.Regi
 	info["campeao_id"], info["fracao"], info["partidas_solo"] = camp, fracao, nSolo
 	mono := nSolo >= MonoMinPartidas && fracao >= MonoMinFracao
 	// Na amostragem o mono não é exigido: o critério é só ter partida rastreável.
-	exigeMonoAqui := exigeMono(elo) && !col.Amostragem
+	// Do ranking também não: o ranking é o critério.
+	exigeMonoAqui := exigeMono(elo) && !col.Amostragem && !col.doRanking()
 	if exigeMonoAqui && !mono {
 		return NaoMono, info, nil
 	}
@@ -218,16 +230,22 @@ func (k *Coletor) avaliaCandidato(ctx context.Context, col Coleta, reg riot.Regi
 		exigido = camp
 	}
 	funcao, fracFuncao := funcaoPrincipal(hist)
-	// Na amostragem sem função pedida, qualquer posição serve.
+	if opc.funcao != "" {
+		// Do ranking: conta na rota do ranking, não na função principal do histórico do LCU.
+		funcao, fracFuncao = opc.funcao, fracaoNaFuncao(hist, opc.funcao)
+	}
+	// Na amostragem sem cota por rota, qualquer posição serve.
 	funcaoConta := funcao
-	if col.Amostragem && col.Funcao == "" {
+	if col.Amostragem && col.cotas() == nil {
 		funcaoConta = ""
 	}
 	vr, dr := contaRastreaveis(hist, patch, funcaoConta)
 	info["funcao"], info["vitorias_rastreaveis"], info["derrotas_rastreaveis"] = funcao, vr, dr
-	if col.Funcao != "" && funcao != col.Funcao {
-		return DescOutraFuncao, info, nil
+	// Cota por rota: ele conta na função principal dele (cotas.go).
+	if d := vaga(k.d.DB, col, elo, funcao); d != "" {
+		return d, info, nil
 	}
+	funcaoPartidas := funcaoDasPartidas(col, funcao)
 	// Sem partida rastreável o jogador não ocupa vaga: a descoberta segue
 	// descendo a lista (até MaxCandidatosPorElo). Só descobrir não escolhe
 	// partida (não lê a partida inteira): vale ter vitória rastreável na função.
@@ -244,7 +262,7 @@ func (k *Coletor) avaliaCandidato(ctx context.Context, col Coleta, reg riot.Regi
 			return DescSemPartida, info, nil
 		}
 	case col.Amostragem:
-		ps, err = k.maisRecentes(ctx, col, hist, inv, patch)
+		ps, err = k.maisRecentes(ctx, col, hist, inv, patch, funcaoPartidas)
 		if err != nil {
 			return "", nil, err
 		}
@@ -252,12 +270,18 @@ func (k *Coletor) avaliaCandidato(ctx context.Context, col Coleta, reg riot.Regi
 			return DescSemPartida, info, nil
 		}
 	default:
-		ps, err = k.escolhePartidas(ctx, col, hist, inv, patch, exigido)
+		ps, err = k.escolhePartidas(ctx, col, hist, inv, patch, exigido, funcaoPartidas)
 		if err != nil {
 			return "", nil, err
 		}
 		if len(ps) == 0 {
 			return DescSemPartida, info, nil
+		}
+	}
+	if !col.SoDescobrir {
+		// A escolha leva em conta quem mais dá para aproveitar em cada partida.
+		if ps, err = k.escolheComAproveitaveis(ctx, col, ps); err != nil {
+			return "", nil, err
 		}
 	}
 	j := JogadorDaColeta{Regiao: col.Regiao, Elo: elo, Posicao: posicao, LP: e.LP, Nome: conta.Nome, Tag: conta.Tag,
@@ -272,12 +296,28 @@ func (k *Coletor) avaliaCandidato(ctx context.Context, col Coleta, reg riot.Regi
 	if riot.EloApex(elo) {
 		j.Divisao = ""
 	}
-	if _, n, err := gravaJogador(k.d.DB, col.ID, j, ps, col.Quem); err != nil {
+	jid, n, err := gravaJogador(k.d.DB, col.ID, j, ps, col.Quem)
+	if err != nil {
 		return "", nil, err
-	} else {
-		info["partidas"] = n
+	}
+	info["partidas"] = n
+	if col.Aproveitar && !col.SoDescobrir {
+		j.ID = jid
+		na, err := k.aproveitaDasPartidas(ctx, col, j, ps, patch)
+		if err != nil {
+			return "", nil, err
+		}
+		info["aproveitados"] = na
 	}
 	return Aceito, info, nil
+}
+
+// opcCandidato: o que muda quando o candidato vem do ranking (ranking_coleta.go).
+type opcCandidato struct {
+	// funcao: a rota em que ele conta (a do ranking), em vez da função principal.
+	funcao string
+	// conta: o Riot ID já conhecido (sem pedir à account-v1).
+	conta *riot.Conta
 }
 
 // paraTudo: erro que para a coleta (cliente fechado, rota recusada, contexto)
@@ -465,10 +505,13 @@ func Pontuacao(abates, mortes, assist, cs int, dano int64, duracaoS int, kp floa
 // escolhePartidas: fila 420, patch instalado, vitória, ≥ 15 min, sem rendição
 // antecipada e, se campeao != 0, nele. As melhores pela pontuação (com a
 // participação em abates lida da partida inteira, games/{id}).
-func (k *Coletor) escolhePartidas(ctx context.Context, col Coleta, hist []itemHist, inv lcu.Invocador, patch string, campeao int) ([]PartidaDaColeta, error) {
+// Devolve TODAS as lidas, na ordem da pontuação: quem corta em
+// partidas_por_jogador é escolheComAproveitaveis (aproveita.go). Com funcao,
+// só as partidas em que ele jogou nela (a cota por rota conta a função).
+func (k *Coletor) escolhePartidas(ctx context.Context, col Coleta, hist []itemHist, inv lcu.Invocador, patch string, campeao int, funcao string) ([]PartidaDaColeta, error) {
 	var cands []itemHist
 	for _, h := range hist {
-		if !h.Venceu || !rastreavel(h, patch) {
+		if !h.Venceu || !rastreavel(h, patch) || !naFuncao(h, funcao) {
 			continue
 		}
 		if campeao != 0 && h.CampeaoID != campeao {
@@ -476,27 +519,26 @@ func (k *Coletor) escolhePartidas(ctx context.Context, col Coleta, hist []itemHi
 		}
 		cands = append(cands, h)
 	}
-	l, err := k.melhoresVitorias(ctx, col.Regiao, cands, inv, "")
-	if err != nil {
-		return nil, err
-	}
-	if len(l) > col.PartidasPorJogador {
-		l = l[:col.PartidasPorJogador]
-	}
-	return l, nil
+	return k.melhoresVitorias(ctx, col.Regiao, cands, inv, funcao)
 }
 
-// maisRecentes (amostragem): as partidas_por_jogador ranqueadas solo
-// rastreáveis mais recentes, vitória ou derrota, na função pedida (se houver).
-func (k *Coletor) maisRecentes(ctx context.Context, col Coleta, hist []itemHist, inv lcu.Invocador, patch string) ([]PartidaDaColeta, error) {
+// maisRecentes (amostragem): as ranqueadas solo rastreáveis mais recentes,
+// vitória ou derrota, na função dada (se houver). Lê partidas_por_jogador
+// delas; com o aproveitamento ligado, até PartidasConferidasAproveitamento
+// (escolheComAproveitaveis corta depois).
+func (k *Coletor) maisRecentes(ctx context.Context, col Coleta, hist []itemHist, inv lcu.Invocador, patch, funcao string) ([]PartidaDaColeta, error) {
 	var cands []itemHist
 	for _, h := range hist {
-		if rastreavel(h, patch) && naFuncao(h, col.Funcao) {
+		if rastreavel(h, patch) && naFuncao(h, funcao) {
 			cands = append(cands, h)
 		}
 	}
 	sort.SliceStable(cands, func(a, b int) bool { return cands[a].CriadaMs > cands[b].CriadaMs })
-	return k.partidasDoDono(ctx, col.Regiao, cands, inv, col.Funcao, max(1, col.PartidasPorJogador))
+	limite := max(1, col.PartidasPorJogador)
+	if col.Aproveitar && !col.SoDescobrir {
+		limite = max(limite, PartidasConferidasAproveitamento)
+	}
+	return k.partidasDoDono(ctx, col.Regiao, cands, inv, funcao, limite)
 }
 
 // melhoresVitorias pré-ordena as vitórias candidatas pela pontuação do

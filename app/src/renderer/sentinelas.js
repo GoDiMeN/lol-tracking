@@ -15,10 +15,12 @@ export function noMapa(lista, t) {
   return (lista || []).filter((s) => s.x !== null && s.x !== undefined && vivaEm(s, t));
 }
 
-// colocadasAte: quantas cada time colocou até t ({100: n, 200: n}).
+// colocadasAte: quantas cada time colocou até t ({100: n, 200: n}). A regra da contagem é a do
+// servidor (analise.ContaComoSentinela): tipo fora dos quatro conhecidos (comum: false, o UNDEFINED
+// da Riot) aparece no mapa, mas não conta.
 export function colocadasAte(lista, t) {
   const r = { 100: 0, 200: 0 };
-  for (const s of lista || []) if (s.t_ms <= t && r[s.time] !== undefined) r[s.time]++;
+  for (const s of lista || []) if (s.t_ms <= t && s.comum !== false && r[s.time] !== undefined) r[s.time]++;
   return r;
 }
 

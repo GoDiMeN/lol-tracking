@@ -41,13 +41,21 @@ function dentro(lista, t) {
   return false;
 }
 
-// estadoEm: 'visivel', 'fora', 'indeterminado' ou '' (sem captura ou morto) para um jogador.
+// estadoEm: 'visivel', 'fora', 'indeterminado', 'fora_do_mapa' (o jogo o tirou do mapa: Investida
+// Alfa, teleporte) ou '' (sem captura ou morto) para um jogador. Visível/fora incluem o herdado
+// pela continuidade (j.inferido; ver herdadoEm).
 export function estadoEm(j, t) {
   if (!j) return '';
   if (dentro(j.visivel, t)) return 'visivel';
   if (dentro(j.fora, t)) return 'fora';
   if (dentro(j.indeterminado, t)) return 'indeterminado';
+  if (dentro(j.fora_do_mapa, t)) return 'fora_do_mapa';
   return '';
+}
+
+// herdadoEm: o estado no instante foi herdado pela continuidade (não lido do minimapa).
+export function herdadoEm(j, t) {
+  return !!j && dentro(j.inferido, t);
 }
 
 // doObservador: a visão do time observador (100/200), ou null.
@@ -78,7 +86,7 @@ export function temSentinelasLidas(visao) {
   return (visao?.times || []).some((v) => (v.sentinelas || []).length > 0);
 }
 
-export const TEXTO_ESTADO = { visivel: 'à vista', fora: 'fora da visão', indeterminado: 'visão incerta' };
+export const TEXTO_ESTADO = { visivel: 'à vista', fora: 'fora da visão', indeterminado: 'visão incerta', fora_do_mapa: 'fora do mapa' };
 
 export const MOTIVOS = {
   painel: 'o painel do replay não mostrava a névoa do time',
@@ -95,6 +103,7 @@ export function tituloEstado(estado, observador) {
   if (estado === 'visivel') return `À vista: ${quem} via este jogador neste instante (lido do minimapa na visão dele).`;
   if (estado === 'fora') return `Fora da visão: ${quem} NÃO via este jogador neste instante; o anel marca onde ele estava de verdade.`;
   if (estado === 'indeterminado') return `Visão incerta: não deu para decidir se ${quem} via este jogador (retrato coberto, sem posição rastreada ou leitura duvidosa).`;
+  if (estado === 'fora_do_mapa') return 'Fora do mapa: o jogo tirou este jogador do mapa neste instante (Investida Alfa, teleporte em trânsito); não é alvo de visão.';
   return '';
 }
 

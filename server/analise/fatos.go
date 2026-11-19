@@ -28,9 +28,38 @@ import (
 
 // VersaoFatos sobe quando a regra muda: partida com versão menor é refeita no
 // próximo preenchimento (subida do servidor ou primeiro pedido).
-const VersaoFatos = 1
+// 2: "sentinelas" do jogador conta só os quatro tipos conhecidos (o UNDEFINED da
+// Riot não é sentinela: o Kayn da 3305481832 tinha 88 assim e 0 de verdade).
+// 3: o papel do jogador na partida (papel.go): colunas papel e estilo e dados.papel.
+// 4: papel: a linha de frente de uma vitória não afunda nem é carregada (mortes
+// em lutas que o time venceu); estilo objetivos do caçador exige mais que os
+// épicos (participação nos objetivos do time ou tempo em objetivo).
+// 5: tempos da selva por patch e conferidos (tempos_selva.go): no 26.x os
+// acampamentos nascem a 0:55/1:07 (eram 1:30 de memória) e o primeiro
+// nascimento é o piso das janelas. O contexto dos jogadores junta o histórico
+// buscado (fatos_historico.go), só Summoner's Rift, e diz campeão e fonte.
+// 6: a visão antes de cada abate (visao.go): dados.visao_atacantes e
+// dados.visao_cacador, etiquetas atacante_nao_visto e cacador_nao_visto.
+const VersaoFatos = 6
 
 func migraFatos(db *banco.DB) error {
+	if err := migraTabelasFatos(db); err != nil {
+		return err
+	}
+	if err := migraHistoricos(db); err != nil {
+		return err
+	}
+	// O papel (VersaoFatos 3): colunas para a busca ("o topo de Platina que
+	// carregou"); a partida com versão menor é refeita no preenchimento.
+	for _, c := range []string{"papel", "estilo"} {
+		if err := banco.AdicionaColuna(db, "resumos_jogador", c, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	return banco.Executa(db, `CREATE INDEX IF NOT EXISTS resumos_jogador_papel ON resumos_jogador (funcao, papel, estilo)`)
+}
+
+func migraTabelasFatos(db *banco.DB) error {
 	return banco.Executa(db,
 		`CREATE TABLE IF NOT EXISTS resumos_partida (
 			game_id                    INTEGER PRIMARY KEY,
@@ -238,6 +267,8 @@ type ResumoJogador struct {
 	PosicaoNota int              `json:"posicao_nota"`
 	Componentes []ComponenteNota `json:"componentes"`
 	Contexto    ContextoJogador  `json:"contexto"`
+	// Papel: como ele jogou (papel.go): carregou, habilitou... e o estilo da função.
+	Papel PapelJogador `json:"papel"`
 }
 
 // ItemComprado: uma compra, na ordem.
@@ -323,12 +354,16 @@ func geraFatos(ctx context.Context, d Deps, dp *dadosPartida, retratos []Retrato
 		r.Avisos = append(r.Avisos, "sem a linha do tempo da Riot: ouro do abate pelo valor padrão, sem placas, sem sentinelas")
 	}
 	f := novoFatos(dp, retratos, est)
+	if !f.selvaCoberta {
+		r.Avisos = append(r.Avisos, fmt.Sprintf("patch %q fora da tabela de tempos da selva: usados os tempos de %s", dp.pt.Patch, f.selva.Patches))
+	}
 	r.CurvaOuro = f.curva
 	r.MaiorVantagemAzul, r.MaiorVantagemAzulMs, r.MaiorVantagemVermelho, r.MaiorVantagemVermelhoMs, r.Viradas = viradaDeOuro(f.curva)
 	r.Times = f.times()
 	r.Momentos = f.momentos()
 	r.Jogadores = f.jogadores(d.DB)
 	f.notas(r.Jogadores, r.Momentos)
+	f.papeis(r.Jogadores)
 	r.Elo = eloDaPartida(d.DB, r.GameID)
 	r.Texto = textoDaPartida(r)
 	return r
@@ -361,17 +396,17 @@ func gravaFatos(db *banco.DB, r ResumoPartida) error {
 		return err
 	}
 	for _, j := range r.Jogadores {
-		dadosJ := map[string]any{"itens": j.Itens, "build": j.Build, "componentes": j.Componentes, "contexto": j.Contexto}
+		dadosJ := map[string]any{"itens": j.Itens, "build": j.Build, "componentes": j.Componentes, "contexto": j.Contexto, "papel": j.Papel}
 		if _, err := tx.Exec(`INSERT INTO resumos_jogador (game_id, participante_id, puuid, nome, campeao, funcao, time, venceu, rastreado,
 			elo, abates, mortes, assistencias, kda, ouro_10, ouro_15, ouro_fim, cs_10, cs_15, cs_fim, adversario, dif_ouro_10, dif_ouro_15,
 			dif_cs_10, dif_cs_15, mortes_rotas, mortes_meio, mortes_final, mortes_caras, objetivos_participou, objetivos_time, sentinelas,
-			sentinelas_controle, nota, posicao_nota, funcao_principal, etiquetas, dados)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			sentinelas_controle, nota, posicao_nota, funcao_principal, etiquetas, dados, papel, estilo)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			r.GameID, j.ParticipanteID, j.Puuid, j.Nome, j.Campeao, j.Funcao, j.Time, j.Venceu, j.Rastreado,
 			j.Elo, j.Abates, j.Mortes, j.Assistencias, j.KDA, j.Ouro10, j.Ouro15, j.OuroFim, j.CS10, j.CS15, j.CSFim, j.Adversario,
 			j.DifOuro10, j.DifOuro15, j.DifCS10, j.DifCS15, j.MortesRotas, j.MortesMeio, j.MortesFinal, j.MortesCaras,
 			j.ObjetivosParticipou, j.ObjetivosTime, j.Sentinelas, j.SentinelasControle, j.Nota, j.PosicaoNota,
-			j.Contexto.FuncaoPrincipal, jsonTexto(j.Etiquetas), jsonTexto(dadosJ)); err != nil {
+			j.Contexto.FuncaoPrincipal, jsonTexto(j.Etiquetas), jsonTexto(dadosJ), j.Papel.Papel, j.Papel.Estilo); err != nil {
 			return err
 		}
 	}
@@ -476,6 +511,12 @@ func PreencheFatosEmSegundoPlano(d Deps) {
 			log.Printf("base de fatos: %d partida(s) preenchida(s)", n)
 		}
 	}()
+}
+
+// GaranteFatos é garanteFatos para quem está fora do pacote (a IA monta o
+// contexto e lê o resumo da partida pela mesma porta das rotas).
+func GaranteFatos(ctx context.Context, d Deps, gameID int64) error {
+	return garanteFatos(ctx, d, gameID)
 }
 
 // garanteFatos: no primeiro pedido de uma partida analisada sem resumo (ou de

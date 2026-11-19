@@ -110,13 +110,24 @@ func textoContexto(c ContextoJogador, funcao string) string {
 	var p []string
 	if c.FuncaoPrincipal != "" {
 		t := "função principal " + NomeFuncao(c.FuncaoPrincipal)
+		if c.FracaoPrincipal > 0 {
+			t += fmt.Sprintf(" (%.0f%% das partidas)", c.FracaoPrincipal*100)
+		}
 		if c.ForaDaFuncao != nil && *c.ForaDaFuncao {
 			t += " (nesta partida FORA dela, como " + NomeFuncao(funcao) + ")"
 		}
 		p = append(p, t)
 	}
+	switch {
+	case c.Mono != nil && *c.Mono:
+		p = append(p, fmt.Sprintf("mono do campeão (%d das últimas %d com ele)", c.CampeaoVezes, c.CampeaoDe))
+	case c.SemOCampeao != nil && *c.SemOCampeao:
+		p = append(p, fmt.Sprintf("nenhuma das últimas %d com este campeão (talvez a primeira vez)", c.CampeaoDe))
+	case c.CampeaoDe > 0 && c.Mono != nil:
+		p = append(p, fmt.Sprintf("%d das últimas %d com este campeão", c.CampeaoVezes, c.CampeaoDe))
+	}
 	if c.PartidasGuardadas > 0 {
-		p = append(p, fmt.Sprintf("%d partida(s) guardada(s) antes desta", c.PartidasGuardadas))
+		p = append(p, fmt.Sprintf("%d partida(s) de antes desta (%s)", c.PartidasGuardadas, c.Fonte))
 		if c.Ultimas > 0 {
 			p = append(p, fmt.Sprintf("%d vitória(s) nas últimas %d", c.VitoriasUltimas, c.Ultimas))
 		}
@@ -136,6 +147,9 @@ func textoContexto(c ContextoJogador, funcao string) string {
 			e += " (em sequência de vitórias)"
 		}
 		p = append(p, e)
+	}
+	if c.Alcance != "" {
+		p = append(p, c.Alcance)
 	}
 	return strings.Join(p, "; ")
 }
@@ -397,6 +411,9 @@ func MontaContextoIA(r ResumoPartida, pid int) (ContextoIA, error) {
 	sj := secao{titulo: fmt.Sprintf("Jogador em foco: %s", eu.Campeao)}
 	sj.linhas = append(sj.linhas, "- "+linhaJogador(*eu)+".",
 		"- Contexto: "+contextoOuNada(eu.Contexto, eu.Funcao)+".")
+	if l := linhaPapel(eu.Papel); l != "" {
+		sj.linhas = append(sj.linhas, "- Papel na partida (por regra): "+l)
+	}
 	if t, ok := eu.Etiquetas["total"]; ok && len(t) > 0 {
 		sj.linhas = append(sj.linhas, "- Tempo por atividade (partida): "+topEtiquetas(t, 8)+".")
 	}
@@ -464,6 +481,12 @@ func MontaContextoIA(r ResumoPartida, pid int) (ContextoIA, error) {
 		}
 		l := fmt.Sprintf("%d. %s (%s %s): %s = %s", j.PosicaoNota, j.Campeao, NomeFuncao(j.Funcao), NomeTime(j.Time),
 			sinalOuro(j.Nota), strings.Join(comp, ", "))
+		if j.Papel.Papel != "" {
+			l += "; papel: " + j.Papel.Rotulo
+			if j.Papel.Estilo != "" {
+				l += " (" + j.Papel.EstiloRotulo + ")"
+			}
+		}
 		if t := textoContexto(j.Contexto, j.Funcao); t != "" {
 			l += "; " + t
 		}
@@ -558,6 +581,9 @@ func ContextoDeVariasPartidas(db *banco.DB, f FiltroResumos) (ContextoIA, error)
 			linha += fmt.Sprintf(" | %s %d/%d/%d, %s; nota %s (%dª de 10); mortes caras %d; ouro aos 15 %s contra o adversário",
 				fmt.Sprintf("%s (%s %s)", j.Campeao, NomeFuncao(j.Funcao), NomeTime(j.Time)), j.Abates, j.Mortes, j.Assistencias,
 				map[bool]string{true: "vitória", false: "derrota"}[j.Venceu], sinalOuro(j.Nota), j.PosicaoNota, j.MortesCaras, difOuTraco(j.DifOuro15))
+			if j.Papel.Papel != "" {
+				linha += "; papel: " + j.Papel.Frase
+			}
 		}
 		for _, m := range l.Momentos {
 			linha += fmt.Sprintf(" | [%s] %s", MinSeg(m.TMs), m.Frase)

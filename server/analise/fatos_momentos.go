@@ -144,6 +144,7 @@ func (f *fatos) momentoAbate(rt Retrato) MomentoChave {
 		m.Dados["objetivo_depois"] = im.objetivoDepois.nome
 		m.Dados["objetivo_depois_ms"] = im.objetivoDepois.t
 	}
+	f.visaoDoAbate(&m, rt)
 	// A frase.
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s morreu", f.quem(rt.Vitima))
@@ -182,6 +183,14 @@ func (f *fatos) momentoAbate(rt Retrato) MomentoChave {
 			motivos = append(motivos, fmt.Sprintf("antes de o inimigo levar %s aos %s", im.objetivoDepois.nome, MinSeg(im.objetivoDepois.t)))
 		}
 	}
+	for _, t := range m.Tags {
+		switch t {
+		case "atacante_nao_visto":
+			motivos = append(motivos, fmt.Sprintf("%s chegou sem ser visto pelo time da vítima", f.campeao(rt.Matador)))
+		case "cacador_nao_visto":
+			motivos = append(motivos, "sem ver o caçador inimigo antes")
+		}
+	}
 	if len(motivos) > 0 {
 		fmt.Fprintf(&b, "; %s", juntaE(motivos))
 	}
@@ -193,6 +202,56 @@ func (f *fatos) momentoAbate(rt Retrato) MomentoChave {
 	b.WriteString(").")
 	m.Frase = b.String()
 	return m
+}
+
+// visaoDoAbate: com passe de visão do time da vítima, para cada atacante
+// (matador e assistências do outro time) e para o caçador inimigo, "era visto
+// pelo time da vítima nos VisaoAntesMs antes do abate, e antes de chegar a
+// ela?" (visao.go). Vai em dados.visao_atacantes e dados.visao_cacador; as
+// etiquetas atacante_nao_visto (o matador, resposta firme "não" na janela ou
+// antes da chegada) e cacador_nao_visto deixam achar pela busca.
+func (f *fatos) visaoDoAbate(m *MomentoChave, rt Retrato) {
+	tv := f.timeDe[rt.Vitima]
+	if f.dp.visao == nil || tv == 0 {
+		return
+	}
+	vt, ok := f.dp.visao.DoObservador(tv)
+	if !ok || rt.TMs < vt.DeMs || rt.TMs > vt.AteMs+1000 {
+		return
+	}
+	de := max(0, rt.TMs-Param.VisaoAntesMs)
+	atac := []VisaoAntes{}
+	envolvido := map[int]bool{}
+	for _, p := range append([]int{rt.Matador}, rt.Assistencias...) {
+		if p <= 0 || f.timeDe[p] == tv || envolvido[p] {
+			continue
+		}
+		envolvido[p] = true
+		if r, ok := f.dp.visaoDoAtacante(vt, p, rt.Vitima, de, rt.TMs); ok {
+			atac = append(atac, r)
+			if p == rt.Matador && naoVisto(r) {
+				m.Tags = append(m.Tags, "atacante_nao_visto")
+			}
+		}
+	}
+	m.Dados["visao_atacantes"] = atac
+	for p, pos := range f.posDe {
+		if pos != "JUNGLE" || f.timeDe[p] != 300-tv {
+			continue
+		}
+		if r, ok := f.dp.visaoDoAtacante(vt, p, rt.Vitima, de, rt.TMs); ok {
+			m.Dados["visao_cacador"] = r
+			if naoVisto(r) {
+				m.Tags = append(m.Tags, "cacador_nao_visto")
+			}
+		}
+	}
+}
+
+// naoVisto: resposta firme de que ele não foi visto, na janela toda ou antes
+// de chegar à vítima.
+func naoVisto(r VisaoAntes) bool {
+	return r.Resposta == VistoNao || (r.AntesDaChegada != nil && r.AntesDaChegada.Resposta == VistoNao)
 }
 
 // lutas agrupa os abates seguidos (a menos de JanelaLutaTimeMs um do outro) em

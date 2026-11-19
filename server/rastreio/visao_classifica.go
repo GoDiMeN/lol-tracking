@@ -19,7 +19,31 @@ const (
 	VisVisivel       = "visivel"
 	VisFora          = "fora"
 	VisIndeterminado = "indeterminado"
+	// VisForaDoMapa: o JOGO tirou o campeão do mapa (Investida Alfa do Master
+	// Yi, teleporte em trânsito, montado no Arauto): não é alvo de visão, e
+	// não é "não deu para saber". Vem do passe do próprio jogador (trava
+	// perdida com a seleção nele, foraDoMapa em visao_arquivo.go); na
+	// 3305449546 o anel do Yi some do minimapa do próprio time nesses
+	// instantes (anéis − aliados vivos = 0 em 3% das capturas, contra 29% com
+	// ele à vista).
+	VisForaDoMapa = "fora_do_mapa"
 )
+
+// TimeDesenhadoPorCima: no minimapa, os retratos do vermelho (200) são
+// desenhados por cima dos do azul, nas DUAS visões. Medido na 3305449546
+// (descobertas 9.2): retrato azul com um vermelho à vista a menos de 14 px é
+// achado em 10% das capturas (visão azul, 756) e o vermelho ao lado de um
+// azul em 81%; na visão vermelha, o vermelho ao lado de um azul à vista é
+// achado em 100% (72) e o azul ao lado de um vermelho em 8% (917). Dentro do
+// mesmo time a ordem não é firme (o de número maior fica por cima em 63–97%
+// dos pares, não em todos): ali qualquer um pode cobrir o outro.
+const TimeDesenhadoPorCima = 200
+
+// podeCobrir: o retrato de um campeão do time de pode ficar por cima do de
+// um do time sob.
+func podeCobrir(de, sob int) bool {
+	return de == sob || (de == TimeDesenhadoPorCima && sob != TimeDesenhadoPorCima)
+}
 
 // Tolerâncias, em pixels do minimapa (1 px ≈ 44 unidades do mapa).
 const (
@@ -44,6 +68,15 @@ const (
 	// "base", logo depois de renascer) e não a de verdade, e os retratos se
 	// juntam; na 3305449546, 48–66% achados.
 	FonteConferencia = 2500.0
+	// ArcoExplicado: fração mínima das direções que faltam num arco que cai
+	// embaixo de um retrato que pode estar por cima (o resto é o erro da
+	// posição e do desenho). Abaixo disto o arco não vale (o círculo de um
+	// inibidor tem a falta em lugar nenhum de retrato).
+	ArcoExplicado = 0.85
+	// ArcoCobridorPx: a falta numa direção é explicada se o ponto do anel
+	// nela fica a menos disto do centro de um retrato por cima (o disco do
+	// retrato com o anel tem ~15,5 px; mais 1,5 de folga).
+	ArcoCobridorPx = 17.0
 	// DuvidaPx: um anel inimigo sem dono a menos disto do lugar do jogador
 	// pode ser ele mesmo com a posição atrasada: indeterminado.
 	DuvidaPx = 25.0
@@ -60,6 +93,8 @@ type PosicaoNoInstante struct {
 	TemPosicao bool
 	X, Y       float64
 	Morto      bool
+	// ForaDoMapa: sem posição porque o jogo o tirou do mapa (VisForaDoMapa).
+	ForaDoMapa bool
 }
 
 // ClassificacaoCaptura é o resultado de uma captura.
@@ -75,12 +110,20 @@ type ClassificacaoCaptura struct {
 	AliadosVivos, AliadosAchados int
 	// Sobras: anéis inimigos que não casaram com nenhum inimigo.
 	Sobras int
+	// PeloArco: inimigos dados como visíveis por um arco (anel parcial com a
+	// falta embaixo de um retrato por cima), não por um anel inteiro.
+	PeloArco map[int]bool
+	// PorOrdem: inimigos dados como "fora" só porque o retrato encostado é do
+	// time desenhado por baixo (TimeDesenhadoPorCima); antes da regra eram
+	// "coberto". A continuidade desfaz esse "fora" quando ele cai entre dois
+	// visíveis (desfazForaPorOrdem em visao_arquivo.go).
+	PorOrdem map[int]bool
 }
 
 // ClassificaCaptura decide a visibilidade de cada inimigo do observador
 // (100/200) numa captura. modoOK diz se o painel conferiu a névoa do time.
 func ClassificaCaptura(lt LeituraMinimapa, modoOK bool, observador int, js []PosicaoNoInstante) ClassificacaoCaptura {
-	c := ClassificacaoCaptura{Estados: map[int]string{}, Motivos: map[int]string{}}
+	c := ClassificacaoCaptura{Estados: map[int]string{}, Motivos: map[int]string{}, PeloArco: map[int]bool{}, PorOrdem: map[int]bool{}}
 	var inimigos []PosicaoNoInstante
 	// Retratos que podem cobrir o de um inimigo: os achados e os dos aliados
 	// do observador (desenhados sempre, mesmo quando a leitura não os achou).
@@ -170,14 +213,31 @@ func ClassificaCaptura(lt LeituraMinimapa, modoOK bool, observador int, js []Pos
 		}
 	}
 	c.Sobras = len(sobras)
+	arcoUsado := map[int]bool{}
 	for ji, j := range inimigos {
 		id := j.ParticipanteID
 		switch {
+		case !j.TemPosicao && j.ForaDoMapa:
+			c.Estados[id] = VisForaDoMapa
+			continue
 		case !j.TemPosicao:
 			c.Estados[id], c.Motivos[id] = VisIndeterminado, "sem_posicao"
 			continue
 		case hasKey(jogAnel, ji):
 			c.Estados[id] = VisVisivel
+			continue
+		}
+		// Só pode esconder o anel dele quem é desenhado por cima.
+		var porCima []MarcaMinimapa
+		embolado := emboladoComInimigos(j, js, observador)
+		for _, m := range cobrem {
+			if embolado || podeCobrir(m.Time, j.Time) {
+				porCima = append(porCima, m)
+			}
+		}
+		if ai, ok := arcoDoJogador(lt.Arcos, arcoUsado, j, porCima); ok {
+			arcoUsado[ai] = true
+			c.Estados[id], c.PeloArco[id] = VisVisivel, true
 			continue
 		}
 		// Sem anel no lugar dele. Antes de dizer "fora da visão":
@@ -189,7 +249,7 @@ func ClassificaCaptura(lt LeituraMinimapa, modoOK bool, observador int, js []Pos
 			motivo = "anel_sem_dono"
 		case pertoDeAlgum(sobras, j.X, j.Y, DuvidaPx):
 			motivo = "anel_sem_dono"
-		case pertoDeAlgum(cobrem, j.X, j.Y, OclusaoPx):
+		case pertoDeAlgum(porCima, j.X, j.Y, OclusaoPx):
 			motivo = "coberto"
 		case naBorda(j.X, j.Y):
 			motivo = "borda"
@@ -198,12 +258,73 @@ func ClassificaCaptura(lt LeituraMinimapa, modoOK bool, observador int, js []Pos
 			c.Estados[id], c.Motivos[id] = VisIndeterminado, motivo
 		} else {
 			c.Estados[id] = VisFora
+			c.PorOrdem[id] = pertoDeAlgum(cobrem, j.X, j.Y, OclusaoPx)
 		}
 	}
 	return c
 }
 
 func hasKey(m map[int]int, k int) bool { _, ok := m[k]; return ok }
+
+// emboladoComInimigos: além dos aliados do observador, há outro campeão do
+// time de j (vivo, com posição) a menos de OclusaoPx dele.
+func emboladoComInimigos(j PosicaoNoInstante, js []PosicaoNoInstante, observador int) bool {
+	for _, o := range js {
+		if o.ParticipanteID != j.ParticipanteID && o.Time != observador && !o.Morto && o.TemPosicao &&
+			replay.DistanciaMinimapa(o.X, o.Y, j.X, j.Y) < OclusaoPx {
+			return true
+		}
+	}
+	return false
+}
+
+// arcoDoJogador procura, entre os arcos do time de j ainda não usados, um a
+// até ToleranciaRetratoPx do lugar dele cuja falta caia (ArcoExplicado) embaixo
+// dos retratos que podem estar por cima (porCima). Devolve o índice.
+func arcoDoJogador(arcos []MarcaMinimapa, usados map[int]bool, j PosicaoNoInstante, porCima []MarcaMinimapa) (int, bool) {
+	melhor, dMelhor := -1, math.Inf(1)
+	for ai, a := range arcos {
+		if usados[ai] || a.Time != j.Time || a.Arco == 0 || a.Cobertura < 0.3 {
+			continue
+		}
+		d := replay.DistanciaMinimapa(a.X, a.Y, j.X, j.Y)
+		if d > ToleranciaRetratoPx || d >= dMelhor || !faltaExplicada(a, porCima) {
+			continue
+		}
+		melhor, dMelhor = ai, d
+	}
+	return melhor, melhor >= 0
+}
+
+// faltaExplicada: das direções em que o anel do arco não apareceu, ao menos
+// ArcoExplicado têm o ponto do anel embaixo de um retrato de porCima.
+func faltaExplicada(a MarcaMinimapa, porCima []MarcaMinimapa) bool {
+	ax, ay := replay.MapaParaMinimapa(a.X, a.Y, replay.LarguraRef, replay.AlturaRef)
+	var centros [][2]float64
+	for _, m := range porCima {
+		if replay.DistanciaMinimapa(m.X, m.Y, a.X, a.Y) < 1 {
+			continue // o próprio arco não se cobre
+		}
+		mx, my := replay.MapaParaMinimapa(m.X, m.Y, replay.LarguraRef, replay.AlturaRef)
+		centros = append(centros, [2]float64{mx, my})
+	}
+	faltam, explicadas := 0, 0
+	for k := 0; k < DirecoesArco; k++ {
+		if a.Arco&(1<<k) != 0 {
+			continue
+		}
+		faltam++
+		ang := 2 * math.Pi * float64(k) / DirecoesArco
+		px, py := ax+replay.RaioRetratoMinimapa*math.Cos(ang), ay+replay.RaioRetratoMinimapa*math.Sin(ang)
+		for _, c := range centros {
+			if math.Hypot(px-c[0], py-c[1]) < ArcoCobridorPx {
+				explicadas++
+				break
+			}
+		}
+	}
+	return faltam > 0 && float64(explicadas) >= ArcoExplicado*float64(faltam)
+}
 
 // conferivel diz se o aliado j entra na conferência dos aliados: longe da
 // própria fonte e sem outro campeão vivo com posição a menos de SobrepostoPx

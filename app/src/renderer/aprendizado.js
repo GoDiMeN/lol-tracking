@@ -40,9 +40,17 @@ export const ESTADOS_PARTIDA = {
   rastreando: { classe: 'ac', texto: 'rastreando' },
   pausada: { classe: 'at', texto: 'pausada' },
   concluida: { classe: 'ok', texto: 'pronta' },
+  // Sobrou passe ruim (também na refação automática): não vale até refazer.
+  incompleta: { classe: 'at', texto: 'incompleta' },
   erro: { classe: 'cr', texto: 'não deu' },
   cancelada: { classe: 'n', texto: 'cancelada' },
 };
+
+// textoRefazer: o rótulo do botão da partida incompleta (o mesmo "refazer N passes ruins" da tela
+// da partida).
+export function textoRefazer(n) {
+  return `refazer ${n} ${n === 1 ? 'passe ruim' : 'passes ruins'}`;
+}
 
 export const ESTADOS_ELO = {
   pendente: { classe: 'n', texto: 'esperando' },
@@ -60,6 +68,7 @@ const DESCARTES = {
   sem_historico: ['sem histórico', 'sem histórico'],
   sem_partida: ['sem partida rastreável', 'sem partida rastreável'],
   outra_funcao: ['de outra função', 'de outra função'],
+  rota_completa: ['de rota já completa', 'de rota já completa'],
 };
 
 // estimativaEstudo: segundos para rastrear n partidas de um estudo (só o jogador: um passe por partida).
@@ -114,3 +123,36 @@ export function textoDescartes(descartes = {}) {
 
 // fracao: 0,75 → "75%".
 export const porcento = (f) => `${Math.round((Number(f) || 0) * 100)}%`;
+
+// matrizRotas: a matriz elo × rota da coleta (servidor: elos[].funcoes, achados/alvo por rota). Com cota,
+// as colunas são as rotas pedidas; sem cota, as cinco (alvo 0: só os achados). Cada célula: texto
+// "1/2" (+ " · 1 aprov." quando houve aproveitado) e se a cota encheu.
+export function matrizRotas(d) {
+  const comCota = (d?.coleta?.funcoes || []).length > 0;
+  const colunas = comCota ? d.coleta.funcoes : FUNCOES.map(([f]) => f);
+  const linhas = (d?.elos || []).map((e) => {
+    const por = new Map((e.funcoes || []).map((c) => [c.funcao, c]));
+    const celulas = colunas.map((f) => {
+      const c = por.get(f) || { achados: 0, alvo: 0, aproveitados: 0 };
+      const base = comCota ? `${c.achados}/${c.alvo}` : String(c.achados);
+      return { funcao: f, texto: c.aproveitados ? `${base} · ${c.aproveitados} aprov.` : base, cheia: comCota && c.achados >= c.alvo };
+    });
+    return { elo: e.elo, nome: e.nome || nomeElo(e.elo), celulas, aproveitados: e.aproveitados || 0 };
+  });
+  return { colunas, comCota, linhas };
+}
+
+// pedidoRotas: o pedaço do POST da coleta que diz as rotas. Nenhuma marcada = sem cota (qualquer
+// função até jogadores_por_elo); com rotas, a cota de jogadoresPorRota em cada uma.
+export function pedidoRotas(rotas, jogadoresPorRota) {
+  const l = FUNCOES.map(([f]) => f).filter((f) => rotas.has(f));
+  if (!l.length) return {};
+  return { funcoes: l, jogadores_por_funcao: Number(jogadoresPorRota) || 1 };
+}
+
+// textoPontuacao: "71,5 = 61,5 do jogador + 10 de 1 aproveitável" (os dois componentes da partida).
+export function textoPontuacao(p) {
+  const n = (v) => String(Math.round((Number(v) || 0) * 10) / 10).replace('.', ',');
+  if (!p?.aproveitaveis) return n(p?.pontuacao);
+  return `${n(p.pontuacao)} = ${n(p.pontuacao_jogador)} do jogador + ${n(p.pontuacao_aproveitaveis)} de ${p.aproveitaveis} ${p.aproveitaveis === 1 ? 'aproveitável' : 'aproveitáveis'}`;
+}

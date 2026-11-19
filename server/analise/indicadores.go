@@ -100,8 +100,8 @@ var Vocabulario = func() []DefIndicador {
 		v = append(v, DefIndicador{"pct_visivel_inimigo_" + f, "% do tempo vivo à vista do inimigo (" + nomesFase[f] + ")", "%", "visao",
 			"rastreados", "", "do passe de visão do time inimigo (minimapa): tempo à vista ÷ (à vista + fora da visão); o indeterminado fica de fora"})
 	}
-	v = append(v, DefIndicador{"ganks_fora_da_visao_n", "Ganks começados fora da visão do inimigo", "n", "visao", "cacador", "maior",
-		"trechos gankando que começaram com ele fora da visão do time inimigo (passe de visão)"})
+	v = append(v, DefIndicador{"ganks_fora_da_visao_n", "Ganks sem ser visto pelo inimigo", "n", "visao", "cacador", "maior",
+		"trechos gankando em que ele não foi visto pelo time inimigo da aproximação até a luta (passe de visão; o gank sem leitura bastante fica de fora e deixa o valor aproximado)"})
 	rotGrupo := map[string]string{"rota_propria": "na própria rota", "outra_rota": "em outra rota", "rio": "no rio", "covas": "nas covas",
 		"selva_propria": "na própria selva", "selva_inimiga": "na selva inimiga", "base_propria": "na base", "base_inimiga": "na base inimiga"}
 	for _, f := range Fases {
@@ -294,7 +294,7 @@ func (d *dadosPartida) indicadoresLinha(c *coleta) {
 func (d *dadosPartida) wardsAte14(pid int) []Momento {
 	ms := []Momento{}
 	for _, w := range d.wards {
-		if w.quem == pid && w.tMs < Param.FaseRotasMs {
+		if w.quem == pid && w.tMs < Param.FaseRotasMs && ContaComoSentinela(w.tipo) {
 			ms = append(ms, Momento{w.tMs, fmt.Sprintf("sentinela (%s) aos %s", w.tipo, MinSeg(w.tMs))})
 		}
 	}

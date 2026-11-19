@@ -18,6 +18,10 @@ import {
   filtraFuncao,
   destaques,
   numerosLiga,
+  matrizRotas,
+  pedidoRotas,
+  textoPontuacao,
+  textoRefazer,
 } from '../aprendizado.js';
 import { el, botao, link, pilula, cartao, barra, carregando, erroNaTela, confirmaNoBotao, toast, retrato } from '../ui.js';
 
@@ -177,11 +181,14 @@ export function montaCartao(ctx) {
 
     const fase = c.fase === 'descoberta' ? 'procurando jogadores' : c.fase === 'rastreio' ? 'rastreando partidas' : 'fim';
     const nomesElos = c.elos.map(nomeElo).join(', ');
-    const soFuncao = c.funcao ? ` · só ${posicao(c.funcao)}` : '';
+    const soFuncao = (c.funcoes || []).length
+      ? ` · ${plural(c.jogadores_por_funcao, 'jogador', 'jogadores')} por rota (${c.funcoes.map(posicao).join(', ')})`
+      : '';
     const amostra = c.amostragem ? ` · por amostragem, ${plural(c.jogadores_por_elo, 'jogador', 'jogadores')} por elo` : '';
+    const aprov = c.aproveitar ? ` · aproveitando outros da partida (${plural(c.aproveitados || 0, 'aproveitado', 'aproveitados')})` : '';
     const opcoes = c.so_descobrir
       ? `${nomesElos}${soFuncao}${amostra} · só descobrir jogadores (nada é rastreado) · ${c.regiao_nome}`
-      : `${c.elos.length} elos${amostra} · ${plural(c.partidas_por_jogador, 'partida', 'partidas')} por jogador · ${c.quem === 'todos' ? 'os 10 de cada partida' : 'só o jogador'} · ${numero(c.velocidade)}× · ${c.regiao_nome}`;
+      : `${c.elos.length} elos${soFuncao}${amostra}${aprov} · ${plural(c.partidas_por_jogador, 'partida', 'partidas')} por jogador · ${c.quem === 'todos' ? 'os 10 de cada partida' : 'só o jogador'} · ${numero(c.velocidade)}× · ${c.regiao_nome}`;
     partes.push(el('div', 'linha pad', [el('b', '', `Coleta nº ${c.id}`), pilula(est.texto, est.classe), el('span', 'sub', `${fase} · ${opcoes}`), acoes]));
     if (!c.so_descobrir) {
       partes.push(
@@ -199,7 +206,7 @@ export function montaCartao(ctx) {
       filtroFuncao = f;
       desenha();
     };
-    partes.push(tabelaElos(d), tabelaJogadores(d, filtroFuncao, mudaFiltro, ctx));
+    partes.push(tabelaElos(d), quadroRotas(d), tabelaJogadores(d, filtroFuncao, mudaFiltro, ctx));
     if (!c.so_descobrir) partes.push(listaPartidas(d), quadroEspaco(espaco));
     corpo.replaceChildren(...partes);
   }
@@ -247,6 +254,28 @@ function tabelaElos(d) {
   return cartao('Por elo', null, el('div', 'rolar', [tab]));
 }
 
+// quadroRotas: a matriz elo × rota (achados/alvo; com os aproveitados de cada célula).
+function quadroRotas(d) {
+  const m = matrizRotas(d);
+  if (!m.linhas.length) return null;
+  const tab = el('table', 'tabela compacta');
+  tab.append(el('thead', '', [el('tr', '', [el('th', '', 'Elo'), ...m.colunas.map((f) => el('th', 'num', posicao(f)))])]));
+  const tb = el('tbody');
+  for (const l of m.linhas) {
+    tb.append(
+      el('tr', '', [
+        el('td', '', l.nome),
+        ...l.celulas.map((c) => el('td', `num${c.cheia ? ' tx-ok' : ''}`, c.texto)),
+      ]),
+    );
+  }
+  tab.append(tb);
+  const sub = m.comCota
+    ? `achados/alvo por rota · cada um conta na função principal dele · ${plural(d.coleta.aproveitados || 0, 'aproveitado', 'aproveitados')} da partida de outro`
+    : `achados por rota (sem cota) · ${plural(d.coleta.aproveitados || 0, 'aproveitado', 'aproveitados')} da partida de outro`;
+  return cartao('Por elo e rota', sub, el('div', 'rolar', [tab]));
+}
+
 function tabelaJogadores(d, filtro, mudaFiltro, ctx) {
   if (!d.jogadores.length) return cartao('Jogadores', null, el('div', 'estado-tela vazio', 'Nenhum jogador escolhido ainda.'));
   // Filtro por função: o caso de uso é achar "o caçador que mais sobe".
@@ -284,6 +313,7 @@ function tabelaJogadores(d, filtro, mudaFiltro, ctx) {
       m.maisSobe ? pilula('o que mais está subindo', 'ok', 'o primeiro na ordem de subida deste elo (na lista mostrada)') : null,
       m.recemChegado ? pilula('recém-chegado que mais sobe', 'ac', 'o primeiro com o sinal freshBlood da Riot neste elo') : j.fresh_blood ? pilula('recém-chegado', 'n', 'sinal freshBlood da Riot: chegou há pouco ao elo') : null,
       j.hot_streak ? pilula('sequência de vitórias', 'n', 'sinal hotStreak da Riot') : null,
+      j.origem === 'aproveitado' ? pilula('aproveitado', 'ac', `${j.origem_texto}: rastreado na mesma abertura do replay`) : null,
     ]);
     const rastreaveis = j.vitorias_rastreaveis + j.derrotas_rastreaveis;
     const criar =
@@ -365,6 +395,29 @@ function abreDialogoEstudo(ctx, j) {
   dlg.showModal();
 }
 
+// botaoRefazRuins: o "refazer N passes ruins" da tela da partida, para a partida incompleta da
+// coleta ou do estudo (servidor: aprendizado/incompleta.go). Põe um passe novo de cada jogador que
+// só tem passe ruim; ao ficar bom, a partida volta a "pronta" sozinha.
+export function botaoRefazRuins(p, aoFim) {
+  const b = botao(
+    textoRefazer(p.passes_ruins),
+    'mini',
+    async () => {
+      b.disabled = true;
+      try {
+        const r = await api.refazRuins(p.game_id);
+        toast(`Refazendo ${plural(r.participantes.length, 'passe', 'passes')} da partida ${p.game_id} no rastreio ${r.rastreio.id}.`, 'ok');
+        aoFim?.();
+      } catch (err) {
+        toast(err.message, 'erro');
+        b.disabled = false;
+      }
+    },
+    'O cliente do LoL precisa estar aberto e fora de partida; o replay abre, refaz só esses passes e fecha.',
+  );
+  return b;
+}
+
 function listaPartidas(d) {
   if (!d.partidas.length) return cartao('Partidas', null, el('div', 'estado-tela vazio', 'Nenhuma partida escolhida ainda.'));
   const nomes = new Map(d.jogadores.map((j) => [j.id, j.riot_id]));
@@ -377,17 +430,21 @@ function listaPartidas(d) {
     tb.append(
       el('tr', '', [
         el('td', '', nomeElo(p.elo)),
-        el('td', '', nomes.get(p.jogador_id) || ''),
+        el('td', '', [el('span', '', nomes.get(p.jogador_id) || ''), p.aproveitado ? pilula('aproveitado', 'ac', 'passe a mais na abertura do replay de outro jogador da coleta') : null]),
         el('td', '', `${p.campeao} · ${kda(p)} · ${duracao(p.duracao_s)}`),
-        el('td', 'num', numero(p.pontuacao)),
+        el('td', 'num', [Object.assign(el('span', '', numero(p.pontuacao)), { title: textoPontuacao(p) })]),
         el('td', '', [pilula(s.texto + passes, s.classe, p.erro || undefined), p.erro ? el('small', 'sub', ` ${p.erro}`) : null]),
-        el('td', '', p.estado === 'concluida' ? link('Abrir', `#partida/${p.game_id}/${p.participante_id}`, 'btn mini') : null),
+        // As partidas da coleta só aparecem aqui (não em Partidas rastreadas): mapa e partida já no
+        // ponto de vista do jogador de referência.
+        el('td', '', p.estado === 'concluida' ? [el('div', 'linha', [link('Mapa com play', `#replay/${p.game_id}`, 'btn mini'), link('Abrir', `#partida/${p.game_id}/${p.participante_id}`, 'btn mini')])]
+          : p.estado === 'incompleta' && p.passes_ruins > 0 ? [el('div', 'linha', [botaoRefazRuins(p), link('Abrir', `#partida/${p.game_id}/${p.participante_id}`, 'btn mini')])] : null),
       ]),
     );
   }
   tab.append(tb);
   const c = d.coleta;
-  return cartao('Partidas', `${c.partidas_concluidas} de ${c.partidas_total} prontas${c.partidas_com_erro ? ` · ${c.partidas_com_erro} não deram` : ''}`, el('div', 'rolar', [tab]));
+  const extra = `${c.partidas_incompletas ? ` · ${c.partidas_incompletas} incompletas` : ''}${c.partidas_com_erro ? ` · ${c.partidas_com_erro} não deram` : ''}`;
+  return cartao('Partidas', `${c.partidas_concluidas} de ${c.partidas_total} prontas${extra}`, el('div', 'rolar', [tab]));
 }
 
 function quadroEspaco(e) {
@@ -499,11 +556,45 @@ function abreDialogo(ctx, aoComecar) {
     atualiza();
   });
   soLab.append(soCb, el('span', '', 'Só descobrir jogadores (não baixa nem rastreia nada)'));
-  // Só uma função (ex.: selva): a descoberta pula quem joga outra, até achar 10 desta.
-  const funcaoSel = el('select', 'campo');
-  funcaoSel.setAttribute('aria-label', 'Só jogadores desta função');
-  funcaoSel.append(Object.assign(el('option', '', 'qualquer função'), { value: '' }));
-  for (const [v, t] of FUNCOES) funcaoSel.append(Object.assign(el('option', '', `só ${t}`), { value: v }));
+  // Cota por rota: o melhor (ou os N melhores) de CADA rota em cada elo. Nenhuma marcada = qualquer
+  // função até 10 por elo. Cada jogador conta na função principal dele.
+  const rotas = new Set();
+  const rotasFs = el('fieldset', 'dlg-vel');
+  rotasFs.append(el('legend', '', 'Rotas (a cota de cada uma em cada elo)'));
+  for (const [v, t] of FUNCOES) {
+    const lab = el('label', 'opcao');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.value = v;
+    cb.addEventListener('change', () => {
+      if (cb.checked) rotas.add(v);
+      else rotas.delete(v);
+      jpfLab.hidden = !rotas.size;
+      atualiza();
+    });
+    lab.append(cb, el('span', '', t));
+    rotasFs.append(lab);
+  }
+  const jpf = el('select', 'campo');
+  jpf.setAttribute('aria-label', 'Jogadores por rota em cada elo');
+  for (const n of [1, 2, 3, 4]) jpf.append(Object.assign(el('option', '', `${plural(n, 'jogador', 'jogadores')} por rota`), { value: String(n) }));
+  jpf.value = '2';
+  jpf.addEventListener('change', atualiza);
+  const jpfLab = el('label', 'campo-rotulado', [el('span', 'sub', 'Quantos de cada rota'), jpf]);
+  jpfLab.hidden = true;
+  rotasFs.append(jpfLab, el('p', 'sub', 'Nenhuma marcada: qualquer função. Com rotas: em cada elo, os melhores de cada uma (pela ordem de subida, ou por amostragem).'));
+  // Aproveitar: na partida escolhida, quem também serve (mesmo critério, rota com vaga) é rastreado na mesma abertura.
+  let aproveitar = true;
+  const apLab = el('label', 'opcao');
+  const apCb = el('input');
+  apCb.type = 'checkbox';
+  apCb.checked = true;
+  apCb.addEventListener('change', () => {
+    aproveitar = apCb.checked;
+    atualiza();
+  });
+  apLab.append(apCb, el('span', '', 'Aproveitar outros da mesma partida (confere o elo dos outros 9 na Riot; quem servir é rastreado na mesma abertura do replay)'));
+  rotasFs.append(apLab);
   // Por amostragem: qualquer jogador do meio do elo com partida no patch atual (para depois de uma troca de patch).
   let amostragem = false;
   const amLab = el('label', 'opcao');
@@ -525,7 +616,6 @@ function abreDialogo(ctx, aoComecar) {
   soFs.append(
     el('legend', '', 'O que fazer'),
     soLab,
-    el('label', 'campo-rotulado', [el('span', 'sub', 'Função principal dos jogadores'), funcaoSel]),
     el('p', 'sub', 'Bom para escolher um jogador e criar um estudo dele: a lista mostra os números da liga, a função e quantas partidas dá para rastrear.'),
     amLab,
     jpeLab,
@@ -553,7 +643,7 @@ function abreDialogo(ctx, aoComecar) {
       estimativa.textContent = `Só procura os jogadores de ${plural(marcados.size, 'elo', 'elos')} (até ${amostragem ? 200 : 60} olhados em cada): alguns minutos, sem abrir o jogo.`;
       return;
     }
-    const jogadoresPorElo = amostragem ? Number(jpe.value) : 10;
+    const jogadoresPorElo = rotas.size ? rotas.size * Number(jpf.value) : amostragem ? Number(jpe.value) : 10;
     const { passes, segundos } = estimativaColeta({ elos: [...marcados], partidasPorJogador: Number(ppj.value), quem, velocidade, jogadoresPorElo });
     estimativa.textContent = `Até ${plural(passes, 'jogador rastreado', 'jogadores rastreados')}: leva ${tempoHumano(segundos)} (~${numero(7.5 * (4 / velocidade))} min cada), com o jogo aberto.`;
   }
@@ -570,9 +660,10 @@ function abreDialogo(ctx, aoComecar) {
         quem,
         velocidade,
         so_descobrir: soDescobrir,
-        funcao: funcaoSel.value,
         amostragem,
         jogadores_por_elo: amostragem ? Number(jpe.value) : 10,
+        aproveitar,
+        ...pedidoRotas(rotas, jpf.value),
       });
       dlg.close();
       toast(soDescobrir ? 'Procurando os jogadores de cada elo (nada será rastreado).' : 'Coleta começou: primeiro ela procura os jogadores de cada elo.');
@@ -585,7 +676,7 @@ function abreDialogo(ctx, aoComecar) {
     }
   });
 
-  form.append(reg, elosFs, soFs, quantas, quemFs, velFs, estimativa, el('p', 'aviso-linha', LEMBRETE), erro, el('div', 'linha dlg-botoes', [cancelar, confirmar]));
+  form.append(reg, elosFs, rotasFs, soFs, quantas, quemFs, velFs, estimativa, el('p', 'aviso-linha', LEMBRETE), erro, el('div', 'linha dlg-botoes', [cancelar, confirmar]));
   dlg.append(h, el('p', 'sub', 'A coleta procura os jogadores, escolhe as partidas e rastreia uma por vez.'), form);
   document.body.append(dlg);
   dlg.addEventListener('close', () => dlg.remove());

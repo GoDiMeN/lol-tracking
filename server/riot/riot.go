@@ -7,6 +7,7 @@ package riot
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/http"
@@ -47,6 +48,9 @@ type Cliente struct {
 	mu     sync.Mutex
 	quando time.Time
 	ultimo Estado
+	// conferida: o resumo (sha256) da chave que deu o resultado guardado. Se o
+	// token.txt muda, o resultado guardado não vale para a chave nova.
+	conferida [32]byte
 }
 
 // Validade do resultado: a chave de desenvolvimento vence em 24 h, e conferir a
@@ -69,6 +73,8 @@ func (c *Cliente) chave() string {
 }
 
 // Estado devolve se há chave e se ela vale, conferindo no máximo a cada 10 min.
+// Chave trocada no token.txt é conferida de novo na hora (o resultado guardado
+// era da chave velha).
 func (c *Cliente) Estado(ctx context.Context) Estado {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -79,13 +85,14 @@ func (c *Cliente) Estado(ctx context.Context) Estado {
 	if c.modoTeste {
 		return Estado{Configurada: true, Detalhe: "modo teste: a chave não é conferida"}
 	}
-	if !c.quando.IsZero() && time.Since(c.quando) < validade {
+	resumo := sha256.Sum256([]byte(chave))
+	if !c.quando.IsZero() && time.Since(c.quando) < validade && resumo == c.conferida {
 		return c.ultimo
 	}
 	e := c.confere(ctx, chave)
 	e.Configurada = true
 	e.VerificadaEm = time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	c.quando, c.ultimo = time.Now(), e
+	c.quando, c.ultimo, c.conferida = time.Now(), e, resumo
 	return e
 }
 

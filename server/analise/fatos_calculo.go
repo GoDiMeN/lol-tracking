@@ -59,11 +59,15 @@ type fatos struct {
 	trechos  map[int][]trechoSimples
 	mortes   map[int]*infoMorte // por n do retrato
 	ms       []MomentoChave
+	// selva: os tempos dos acampamentos e épicos do patch da partida.
+	selva        TemposSelvaPatch
+	selvaCoberta bool
 }
 
 func novoFatos(dp *dadosPartida, retratos []Retrato, est *campeao.Estaticos) *fatos {
 	f := &fatos{dp: dp, retratos: retratos, est: est, timeDe: map[int]int{}, posDe: map[int]string{}, placas: map[int]int{},
 		trechos: map[int][]trechoSimples{}, mortes: map[int]*infoMorte{}}
+	f.selva, f.selvaCoberta = TemposDaSelva(dp.pt.Patch)
 	for _, p := range dp.pt.Participantes {
 		f.timeDe[p.ParticipanteID] = p.Time
 		f.posDe[p.ParticipanteID] = p.Posicao

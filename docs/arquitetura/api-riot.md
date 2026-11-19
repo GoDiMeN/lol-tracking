@@ -34,3 +34,22 @@ O ranking **nunca** vem do LCU (a lista de rotas permitidas não tem rota de ran
 - Limite (`riot/liga.go`): por host, 20 pedidos/s e 100 a cada 2 min, contados no cliente; 429/503 obedecem `Retry-After`
   (até 4 tentativas). Uma coleta dos 8 elos gasta ~8 pedidos de liga por elo abaixo de Mestre, 1 por elo do ápice e 1 de conta
   por candidato olhado (10 a 60 por elo).
+
+## Ranking do Lane (match-v5; `server/riot/partidas.go`, `server/ranking`)
+
+Para o ranking rodar num servidor sem cliente do LoL (fonte `riot`). Mesmo limitador por host da league-v4.
+
+- `GET {roteamento}/lol/match/v5/matches/by-puuid/{puuid}/ids?queue=420&start=0&count=N` → ids `BR1_<gameId>`, da mais nova
+  para a mais velha (`count` até 100). O ranking pede `teto + 10`.
+- `GET {roteamento}/lol/match/v5/matches/{id}` → `info.gameVersion`, `info.queueId`, `info.gameDuration` (s),
+  `info.participants[]` com `puuid` (o da Riot, o mesmo da league-v4), `riotIdGameName`, `riotIdTagline`, `teamPosition`,
+  `championId`, `win`, `gameEndedInEarlySurrender`. Os 10 vão para o cache: o próximo candidato que esteve na partida não paga.
+- **Orçamento** (`server/ranking/orcamento.go`, `GET /api/rankings/orcamento`; o gargalo é o "100 a cada 2 min" do `americas`):
+  - fonte `riot`: por candidato `1 + teto + 1` pedidos no pior caso (ids, as partidas do patch, a primeira de patch velho que
+    encerra). 1 elo × 5 rotas (os mesmos candidatos servem às 5) com 60 candidatos × 20 partidas: 8 à liga (abaixo de Mestre)
+    + 1320 à match-v5 ≈ **24 min**; Desafiante inteiro (300): 1 + 6600 ≈ **130 min** no pior caso, ~82 min estimados com 40%
+    das partidas no cache (eles jogam entre si; estimativa não medida).
+  - fonte `lcu`: 1 pedido de conta por candidato (60 cabem numa janela) e o histórico pelo cliente (sem cota; ~3 s cada,
+    estimado): ~3 min para 60.
+- Não medido com a chave de verdade: a `teamPosition` em partida com troca de rota, o tempo real do `americas` com a chave
+  dividida com a linha do tempo dos passes (que também vai ao `americas`).

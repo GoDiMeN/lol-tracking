@@ -18,8 +18,10 @@ import (
 //
 //	visao-p<passe>-capturas.tsv  as capturas lidas, uma por linha:
 //	                              "t_ms \t modo \t retratos \t sentinelas"
-//	                              (marcas como em textoMarcas). É o dado bruto:
-//	                              não depende das posições rastreadas.
+//	                              (marcas como em textoMarcas), mais uma 5ª
+//	                              coluna com os arcos desde 2026-11-18 (arquivo
+//	                              velho tem 4). É o dado bruto: não depende
+//	                              das posições rastreadas.
 //	visao.json                    o resultado (VisaoDaPartida): para cada time
 //	                              observador, por inimigo, os intervalos
 //	                              visível / fora da visão / indeterminado, e as
@@ -55,6 +57,8 @@ func textoCapturas(cs []CapturaVisao) []byte {
 		b.WriteString(textoMarcas(c.Retratos))
 		b.WriteByte('\t')
 		b.WriteString(textoMarcas(c.Sentinelas))
+		b.WriteByte('\t')
+		b.WriteString(textoMarcas(c.Arcos))
 		b.WriteByte('\n')
 	}
 	return b.Bytes()
@@ -83,7 +87,7 @@ func capturasDoTexto(texto []byte) ([]CapturaVisao, error) {
 			g = replay.GeometriaMinimapa{X0: v[0], XPx: v[1], Y0: v[2], YPx: v[3]}
 			continue
 		}
-		if len(p) != 4 {
+		if len(p) != 4 && len(p) != 5 {
 			return nil, fmt.Errorf("capturas da visão: linha %d fora do formato", n+1)
 		}
 		t, err := strconv.ParseInt(string(p[0]), 10, 64)
@@ -97,9 +101,15 @@ func capturasDoTexto(texto []byte) ([]CapturaVisao, error) {
 		if c.Sentinelas, err = marcasDoTexto(string(p[3])); err != nil {
 			return nil, fmt.Errorf("capturas da visão: linha %d: %w", n+1, err)
 		}
+		if len(p) == 5 {
+			if c.Arcos, err = marcasDoTexto(string(p[4])); err != nil {
+				return nil, fmt.Errorf("capturas da visão: linha %d: %w", n+1, err)
+			}
+		}
 		if g != replay.GeometriaMinimapaAtual {
 			reprojeta(c.Retratos, g)
 			reprojeta(c.Sentinelas, g)
+			reprojeta(c.Arcos, g)
 		}
 		cs = append(cs, c)
 	}
@@ -144,6 +154,11 @@ type VisaoDoTime struct {
 	// Aviso: frase quando a conferência pelos aliados ficou abaixo de
 	// AliadosMinimo (a posição rastreada ou a geometria não confere).
 	Aviso string `json:"aviso"`
+	// PctIndeterminado e PctInferido: do tempo dos inimigos vivos e no mapa
+	// com captura (visível + fora + indeterminado), quanto ficou
+	// indeterminado e quanto foi herdado pela continuidade (em %).
+	PctIndeterminado float64 `json:"pct_indeterminado"`
+	PctInferido      float64 `json:"pct_inferido"`
 }
 
 // AliadosMinimo: abaixo desta fração de retratos do próprio time achados no
@@ -159,6 +174,17 @@ type VisibilidadeJogador struct {
 	Visivel        [][2]int64 `json:"visivel"`
 	Fora           [][2]int64 `json:"fora"`
 	Indeterminado  [][2]int64 `json:"indeterminado"`
+	// ForaDoMapa: o jogo o tirou do mapa (VisForaDoMapa: Investida Alfa,
+	// teleporte em trânsito): não é alvo de visão. Fora dos outros três.
+	ForaDoMapa [][2]int64 `json:"fora_do_mapa"`
+	// Inferido: os pedaços de Visivel e Fora que não foram lidos e sim
+	// herdados pela continuidade (inferirTrechos): um trecho curto sem
+	// leitura firme entre duas leituras iguais. Estão DENTRO de Visivel/Fora;
+	// quem quer só leitura firme desconta estes.
+	Inferido [][2]int64 `json:"inferido"`
+	// PeloArcoMs: quanto do Visivel veio de um arco (anel parcial com a falta
+	// embaixo de um retrato por cima), e não de um anel inteiro.
+	PeloArcoMs int64 `json:"pelo_arco_ms"`
 	// Motivos: ms indeterminados por motivo (painel, aliados, sem_posicao,
 	// anel_sem_dono, coberto, borda).
 	Motivos map[string]int64 `json:"motivos"`
@@ -183,13 +209,21 @@ func (v VisibilidadeJogador) EstadoEm(t int64) string {
 	for _, l := range []struct {
 		e  string
 		is [][2]int64
-	}{{VisVisivel, v.Visivel}, {VisFora, v.Fora}, {VisIndeterminado, v.Indeterminado}} {
-		i := sort.Search(len(l.is), func(k int) bool { return l.is[k][1] > t })
-		if i < len(l.is) && l.is[i][0] <= t {
+	}{{VisVisivel, v.Visivel}, {VisFora, v.Fora}, {VisIndeterminado, v.Indeterminado}, {VisForaDoMapa, v.ForaDoMapa}} {
+		if dentro(l.is, t) {
 			return l.e
 		}
 	}
 	return ""
+}
+
+// InferidoEm diz se o estado no instante t foi herdado (Inferido).
+func (v VisibilidadeJogador) InferidoEm(t int64) bool { return dentro(v.Inferido, t) }
+
+// dentro: t cai num dos intervalos [de, ate) (em ordem e sem sobreposição).
+func dentro(is [][2]int64, t int64) bool {
+	i := sort.Search(len(is), func(k int) bool { return is[k][1] > t })
+	return i < len(is) && is[i][0] <= t
 }
 
 // Jogador devolve a visibilidade do participante para este observador.
@@ -249,10 +283,47 @@ type fonteDePosicoes struct {
 	times   map[int]int
 	amostra map[int][]Amostra
 	estados map[int][]EstadoJogador
+	// foraDoMapa: por jogador, os trechos [de, ate) em que o jogo o tirou do
+	// mapa (trechosForaDoMapa).
+	foraDoMapa map[int][][2]int64
+}
+
+// trechosForaDoMapa: os trechos sem a câmera em que o JOGO tirou o jogador
+// do mapa (descobertas 8.1): pelo menos 2 amostras seguidas sem leitura boa,
+// vivo, e as primeiras (até AmostrasSelecionadoNoComeco) com a trava perdida
+// e a seleção ainda nele. Na 3305449546: 101 trechos do Master Yi (a
+// Investida Alfa, 1,0–1,6 s) e 13 de outros (teleportes de 2–7 s); a perda
+// de trava solta (1 amostra) e a com a seleção fora não entram. Vai da
+// primeira amostra sem câmera até a primeira leitura boa depois.
+func trechosForaDoMapa(as []Amostra) [][2]int64 {
+	var out [][2]int64
+	for i := 0; i < len(as); {
+		if LeituraBoa(as[i]) || as[i].Morto {
+			i++
+			continue
+		}
+		j := i
+		for j < len(as) && !LeituraBoa(as[j]) && !as[j].Morto {
+			j++
+		}
+		ok := j-i >= 2
+		for k := i; ok && k < j && k < i+AmostrasSelecionadoNoComeco; k++ {
+			ok = as[k].TravaPerdida && as[k].SelecaoOK
+		}
+		if ok {
+			fim := as[j-1].TMs
+			if j < len(as) {
+				fim = as[j].TMs
+			}
+			out = append(out, [2]int64{as[i].TMs, fim})
+		}
+		i = j
+	}
+	return out
 }
 
 func carregaPosicoes(db *banco.DB, gameID int64) (fonteDePosicoes, error) {
-	f := fonteDePosicoes{times: map[int]int{}, amostra: map[int][]Amostra{}}
+	f := fonteDePosicoes{times: map[int]int{}, amostra: map[int][]Amostra{}, foraDoMapa: map[int][][2]int64{}}
 	linhas, err := db.Query(`SELECT participante_id, time FROM participantes WHERE game_id = ?`, gameID)
 	if err != nil {
 		return f, err
@@ -278,6 +349,7 @@ func carregaPosicoes(db *banco.DB, gameID int64) (fonteDePosicoes, error) {
 		}
 		if len(as) > 0 {
 			f.amostra[pid] = as
+			f.foraDoMapa[pid] = trechosForaDoMapa(as)
 		}
 	}
 	f.estados, err = EstadosDaPartida(db, gameID)
@@ -339,6 +411,9 @@ func (f fonteDePosicoes) noInstante(pid int, t int64) PosicaoNoInstante {
 		case perto >= 0 && boaPosicao(as[perto]) && abs64(as[perto].TMs-t) <= 300:
 			p.X, p.Y, p.TemPosicao = *as[perto].X, *as[perto].Y, true
 		}
+		if !p.TemPosicao && !p.Morto && dentro(f.foraDoMapa[pid], t) {
+			p.ForaDoMapa = true
+		}
 		if perto >= 0 && abs64(as[perto].TMs-t) <= 1500 {
 			return p
 		}
@@ -363,38 +438,37 @@ func abs64(v int64) int64 {
 	return v
 }
 
-// deduzVisaoDoTime aplica ClassificaCaptura em cada captura e junta em
-// intervalos. Cada captura vale da metade do caminho até a anterior à metade
-// do caminho até a seguinte (no máximo 500 ms para cada lado: captura isolada
-// não cobre um buraco).
-func deduzVisaoDoTime(pv PasseVisao, cs []CapturaVisao, f fonteDePosicoes) VisaoDoTime {
-	v := VisaoDoTime{Time: pv.Time, PasseVisaoID: pv.ID, Capturas: len(cs), Jogadores: []VisibilidadeJogador{}, Sentinelas: []SentinelaLida{}}
-	if len(cs) == 0 {
-		return v
-	}
-	v.DeMs, v.AteMs = cs[0].TMs, cs[len(cs)-1].TMs
-	if v.AteMs > v.DeMs {
-		v.CapturasPorS = math.Round(float64(len(cs))/(float64(v.AteMs-v.DeMs)/1000)*100) / 100
-	}
-	var pids, todos []int
-	for pid, t := range f.times {
+// CapturaClassificada: uma captura do passe de visão já decidida, com o
+// trecho de tempo que ela vale e o que a continuidade precisa de cada
+// inimigo.
+type CapturaClassificada struct {
+	De, Ate int64
+	TMs     int64
+	ModoOK  bool
+	R       ClassificacaoCaptura
+	// Inimigos do observador no instante (posição, morto, fora do mapa).
+	Inimigos map[int]PosicaoNoInstante
+	// AliadoMaisPerto: por inimigo com posição, a distância (unidades) ao
+	// aliado vivo do observador mais perto (com posição); +Inf sem nenhum.
+	AliadoMaisPerto map[int]float64
+	// AliadoSemPosicao: algum aliado vivo do observador sem posição (pode
+	// estar perto de qualquer um).
+	AliadoSemPosicao bool
+}
+
+// classificaPasse aplica ClassificaCaptura em cada captura. Cada captura
+// vale da metade do caminho até a anterior à metade do caminho até a
+// seguinte (no máximo 500 ms para cada lado: captura isolada não cobre um
+// buraco).
+func classificaPasse(pv PasseVisao, cs []CapturaVisao, f fonteDePosicoes) []CapturaClassificada {
+	var todos []int
+	for pid := range f.times {
 		todos = append(todos, pid)
-		if t != pv.Time {
-			pids = append(pids, pid)
-		}
 	}
-	sort.Ints(pids)
 	sort.Ints(todos)
-	porPid := map[int]*VisibilidadeJogador{}
-	for _, pid := range pids {
-		_, rast := f.amostra[pid]
-		j := &VisibilidadeJogador{ParticipanteID: pid, Time: f.times[pid], Rastreado: rast, Visivel: [][2]int64{}, Fora: [][2]int64{},
-			Indeterminado: [][2]int64{}, Motivos: map[string]int64{}}
-		porPid[pid] = j
-	}
 	modo := ModoDoTime(pv.Time)
-	modoOK, aliVivos, aliAchados := 0, 0, 0
 	atraso := atrasoMinimapaJogoMs(pv.Velocidade)
+	out := make([]CapturaClassificada, 0, len(cs))
 	for k, c := range cs {
 		lo, hi := c.TMs-500, c.TMs+500
 		if k > 0 {
@@ -406,36 +480,216 @@ func deduzVisaoDoTime(pv PasseVisao, cs []CapturaVisao, f fonteDePosicoes) Visao
 		if hi <= lo {
 			continue
 		}
-		ok := c.Modo == modo
-		if ok {
-			modoOK++
-		}
 		// O minimapa da captura mostra o jogo de AtrasoMinimapaMs (tempo real)
 		// antes do carimbo: as posições rastreadas são as daquele instante.
 		js := make([]PosicaoNoInstante, 0, len(todos))
 		for _, pid := range todos {
 			js = append(js, f.noInstante(pid, c.TMs-atraso))
 		}
-		r := ClassificaCaptura(LeituraMinimapa{Modo: c.Modo, Retratos: c.Retratos, Sentinelas: c.Sentinelas}, ok, pv.Time, js)
-		aliVivos += r.AliadosVivos
-		aliAchados += r.AliadosAchados
-		for pid, e := range r.Estados {
-			j := porPid[pid]
-			if j == nil {
+		ok := c.Modo == modo
+		cc := CapturaClassificada{De: lo, Ate: hi, TMs: c.TMs, ModoOK: ok, Inimigos: map[int]PosicaoNoInstante{}, AliadoMaisPerto: map[int]float64{},
+			R: ClassificaCaptura(LeituraMinimapa{Modo: c.Modo, Retratos: c.Retratos, Sentinelas: c.Sentinelas, Arcos: c.Arcos}, ok, pv.Time, js)}
+		for _, j := range js {
+			if j.Time == pv.Time && !j.Morto && !j.TemPosicao {
+				cc.AliadoSemPosicao = true
+			}
+		}
+		for _, j := range js {
+			if j.Time == pv.Time {
 				continue
 			}
-			switch e {
-			case VisVisivel:
-				j.Visivel = juntaIntervalo(j.Visivel, lo, hi)
-			case VisFora:
-				j.Fora = juntaIntervalo(j.Fora, lo, hi)
-			default:
-				j.Indeterminado = juntaIntervalo(j.Indeterminado, lo, hi)
-				j.Motivos[r.Motivos[pid]] += hi - lo
+			cc.Inimigos[j.ParticipanteID] = j
+			if !j.TemPosicao {
+				continue
 			}
+			d := math.Inf(1)
+			for _, a := range js {
+				if a.Time == pv.Time && !a.Morto && a.TemPosicao {
+					d = math.Min(d, math.Hypot(a.X-j.X, a.Y-j.Y))
+				}
+			}
+			cc.AliadoMaisPerto[j.ParticipanteID] = d
+		}
+		out = append(out, cc)
+	}
+	return out
+}
+
+// Continuidade no tempo (inferirTrechos): um trecho indeterminado curto entre
+// duas leituras firmes IGUAIS herda o estado delas, marcado como inferido.
+// Nunca através de uma troca (visível de um lado e fora do outro) e nunca
+// num trecho sem posição (não dá para conferir o alcance).
+const (
+	// InferenciaVisivelMaxMs: o maior trecho que herda "visível". Na
+	// 3305449546, 68% (azul) e 48% (vermelho) do tempo indeterminado entre
+	// dois visíveis estava em trechos de até 3 s.
+	InferenciaVisivelMaxMs int64 = 3000
+	// InferenciaCurtaMs: até isto (1–2 capturas) o visível é herdado sem
+	// conferir o alcance.
+	InferenciaCurtaMs int64 = 1000
+	// AlcanceVisaoAliado: acima de InferenciaCurtaMs, o visível só é herdado
+	// se em todas as capturas do trecho um aliado vivo do observador estava a
+	// até isto (unidades): o campeão enxerga ~1 350; 150 de folga para o erro
+	// da posição. O mato continua podendo esconder (por isso "inferido").
+	AlcanceVisaoAliado = 1200.0
+	// InferenciaForaMaxMs: o maior trecho que herda "fora".
+	InferenciaForaMaxMs int64 = 3000
+	// LongeDaVisao: o "fora" só é herdado se em todas as capturas do trecho o
+	// jogador estava a mais disto de todo aliado vivo do observador (e nenhum
+	// sem posição)...
+	LongeDaVisao = 2000.0
+	// LongeDaSentinela: ... e a mais disto de toda sentinela do observador
+	// lida no minimapa (a sentinela enxerga ~900). Torres e tropas não entram
+	// (não são lidas): por isso também "inferido".
+	LongeDaSentinela = 1500.0
+)
+
+// estadoCap é o estado de um jogador numa captura.
+type estadoCap struct {
+	de, ate  int64
+	estado   string
+	motivo   string
+	inferido bool
+	arco     bool
+	porOrdem bool
+	k        int // índice da captura em ccs
+}
+
+// desfazForaPorOrdem: um trecho de "fora" que só saiu pela ordem de desenho
+// (PorOrdem), curto (até InferenciaVisivelMaxMs) e com visível encostado dos
+// dois lados volta a indeterminado ("coberto"). Na 3305449546 (visão azul),
+// 25% das capturas desses "fora" caíam entre dois visíveis, a mesma taxa dos
+// "fora" antigos perto de um aliado (23%), mas um "fora" de meio segundo no
+// meio de uma luta é o anel que não foi achado, não o inimigo que sumiu.
+func desfazForaPorOrdem(seq []estadoCap) {
+	for i := 0; i < len(seq); {
+		if seq[i].estado != VisFora || !seq[i].porOrdem {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(seq) && seq[j].estado == VisFora && seq[j].porOrdem && seq[j].de == seq[j-1].ate {
+			j++
+		}
+		ini := i
+		i = j
+		if ini == 0 || j >= len(seq) || seq[ini-1].estado != VisVisivel || seq[j].estado != VisVisivel ||
+			seq[ini-1].ate != seq[ini].de || seq[j].de != seq[j-1].ate || seq[j-1].ate-seq[ini].de > InferenciaVisivelMaxMs {
+			continue
+		}
+		for k := ini; k < j; k++ {
+			seq[k].estado, seq[k].motivo = VisIndeterminado, "coberto"
+		}
+	}
+}
+
+// inferirTrechos aplica a continuidade na sequência de um jogador (em ordem
+// de tempo).
+func inferirTrechos(seq []estadoCap, ccs []CapturaClassificada, pid int, sents []SentinelaLida) {
+	for i := 0; i < len(seq); {
+		if seq[i].estado != VisIndeterminado {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(seq) && seq[j].estado == VisIndeterminado && seq[j].de == seq[j-1].ate {
+			j++
+		}
+		ini := i
+		i = j
+		if ini == 0 || j >= len(seq) || seq[ini-1].ate != seq[ini].de || seq[j].de != seq[j-1].ate {
+			continue // sem leitura encostada de um dos lados
+		}
+		antes, depois := seq[ini-1], seq[j]
+		if antes.estado != depois.estado || antes.inferido || depois.inferido {
+			continue // troca, ou ponta herdada
+		}
+		run := seq[ini:j]
+		dur := run[len(run)-1].ate - run[0].de
+		pode := antes.estado == VisVisivel || antes.estado == VisFora
+		for _, e := range run {
+			if !pode {
+				break
+			}
+			cc := ccs[e.k]
+			pj := cc.Inimigos[pid]
+			if e.motivo == "sem_posicao" || !pj.TemPosicao {
+				pode = false
+				break
+			}
+			d, ok := cc.AliadoMaisPerto[pid]
+			if !ok {
+				d = math.Inf(1)
+			}
+			if antes.estado == VisVisivel {
+				pode = dur <= InferenciaVisivelMaxMs && (dur <= InferenciaCurtaMs || d <= AlcanceVisaoAliado)
+			} else {
+				pode = dur <= InferenciaForaMaxMs && !cc.AliadoSemPosicao && d > LongeDaVisao && !sentinelaPerto(sents, pj.X, pj.Y, cc.TMs)
+			}
+		}
+		if !pode {
+			continue
+		}
+		for k := range run {
+			run[k].estado, run[k].inferido = antes.estado, true
+		}
+	}
+}
+
+func sentinelaPerto(ss []SentinelaLida, x, y float64, t int64) bool {
+	for _, s := range ss {
+		if s.DeMs <= t && t <= s.AteMs && math.Hypot(s.X-x, s.Y-y) <= LongeDaSentinela {
+			return true
+		}
+	}
+	return false
+}
+
+// deduzVisaoDoTime classifica as capturas, aplica a continuidade e junta em
+// intervalos.
+func deduzVisaoDoTime(pv PasseVisao, cs []CapturaVisao, f fonteDePosicoes) VisaoDoTime {
+	v, _ := deduzVisaoComCapturas(pv, cs, f)
+	return v
+}
+
+// deduzVisaoComCapturas é deduzVisaoDoTime devolvendo também as capturas
+// classificadas e a sequência final de cada inimigo (para conferências).
+func deduzVisaoComCapturas(pv PasseVisao, cs []CapturaVisao, f fonteDePosicoes) (VisaoDoTime, map[int][]estadoCap) {
+	v := VisaoDoTime{Time: pv.Time, PasseVisaoID: pv.ID, Capturas: len(cs), Jogadores: []VisibilidadeJogador{}, Sentinelas: []SentinelaLida{}}
+	if len(cs) == 0 {
+		return v, nil
+	}
+	v.DeMs, v.AteMs = cs[0].TMs, cs[len(cs)-1].TMs
+	if v.AteMs > v.DeMs {
+		v.CapturasPorS = math.Round(float64(len(cs))/(float64(v.AteMs-v.DeMs)/1000)*100) / 100
+	}
+	var pids []int
+	for pid, t := range f.times {
+		if t != pv.Time {
+			pids = append(pids, pid)
+		}
+	}
+	sort.Ints(pids)
+	modo := ModoDoTime(pv.Time)
+	v.Sentinelas = acompanhaSentinelas(cs, pv.Time, modo)
+	modoOK := 0
+	for _, c := range cs {
+		if c.Modo == modo {
+			modoOK++
 		}
 	}
 	v.ModoConferido = math.Round(float64(modoOK)/float64(len(cs))*1000) / 1000
+	ccs := classificaPasse(pv, cs, f)
+	aliVivos, aliAchados := 0, 0
+	seqs := map[int][]estadoCap{}
+	for k, cc := range ccs {
+		aliVivos += cc.R.AliadosVivos
+		aliAchados += cc.R.AliadosAchados
+		for pid, e := range cc.R.Estados {
+			seqs[pid] = append(seqs[pid], estadoCap{de: cc.De, ate: cc.Ate, estado: e, motivo: cc.R.Motivos[pid], arco: cc.R.PeloArco[pid],
+				porOrdem: cc.R.PorOrdem[pid], k: k})
+		}
+	}
 	if aliVivos > 0 {
 		a := math.Round(float64(aliAchados)/float64(aliVivos)*1000) / 1000
 		v.AliadosAchados = &a
@@ -443,17 +697,50 @@ func deduzVisaoDoTime(pv PasseVisao, cs []CapturaVisao, f fonteDePosicoes) Visao
 			v.Aviso = fmt.Sprintf("só %.0f%% dos retratos do próprio time foram achados no minimapa onde os passes dos jogadores os põem: a posição rastreada (calibração) ou a geometria do minimapa não confere; os instantes sem os aliados no lugar ficaram indeterminados", a*100)
 		}
 	}
+	var totDecidido, totIndet, totInfer int64
 	for _, pid := range pids {
-		j := porPid[pid]
+		_, rast := f.amostra[pid]
+		j := VisibilidadeJogador{ParticipanteID: pid, Time: f.times[pid], Rastreado: rast, Visivel: [][2]int64{}, Fora: [][2]int64{},
+			Indeterminado: [][2]int64{}, ForaDoMapa: [][2]int64{}, Inferido: [][2]int64{}, Motivos: map[string]int64{}}
+		seq := seqs[pid]
+		desfazForaPorOrdem(seq)
+		inferirTrechos(seq, ccs, pid, v.Sentinelas)
+		for _, e := range seq {
+			switch e.estado {
+			case VisVisivel:
+				j.Visivel = juntaIntervalo(j.Visivel, e.de, e.ate)
+				if e.arco {
+					j.PeloArcoMs += e.ate - e.de
+				}
+			case VisFora:
+				j.Fora = juntaIntervalo(j.Fora, e.de, e.ate)
+			case VisForaDoMapa:
+				j.ForaDoMapa = juntaIntervalo(j.ForaDoMapa, e.de, e.ate)
+				continue
+			default:
+				j.Indeterminado = juntaIntervalo(j.Indeterminado, e.de, e.ate)
+				j.Motivos[e.motivo] += e.ate - e.de
+				totIndet += e.ate - e.de
+				continue
+			}
+			totDecidido += e.ate - e.de
+			if e.inferido {
+				j.Inferido = juntaIntervalo(j.Inferido, e.de, e.ate)
+				totInfer += e.ate - e.de
+			}
+		}
 		vis, fora := somaIntervalos(j.Visivel), somaIntervalos(j.Fora)
 		if vis+fora > 0 {
 			p := math.Round(float64(vis)/float64(vis+fora)*1000) / 10
 			j.PctVisivel = &p
 		}
-		v.Jogadores = append(v.Jogadores, *j)
+		v.Jogadores = append(v.Jogadores, j)
 	}
-	v.Sentinelas = acompanhaSentinelas(cs, pv.Time, modo)
-	return v
+	if tot := totDecidido + totIndet; tot > 0 {
+		v.PctIndeterminado = math.Round(float64(totIndet)/float64(tot)*1000) / 10
+		v.PctInferido = math.Round(float64(totInfer)/float64(tot)*1000) / 10
+	}
+	return v, seqs
 }
 
 // atrasoMinimapaJogoMs é replay.AtrasoMinimapaMs (tempo real) em ms de jogo

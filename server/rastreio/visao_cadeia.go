@@ -58,7 +58,7 @@ func TrechosVisao(j VisibilidadeJogador) []TrechoVisao {
 	for _, l := range []struct {
 		e  string
 		is [][2]int64
-	}{{VisVisivel, j.Visivel}, {VisFora, j.Fora}, {VisIndeterminado, j.Indeterminado}} {
+	}{{VisVisivel, j.Visivel}, {VisFora, j.Fora}, {VisIndeterminado, j.Indeterminado}, {VisForaDoMapa, j.ForaDoMapa}} {
 		for _, i := range l.is {
 			ts = append(ts, TrechoVisao{i[0], i[1], l.e})
 		}
@@ -116,8 +116,8 @@ func geraVisao(c *ContextoCadeia) []ItemCadeia {
 		if k > 0 && ts[k-1].Ate < t.De {
 			ultimo, visivelDesde = "", -1 // buraco sem captura
 		}
-		if t.Estado == VisIndeterminado {
-			continue
+		if t.Estado == VisIndeterminado || t.Estado == VisForaDoMapa {
+			continue // fora do mapa (Investida Alfa, teleporte) não troca nada
 		}
 		if t.De >= ini && t.De <= fim {
 			switch {

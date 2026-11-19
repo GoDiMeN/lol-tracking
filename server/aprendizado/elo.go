@@ -31,10 +31,12 @@ func (fonteElo) EloDoJogador(db *banco.DB, puuid string) (analise.EloConhecido, 
 	return e, true
 }
 
-// EloDaPartida: o elo da coleta em que a partida entrou.
+// EloDaPartida: o elo da coleta em que a partida entrou: o do jogador que a
+// escolheu (um aproveitado de outro elo não muda o elo da partida; o elo dele
+// fica no resumo do jogador).
 func (fonteElo) EloDaPartida(db *banco.DB, gameID int64) (string, bool) {
 	var elo string
-	if err := db.QueryRow(`SELECT elo FROM aprendizado_partidas WHERE game_id = ? ORDER BY id DESC LIMIT 1`, gameID).Scan(&elo); err != nil {
+	if err := db.QueryRow(`SELECT elo FROM aprendizado_partidas WHERE game_id = ? ORDER BY aproveitado, id DESC LIMIT 1`, gameID).Scan(&elo); err != nil {
 		return "", false
 	}
 	return elo, elo != ""

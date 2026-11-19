@@ -131,7 +131,7 @@ async function carregaRecentes() {
 
 async function carregaRastreadas() {
   try {
-    const [{ partidas }, { rastreios }] = await Promise.all([api.rastreadas(), api.rastreios(100)]);
+    const [{ partidas }, { rastreios }] = await Promise.all([api.rastreadas({ origem: 'todas' }), api.rastreios(100)]);
     estado.rastreadas = new Map(partidas.map((p) => [p.game_id, p]));
     estado.rastreios = new Map();
     for (const r of rastreios) if (!estado.rastreios.has(r.game_id)) estado.rastreios.set(r.game_id, r);
@@ -495,7 +495,9 @@ async function abreDialogo(p) {
     confirmar.disabled = true;
     erro.hidden = true;
     try {
+      // puuid: o jogador pesquisado (a origem "pesquisa" da partida; ele vira o foco em Partidas rastreadas).
       const corpo = { jogadores: [...escolhidos].sort((x, y) => x - y), velocidade };
+      if (estado.jogador?.puuid) corpo.puuid = estado.jogador.puuid;
       if (d) corpo.de_ms = d;
       if (a) corpo.ate_ms = a;
       if (cbVisao.checked) corpo.visao = true;

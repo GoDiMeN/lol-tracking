@@ -37,7 +37,20 @@ import {
 } from '../ui.js';
 import { MARGEM, escala, serieCS, csNoInstante, perdidasDoJogador, tetoRedondo } from '../grafico-tempo.js';
 import { adversarioDeRota } from '../atributos.js';
-import { rotuloTipo, classeTipo, ouroCurto, momentosChave, segundoNoMapa, jogadoresChave, textoContexto } from '../fatos.js';
+import { abreConversa } from '../conversa-ia.js';
+import {
+  rotuloTipo,
+  classeTipo,
+  ouroCurto,
+  momentosChave,
+  segundoNoMapa,
+  jogadoresChave,
+  textoContexto,
+  papelNaTela,
+  estadoBuscaContexto,
+  progressoBusca,
+} from '../fatos.js';
+import { voltaDaPartida } from '../rastreadas.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}) => {
@@ -63,7 +76,8 @@ export async function desenha(raiz, rota, ctx) {
       partidaComNomes(gameId),
       api.analise(gameId),
       api.abates(gameId),
-      api.rastreadas(),
+      // Todas as origens: a partida pode ter vindo do estudo (aberta pela área de Estudo).
+      api.rastreadas({ origem: 'todas' }),
     ]);
   } catch (err) {
     raiz.replaceChildren(
@@ -73,11 +87,14 @@ export async function desenha(raiz, rota, ctx) {
     return;
   }
   const p = info.partida;
-  const rastreados = rastreadas.find((x) => x.game_id === gameId)?.participantes || analise?.rastreados || [];
+  const linhaRastreada = rastreadas.find((x) => x.game_id === gameId);
+  const rastreados = linhaRastreada?.participantes || analise?.rastreados || [];
   let pid = rota.participante;
   if (!pid || !info.porId[pid]) {
-    const dono = participantePrincipal(p, rastreados);
-    pid = rastreados.includes(dono.participante_id) ? dono.participante_id : rastreados[0] || dono.participante_id;
+    // O jogador em foco da partida (o pesquisado, ou a referência do estudo); sem ele, o de antes.
+    const foco = linhaRastreada?.foco?.participante_id;
+    const dono = foco && info.porId[foco] ? info.porId[foco] : participantePrincipal(p, rastreados);
+    pid = foco && info.porId[foco] ? foco : rastreados.includes(dono.participante_id) ? dono.participante_id : rastreados[0] || dono.participante_id;
     ctx.marca({ vista: 'partida', gameId, participante: pid, abate: rota.abate });
   }
   const jog = info.porId[pid];
@@ -86,7 +103,7 @@ export async function desenha(raiz, rota, ctx) {
   // --- Cabeçalho ---
   const cab = el('div', 'linha cab-tela');
   cab.append(
-    link('← Partidas rastreadas', '#partidas', 'voltar'),
+    link(voltaDaPartida(linhaRastreada).texto, voltaDaPartida(linhaRastreada).href, 'voltar'),
     el('h1', 'titulo-tela inline', `${jog.campeao}${jog.posicao ? ` · ${posicao(jog.posicao)}` : ''} · ${jog.venceu ? 'vitória' : 'derrota'} · ${duracao(p.duracao_s)}`),
     pilula(`${rastreados.length} de 10 rastreados`, rastreados.length === 10 ? 'ok' : 'ac', 'quantos jogadores tiveram a partida assistida pelo app'),
   );
@@ -109,6 +126,11 @@ export async function desenha(raiz, rota, ctx) {
     }
   });
   acoes.append(refazer);
+  // IA, a pedido: o relatório (tela própria) e a conversa (painel à direita) do jogador escolhido.
+  const analisarIA = link('Analisar com IA', `#ia/${gameId}/${pid}`, 'btn');
+  analisarIA.title = 'relatório da partida com IA para este jogador (Claude Code desta máquina)';
+  const conversarIA = botao('Conversar com a IA', '', () => abreConversa({ gameId, pid, info }), 'conversar com a IA sobre esta partida, com este jogador em foco');
+  acoes.append(analisarIA, conversarIA);
   cab.append(acoes);
 
   // --- Seletor de jogador ---
@@ -228,11 +250,45 @@ export async function desenha(raiz, rota, ctx) {
     })
     .catch(() => repescagem.remove());
 
+  // Passes ruins (servidor: rastreio/qualidade_passe.go): passe que fechou com a câmera fora do
+  // jogador em boa parte do tempo (ou taxa baixa) não vale como dado; o botão põe um passe novo de
+  // cada um no rastreio parado da partida (que é retomado, com os que faltavam) ou num rastreio novo.
+  const ruinsEl = el('span', 'repescagem');
+  repescagem.after(ruinsEl);
+  api
+    .ruins(gameId)
+    .then((ar) => {
+      const n = ar.participantes.length;
+      if (!n) return;
+      const campeaoDe = Object.fromEntries(p.participantes.map((x) => [x.participante_id, x.campeao]));
+      const nomes = ar.ruins.map((r) => `${campeaoDe[r.participante_id] || `jogador ${r.participante_id}`}: ${r.erro}`).join('\n');
+      const extra = ar.rastreio_pausado ? ` (e os que faltam do rastreio ${ar.rastreio_pausado})` : '';
+      const b = botao(
+        `refazer ${n} ${n === 1 ? 'passe ruim' : 'passes ruins'}${extra}`,
+        '',
+        async () => {
+          b.disabled = true;
+          try {
+            const r = await api.refazRuins(gameId);
+            toast(`Refazendo ${r.participantes.length} ${r.participantes.length === 1 ? 'passe' : 'passes'} no rastreio ${r.rastreio.id}.`, 'ok');
+            ctx.atualizaSeloRastreio?.();
+            ctx.navega({ vista: 'rastreio' });
+          } catch (err) {
+            toast(err.message, 'erro');
+            b.disabled = false;
+          }
+        },
+        `estes passes não valem (a câmera ficou fora do jogador):\n${nomes}\nO cliente do LoL precisa estar aberto e fora de partida.`,
+      );
+      ruinsEl.replaceChildren(b);
+    })
+    .catch(() => ruinsEl.remove());
+
   // Visão dos times (servidor: rastreio/visao_fila.go): dois passes com a névoa do replay na visão
   // de cada time (F1, F2), lendo do minimapa quem do outro time estava à vista. Precisa de jogador
   // rastreado (a decisão usa a posição deles); o resultado aparece na caixa "visão" do mapa com play.
   const visaoEl = el('span', 'repescagem');
-  repescagem.after(visaoEl);
+  ruinsEl.after(visaoEl);
   const segueVisao = (exId, botaoV) => {
     const estado = el('span', 'sub', 'abrindo o replay…');
     estado.setAttribute('role', 'status');
@@ -328,10 +384,12 @@ export async function desenha(raiz, rota, ctx) {
   // --- Momentos-chave e jogadores-chave (base de fatos, sem IA): chegam depois, sem segurar a tela.
   const secFatos = el('div', 'grade-2 fatos');
   partes.push(secFatos);
-  api
-    .resumo(gameId)
-    .then(({ resumo }) => secFatos.replaceChildren(cartaoMomentos(resumo, gameId), cartaoJogadoresChave(resumo, pid, gameId, ctx)))
-    .catch((err) => secFatos.replaceChildren(cartao('Momentos-chave', null, erroNaTela(err))));
+  const desenhaFatos = () =>
+    api
+      .resumo(gameId)
+      .then(({ resumo }) => secFatos.replaceChildren(cartaoMomentos(resumo, gameId), cartaoJogadoresChave(resumo, pid, gameId, ctx, desenhaFatos)))
+      .catch((err) => secFatos.replaceChildren(cartao('Momentos-chave', null, erroNaTela(err))));
+  desenhaFatos();
 
   // --- Vida, saídas, cadeia, indicadores, CS: por jogador ---
   const secVida = el('div', 'graficos-tempo');
@@ -425,9 +483,9 @@ function cartaoMomentos(resumo, gameId) {
   ]);
 }
 
-function cartaoJogadoresChave(resumo, pid, gameId, ctx) {
+function cartaoJogadoresChave(resumo, pid, gameId, ctx, recarrega) {
   const tab = el('table', 'tabela compacta jogadores-chave');
-  tab.append(el('thead', '', [el('tr', '', ['#', 'Jogador', 'Nota', 'Componentes'].map((h) => el('th', '', h)))]));
+  tab.append(el('thead', '', [el('tr', '', ['#', 'Jogador', 'Nota', 'Papel', 'Componentes'].map((h) => el('th', '', h)))]));
   const tb = el('tbody');
   for (const j of jogadoresChave(resumo)) {
     const nome = el('button', `link-jogador ${j.time === 100 ? 'azul' : 'vermelho'}`, `${j.campeao}${j.funcao ? ` · ${posicao(j.funcao)}` : ''}`);
@@ -449,6 +507,7 @@ function cartaoJogadoresChave(resumo, pid, gameId, ctx) {
         el('td', 'num', String(j.posicao_nota)),
         el('td', '', [nome, contexto ? el('div', 'sub', contexto) : null]),
         el('td', 'num', ouroCurto(j.nota, true)),
+        celulaPapel(j.papel),
         el('td', '', [comp]),
       ]),
     );
@@ -456,8 +515,63 @@ function cartaoJogadoresChave(resumo, pid, gameId, ctx) {
   tab.append(tb);
   return cartao('Jogadores-chave', 'nota de impacto (ouro equivalente), não só o placar', [
     el('p', 'sub pad', 'Abates e objetivos repartidos entre quem participou, menos o custo das próprias mortes e das mortes caras, mais a participação nos momentos-chave e a vantagem de rota aos 15.'),
+    el('p', 'sub pad', 'Papel (por regra, sem IA): carregou, habilitou, foi carregado, afundou ou estável, e o estilo da função; passe o mouse para ver os números, a confiança e o que não deu para avaliar.'),
+    linhaContextoJogadores(gameId, recarrega),
     el('div', 'rolar', [tab]),
   ]);
+}
+
+// O contexto dos 10 (o histórico de ANTES desta partida de cada um, pelo cliente do LoL ou pela API da
+// Riot): o que já foi buscado e o botão que busca. Informação ao lado: a nota não muda por ele.
+function linhaContextoJogadores(gameId, recarrega) {
+  const texto = el('span', 'sub', 'contexto dos jogadores…');
+  const btn = botao('Buscar o contexto dos jogadores', 'mini', null);
+  btn.disabled = true;
+  const linha = el('p', 'sub pad contexto-jogadores', [btn, ' ', texto]);
+  const acompanhaBusca = (execId, fonteInicial) => {
+    let feitos = 0;
+    let fonte = fonteInicial;
+    let total = 10;
+    btn.disabled = true;
+    texto.textContent = progressoBusca(0, total, fonte);
+    acompanha(
+      execId,
+      {
+        inicio: (d) => {
+          fonte = d.fonte;
+          total = d.jogadores;
+          texto.textContent = progressoBusca(0, total, fonte);
+        },
+        jogador: () => (texto.textContent = progressoBusca(++feitos, total, fonte)),
+        concluido: () => toast('Contexto dos jogadores buscado.', 'ok'),
+        aviso: (d) => d.texto && toast(d.texto, ''),
+        erro: (d) => toast(d.texto || 'a busca do contexto falhou', 'erro'),
+        fim: () => recarrega?.(),
+      },
+      { textoQueda: 'a conexão com o servidor caiu durante a busca do contexto' },
+    );
+  };
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const r = await api.buscaContextoJogadores(gameId);
+      acompanhaBusca(r.execucao.id, r.fonte);
+    } catch (err) {
+      toast(err.message, 'erro');
+      btn.disabled = false;
+    }
+  });
+  api
+    .contextoJogadores(gameId)
+    .then((e) => {
+      const est = estadoBuscaContexto(e);
+      texto.textContent = est.texto;
+      btn.disabled = !est.pode;
+      btn.title = est.dica;
+      if (e.rodando && e.execucao) acompanhaBusca(e.execucao.id, '');
+    })
+    .catch((err) => (texto.textContent = `contexto dos jogadores: ${err.message}`));
+  return linha;
 }
 
 // --- Abates ------------------------------------------------------------------------------------
@@ -1008,4 +1122,13 @@ function conferenciaCS(j) {
     el('p', 'sub pad', 'O CS do jogo anda de 10 em 10; diferença de até 10 (mais 3 de folga) é normal.'),
     el('div', 'rolar curto', [tab]),
   ]);
+}
+
+// celulaPapel: o papel ao lado da nota (pílula + estilo); a dica traz os números e a confiança.
+function celulaPapel(papel) {
+  const p = papelNaTela(papel);
+  if (!p) return el('td', 'sub', '—');
+  const td = el('td', '', [pilula(p.texto, p.classe, p.dica), p.estilo ? el('div', 'sub', p.estilo) : null]);
+  td.title = p.dica;
+  return td;
 }

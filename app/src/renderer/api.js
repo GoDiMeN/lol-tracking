@@ -1,6 +1,8 @@
 // A única porta do renderer para o servidor Go. As rotas estão em docs/arquitetura/contrato-http.md;
 // mudou lá, muda aqui. A página é servida pelo próprio servidor, então a API tem a mesma origem.
 
+import { consultaRastreadas } from './rastreadas.js';
+
 export class ErroApi extends Error {
   constructor(status, mensagem, corpo) {
     super(mensagem);
@@ -45,7 +47,8 @@ export const api = {
 
   // Partida e rastreio (tarefa 2)
   partida: (gameId) => pede('GET', `/api/partidas/${gameId}`),
-  rastreadas: () => pede('GET', '/api/partidas/rastreadas'),
+  // filtro: {origem: 'pesquisa' (padrão) | 'estudo' | 'todas', puuid} (rastreadas.js).
+  rastreadas: (filtro = {}) => pede('GET', `/api/partidas/rastreadas${consultaRastreadas(filtro)}`),
   rastrear: (gameId, corpo) => pede('POST', `/api/partidas/${gameId}/rastreio`, corpo),
   rastreios: (limite = 50) => pede('GET', `/api/rastreios?limite=${limite}`),
   rastreio: (id) => pede('GET', `/api/rastreios/${id}`),
@@ -71,6 +74,9 @@ export const api = {
   qualidade: (gameId) => pede('GET', `/api/partidas/${gameId}/qualidade`),
   // Base de fatos (analise/fatos*.go): momentos-chave, jogadores-chave, contexto.
   resumo: (gameId) => pede('GET', `/api/partidas/${gameId}/resumo`),
+  // Contexto dos 10 jogadores (server/contexto): o histórico de antes da partida de cada um, a pedido.
+  contextoJogadores: (gameId) => pede('GET', `/api/partidas/${gameId}/contexto-jogadores`),
+  buscaContextoJogadores: (gameId, fonte = '') => pede('POST', `/api/partidas/${gameId}/contexto-jogadores`, fonte ? { fonte } : {}),
   estaticos: (gameId) => pede('GET', `/api/partidas/${gameId}/estaticos`),
   bonusObjetivos: (gameId) => pede('GET', `/api/partidas/${gameId}/bonus-objetivos`),
   build: (gameId, pid = 0) => pede('GET', `/api/partidas/${gameId}/build${pid ? `?participante=${pid}` : ''}`),  atividades: (gameId, de, ate) => pede('GET', `/api/partidas/${gameId}/atividades?de=${de}&ate=${ate}`),
@@ -110,9 +116,55 @@ export const api = {
   // Repescagem dos trechos sem amostra de passes já gravados (abre o replay; uma coisa por vez na fila).
   planoRepescagem: (gameId) => pede('GET', `/api/partidas/${gameId}/rastreio/repescagem`),
   repesca: (gameId, corpo = {}) => pede('POST', `/api/partidas/${gameId}/rastreio/repescagem`, corpo),
+  ruins: (gameId) => pede('GET', `/api/partidas/${gameId}/rastreio/ruins`),
+  refazRuins: (gameId, corpo = {}) => pede('POST', `/api/partidas/${gameId}/rastreio/refazer`, corpo),
+  // Captura (server/captura): pausar/retomar o que estiver rodando (rastreio, coleta, repescagem, visão).
+  captura: () => pede('GET', '/api/captura'),
+  pausaCaptura: () => pede('POST', '/api/captura/pausar'),
+  retomaCaptura: () => pede('POST', '/api/captura/retomar'),
   // Visão dos times: os dois passes de visão (névoa azul e vermelha; abre o replay) e o resultado.
   visao: (gameId) => pede('GET', `/api/partidas/${gameId}/visao`),
   rastreiaVisao: (gameId, corpo = {}) => pede('POST', `/api/partidas/${gameId}/visao/rastreio`, corpo),
+
+  // IA (server/ia): o Claude Code da máquina, a pedido da pessoa; o rastreio não usa IA.
+  estadoIA: () => pede('GET', '/api/ia/estado'),
+  relatorioIA: (gameId, pid, versao = 0) =>
+    pede('GET', `/api/partidas/${gameId}/ia/relatorio?participante=${pid}${versao ? `&versao=${versao}` : ''}`),
+  analisaIA: (gameId, pid) => pede('POST', `/api/partidas/${gameId}/ia/relatorio`, { participante: pid }),
+  previaIA: (gameId, pid) => pede('GET', `/api/partidas/${gameId}/ia/previa?participante=${pid}`),
+  referenciasIA: (gameId, pid) => pede('GET', `/api/partidas/${gameId}/ia/referencias?participante=${pid}`),
+  defineEloIA: (gameId, pid, elo) => pede('PUT', `/api/partidas/${gameId}/ia/elo`, { participante: pid, elo }),
+  relatoriosIA: (gameId) => pede('GET', `/api/partidas/${gameId}/ia/relatorios`),
+  conversasIA: (gameId = 0, pid = 0) => pede('GET', `/api/ia/conversas?partida=${gameId}${pid ? `&participante=${pid}` : ''}`),
+  criaConversaIA: (gameId = 0, pid = 0) => pede('POST', '/api/ia/conversas', { game_id: gameId, participante: pid }),
+  conversaIA: (id) => pede('GET', `/api/ia/conversas/${id}`),
+  apagaConversaIA: (id) => pede('DELETE', `/api/ia/conversas/${id}`),
+  perguntaIA: (id, texto, puuid = '') => pede('POST', `/api/ia/conversas/${id}/mensagens`, { texto, puuid }),
+  cancelaExecucao: (id) => pede('POST', `/api/execucoes/${encodeURIComponent(id)}/cancelar`),
+
+  // Especialista Lane (server/ia/especialista*.go): relatórios de referência, sínteses por patch × elo × rota, espelho no NotebookLM.
+  especialista: () => pede('GET', '/api/especialista'),
+  relatorioEsp: (gameId, pid, versao = 0) => pede('GET', `/api/especialista/relatorios/${gameId}/${pid}${versao ? `?versao=${versao}` : ''}`),
+  geraRelatorioEsp: (gameId, pid) => pede('POST', `/api/especialista/relatorios/${gameId}/${pid}`),
+  previaRelatorioEsp: (gameId, pid) => pede('GET', `/api/especialista/relatorios/${gameId}/${pid}/previa`),
+  sinteseEsp: (r, versao = 0) => pede('GET', `/api/especialista/sintese?${consultaRecorte(r)}${versao ? `&versao=${versao}` : ''}`),
+  refazSinteseEsp: (r) => pede('POST', '/api/especialista/sintese', { patch: r.patch, elo: r.elo, rota: r.rota }),
+  previaSinteseEsp: (r) => pede('GET', `/api/especialista/sintese/previa?${consultaRecorte(r)}`),
+  // Ranking do Lane (server/ranking): por patch × elo × rota (e campeão), com a fórmula à mostra.
+  rankings: (patch = '', elo = '') => pede('GET', `/api/rankings?patch=${encodeURIComponent(patch)}&elo=${encodeURIComponent(elo)}`),
+  rankingRecorte: (consulta) => pede('GET', `/api/rankings/recorte?${consulta}`),
+  formulaRanking: () => pede('GET', '/api/rankings/formula'),
+  orcamentoRanking: (elo, fonte, candidatos, partidas) =>
+    pede('GET', `/api/rankings/orcamento?elo=${encodeURIComponent(elo)}&fonte=${encodeURIComponent(fonte || '')}&candidatos=${candidatos || 0}&partidas_por_jogador=${partidas || 0}`),
+  comparaRanking: (consulta) => pede('GET', `/api/rankings/comparar?${consulta}`),
+  atualizacoesRanking: () => pede('GET', '/api/rankings/atualizacoes'),
+  atualizaRanking: (corpo) => pede('POST', '/api/rankings/atualizacoes', corpo),
+  pausaAtualizacao: (id) => pede('POST', `/api/rankings/atualizacoes/${id}/pausar`),
+  retomaAtualizacao: (id) => pede('POST', `/api/rankings/atualizacoes/${id}/retomar`),
+  cancelaAtualizacao: (id) => pede('POST', `/api/rankings/atualizacoes/${id}/cancelar`),
+  espelhoEsp: () => pede('GET', '/api/especialista/espelho'),
+  defineCadernoEsp: (caderno) => pede('PUT', '/api/especialista/espelho', { caderno }),
+  enviaEspelhoEsp: () => pede('POST', '/api/especialista/espelho'),
 };
 
 export const imagemCampeao = (id) => `/api/imagens/campeao/${Number(id) || 0}`;
@@ -144,4 +196,9 @@ export function acompanha(execucaoId, ao, { textoQueda = 'a conexão com o servi
     ao.fim?.({});
   };
   return () => fonte.close();
+}
+
+// consultaRecorte: "patch=16.23&elo=PLATINUM&rota=JUNGLE".
+export function consultaRecorte(r) {
+  return `patch=${encodeURIComponent(r.patch)}&elo=${encodeURIComponent(r.elo)}&rota=${encodeURIComponent(r.rota)}`;
 }

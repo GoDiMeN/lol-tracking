@@ -17,6 +17,7 @@ import (
 	"loltracking/server/estudo"
 	"loltracking/server/lcu"
 	"loltracking/server/partida"
+	"loltracking/server/ranking"
 	"loltracking/server/rastreio"
 	"loltracking/server/replay"
 	"loltracking/server/riot"
@@ -31,6 +32,16 @@ type lcuComJogo struct {
 	jogo   *replay.Falso
 	db     *banco.DB
 	regiao *string
+	// troca: muda a partida inteira que o LCU devolve (nil = como está).
+	troca *func(id int64, bruto json.RawMessage) json.RawMessage
+}
+
+func (l lcuComJogo) Partida(ctx context.Context, id int64) (json.RawMessage, error) {
+	b, err := l.Falso.Partida(ctx, id)
+	if err == nil && *l.troca != nil {
+		b = (*l.troca)(id, b)
+	}
+	return b, err
 }
 
 func (l lcuComJogo) AssisteReplay(ctx context.Context, id int64) error {
@@ -70,6 +81,7 @@ type amb struct {
 	hub    *web.Hub
 	mux    *http.ServeMux
 	regiao string
+	troca  func(id int64, bruto json.RawMessage) json.RawMessage
 }
 
 func prepara(t *testing.T, ajusta func(c *rastreio.Config)) *amb {
@@ -82,7 +94,7 @@ func prepara(t *testing.T, ajusta func(c *rastreio.Config)) *amb {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	for _, m := range []func(*banco.DB) error{partida.Migra, rastreio.Migra, analise.Migra, estudo.Migra, Migra} {
+	for _, m := range []func(*banco.DB) error{partida.Migra, rastreio.Migra, analise.Migra, estudo.Migra, ranking.Migra, Migra} {
 		if err := m(db); err != nil {
 			t.Fatal(err)
 		}
@@ -90,7 +102,7 @@ func prepara(t *testing.T, ajusta func(c *rastreio.Config)) *amb {
 	a := &amb{db: db, l: lcu.NovoFalso(), riot: NovoRiotFalso(), hub: web.NovoHub()}
 	rel := replay.NovoRelogioFalso()
 	a.jogo = replay.NovoFalso(rel)
-	cli := lcuComJogo{Falso: a.l, jogo: a.jogo, db: db, regiao: &a.regiao}
+	cli := lcuComJogo{Falso: a.l, jogo: a.jogo, db: db, regiao: &a.regiao, troca: &a.troca}
 	cfg := rastreio.Config{}
 	if ajusta != nil {
 		ajusta(&cfg)
